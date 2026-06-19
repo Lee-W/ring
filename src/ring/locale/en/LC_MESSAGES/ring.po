@@ -1,0 +1,132 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: ring\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: en\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+# ── 狀態 ──
+msgid "等你"
+msgstr "waiting"
+
+msgid "工作中"
+msgstr "working"
+
+msgid "跑完停著"
+msgstr "done/idle"
+
+msgid "已離場"
+msgstr "ended"
+
+# ── header（複數）──
+msgid "{n} 個 session 在場"
+msgid_plural "{n} 個 session 在場"
+msgstr[0] "{n} session on stage"
+msgstr[1] "{n} sessions on stage"
+
+msgid "{n} 個 claude process 跑著"
+msgid_plural "{n} 個 claude process 跑著"
+msgstr[0] "{n} claude process running"
+msgstr[1] "{n} claude processes running"
+
+msgid "🎤 RiNG — {sess} · {proc}"
+msgstr "🎤 RiNG — {sess} · {proc}"
+
+# ── 表格 / 場館 ──
+msgid "圖例"
+msgstr "legend"
+
+msgid "（場館目前沒人上台）"
+msgstr "(no one on stage right now)"
+
+msgid "狀態"
+msgstr "status"
+
+msgid "專案"
+msgstr "project"
+
+msgid "進度"
+msgstr "progress"
+
+msgid "閒置"
+msgstr "idle"
+
+msgid "去哪"
+msgstr "go to"
+
+msgid "動作"
+msgstr "action"
+
+msgid "每 {interval}s 刷新 · Ctrl-C 離場"
+msgstr "refresh every {interval}s · Ctrl-C to leave"
+
+# ── CLI ──
+msgid "看所有 Claude Code session 上台。"
+msgstr "Watch all your Claude Code sessions on one stage."
+
+msgid "持續刷新"
+msgstr "keep refreshing"
+
+msgid "watch 刷新秒數"
+msgstr "watch refresh seconds"
+
+msgid "watch 刷新幾格後自動結束（0=無限，預設）"
+msgstr "stop after N frames (0 = forever, default)"
+
+msgid "連已離場的 session 也顯示"
+msgstr "also show ended sessions"
+
+msgid "顯示顏色圖例（--no-legend 關閉）"
+msgstr "show the color legend (--no-legend to hide)"
+
+msgid "語言（如 en / zh-Hant；也吃 config / RING_LANG / LANG）"
+msgstr "language (e.g. en / zh-Hant; also config / RING_LANG / LANG)"
+
+# ── TUI 按鍵 ──
+msgid "離場"
+msgstr "leave"
+
+msgid "刷新"
+msgstr "refresh"
+
+msgid "含已離場"
+msgstr "incl. ended"
+
+msgid "跳過去"
+msgstr "jump"
+
+# ── TUI 狀態列 / 通知 ──
+msgid "💡 同專案開了多個 session，裝 hook 跳轉才精準：ring install-hooks"
+msgstr "💡 sessions share a project; install hooks for precise jump: ring install-hooks"
+
+msgid "↑/↓ 選一列，Enter 或 Space 跳到那個 session 的終端"
+msgstr "↑/↓ to select, Enter or Space to jump to its terminal"
+
+msgid "🔔 {names} 在等你回話"
+msgstr "🔔 {names} waiting for your reply"
+
+msgid "（沒有選到 session）"
+msgstr "(no session selected)"
+
+msgid "→ {project}（{where}）"
+msgstr "→ {project} ({where})"
+
+msgid "{project}：{msg}"
+msgstr "{project}: {msg}"
+
+# ── 跳轉 ──
+msgid "沒有 focuser 接得住（裝 hook，或一個專案只開一個 session 才測得到 tty）"
+msgstr "no focuser handled it (install hooks, or keep one session per project so tty is detectable)"
+
+# ── install-hooks ──
+msgid "⚠️ {path} 不是合法 JSON，先處理它再來。"
+msgstr "⚠️ {path} is not valid JSON; fix it first."
+
+msgid "✅ RiNG hooks 已經裝過了，沒有變更。"
+msgstr "✅ RiNG hooks already installed; no change."
+
+msgid "✅ 已註冊 RiNG hooks（{events}）到 {path}"
+msgstr "✅ Registered RiNG hooks ({events}) into {path}"
+
+msgid "重開 Claude Code session 後，🔴 待回覆狀態就會精準起來。"
+msgstr "Restart your Claude Code sessions and the 🔴 waiting state becomes precise."

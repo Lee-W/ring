@@ -1,0 +1,113 @@
+[project]
+name = "ring-cc"
+version = "0.1.0"
+description = "RiNG — Realtime Instance Notification Grid：看所有 active Claude Code session 上台的場館 TUI。"
+readme = "README.md"
+requires-python = ">=3.13"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Wei Lee", email = "weilee.rx@gmail.com" }]
+keywords = ["claude-code", "tui", "dashboard", "session", "monitor", "rich"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development",
+  "Topic :: Utilities",
+]
+dependencies = ["rich>=13"]
+
+[project.optional-dependencies]
+# live TUI 進階版用 Textual（建在 Rich 之上）。
+tui = ["textual>=0.80"]
+
+[project.scripts]
+ring = "ring.cli:main"
+
+[dependency-groups]
+dev = [
+  { include-group = "base" },
+  { include-group = "test" },
+  { include-group = "linters" },
+]
+base = ["poethepoet>=0.41.0", "babel>=2.14"]
+test = ["pytest>=9", "pytest-cov>=4", "pytest-xdist>=3.1.0", "pytest-asyncio>=0.24", "textual>=0.80"]
+linters = ["ruff>=0.15.1", "mypy>=1.19.1", "prek>=0.3.3", "commitizen>=4.13.9"]
+
+[build-system]
+requires = ["uv_build >= 0.10.3, <0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "ring"
+module-root = "src"
+
+[tool.mypy]
+files = ["src", "tests"]
+strict = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unused_configs = true
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "RUF"]
+# 本專案刻意大量使用台灣漢語註解／字串，關掉「模糊 unicode 字元」誤報（全形標點等）。
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.codespell]
+skip = '.git*,*.lock'
+check-hidden = true
+
+[tool.poe.tasks]
+format.help = "Format the code"
+format.sequence = [{ cmd = "ruff check --fix" }, { cmd = "ruff format" }]
+
+lint.help = "Lint the code"
+lint.sequence = [{ cmd = "ruff check" }, { cmd = "mypy" }]
+
+test.help = "Run the test suite"
+test.cmd = "pytest"
+
+cover.help = "Run the test suite with coverage"
+cover.cmd = "pytest --cov=ring --cov-report=term-missing --cov-report=xml:coverage.xml --junitxml=junit.xml -o junit_family=legacy"
+
+all.help = "Run all tasks"
+all.sequence = ["format", "lint", "cover"]
+
+ci.help = "Run all tasks in CI"
+ci.sequence = [{ cmd = "prek run --all-files" }, "cover"]
+ci.env = { SKIP = "no-commit-to-branch" }
+
+setup-pre-commit.help = "Install pre-commit hooks"
+setup-pre-commit.cmd = "prek install"
+
+i18n-extract.help = "從源碼抽出可翻譯字串到 .pot（改字串後重抽，再 merge 進各 .po）"
+i18n-extract.cmd = "pybabel extract -F babel.cfg -o src/ring/locale/ring.pot src/ring"
+
+i18n-compile.help = "把各語言的 .po 編成 .mo（改 .po 後要重編並 commit）"
+i18n-compile.cmd = "pybabel compile -d src/ring/locale -D ring"
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "$version"
+version_scheme = "pep440"
+version_provider = "uv"
+update_changelog_on_bump = true
+major_version_zero = true
+
+[tool.pytest]
+testpaths = ["tests"]
+addopts = ["-n", "auto", "--dist=loadfile"]
+
+[tool.coverage.run]
+source = ["ring"]
+
+[tool.coverage.paths]
+source = ["src/ring", "*/ring"]

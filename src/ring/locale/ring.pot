@@ -1,0 +1,199 @@
+# Translations template for PROJECT.
+# Copyright (C) 2026 ORGANIZATION
+# This file is distributed under the same license as the PROJECT project.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PROJECT VERSION\n"
+"Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
+"POT-Creation-Date: 2026-06-20 15:48+0800\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.18.0\n"
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:65
+msgid "等你"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:66
+msgid "工作中"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:67
+msgid "跑完停著"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:68
+msgid "已離場"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:73
+#, python-brace-format
+msgid "{n} 個 session 在場"
+msgid_plural "{n} 個 session 在場"
+msgstr[0] ""
+msgstr[1] ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:74
+#, python-brace-format
+msgid "{n} 個 claude process 跑著"
+msgid_plural "{n} 個 claude process 跑著"
+msgstr[0] ""
+msgstr[1] ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:75
+#, python-brace-format
+msgid "🎤 RiNG — {sess} · {proc}"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:80
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:119
+#: /Users/weilee/Programming/personal/ring/src/ring/tui.py:82
+msgid "圖例"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:92
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:121
+msgid "（場館目前沒人上台）"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:96
+#: /Users/weilee/Programming/personal/ring/src/ring/tui.py:58
+msgid "狀態"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:97
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:135
+#: /Users/weilee/Programming/personal/ring/src/ring/tui.py:58
+msgid "專案"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:98
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:135
+#: /Users/weilee/Programming/personal/ring/src/ring/tui.py:58
+msgid "進度"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:99
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:135
+#: /Users/weilee/Programming/personal/ring/src/ring/tui.py:58
+msgid "閒置"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:100
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:135
+#: /Users/weilee/Programming/personal/ring/src/ring/tui.py:58
+msgid "去哪"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:102
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:135
+#: /Users/weilee/Programming/personal/ring/src/ring/tui.py:58
+msgid "動作"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:156
+#, python-brace-format
+msgid "每 {interval}s 刷新 · Ctrl-C 離場"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:208
+msgid "看所有 Claude Code session 上台。"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:210
+msgid "持續刷新"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:211
+msgid "watch 刷新秒數"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:212
+msgid "watch 刷新幾格後自動結束（0=無限，預設）"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:213
+msgid "連已離場的 session 也顯示"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:218
+msgid "顯示顏色圖例（--no-legend 關閉）"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/cli.py:220
+msgid "語言（如 en / zh-Hant；也吃 config / RING_LANG / LANG）"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/focus.py:171
+msgid "沒有 focuser 接得住（裝 hook，或一個專案只開一個 session 才測得到 tty）"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/hook.py:144
+#, python-brace-format
+msgid "⚠️ {path} 不是合法 JSON，先處理它再來。"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/hook.py:164
+msgid "✅ RiNG hooks 已經裝過了，沒有變更。"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/hook.py:169
+#, python-brace-format
+msgid "✅ 已註冊 RiNG hooks（{events}）到 {path}"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/hook.py:170
+msgid "重開 Claude Code session 後，🔴 待回覆狀態就會精準起來。"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/tui.py:31
+msgid "離場"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/tui.py:32
+msgid "刷新"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/tui.py:33
+msgid "含已離場"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/tui.py:34
+#: /Users/weilee/Programming/personal/ring/src/ring/tui.py:35
+msgid "跳過去"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/tui.py:66
+msgid "💡 同專案開了多個 session，裝 hook 跳轉才精準：ring install-hooks"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/tui.py:68
+msgid "↑/↓ 選一列，Enter 或 Space 跳到那個 session 的終端"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/tui.py:95
+#, python-brace-format
+msgid "🔔 {names} 在等你回話"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/tui.py:133
+msgid "（沒有選到 session）"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/tui.py:137
+#, python-brace-format
+msgid "→ {project}（{where}）"
+msgstr ""
+
+#: /Users/weilee/Programming/personal/ring/src/ring/tui.py:139
+#, python-brace-format
+msgid "{project}：{msg}"
+msgstr ""
+

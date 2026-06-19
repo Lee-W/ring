@@ -1,0 +1,62 @@
+default_install_hook_types:
+- pre-commit
+- commit-msg
+- pre-push
+default_stages:
+- pre-commit
+repos:
+- repo: meta
+  hooks:
+  - id: check-hooks-apply
+  - id: check-useless-excludes
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v5.0.0
+  hooks:
+  - id: check-vcs-permalinks
+  - id: end-of-file-fixer
+  - id: trailing-whitespace
+    args: [--markdown-linebreak-ext=md]
+  - id: debug-statements
+  - id: no-commit-to-branch
+  - id: check-merge-conflict
+  - id: check-toml
+  - id: check-yaml
+    args: [--unsafe]
+  - id: detect-private-key
+- repo: https://github.com/astral-sh/uv-pre-commit
+  rev: 0.10.3
+  hooks:
+  - id: uv-lock
+  - id: uv-sync
+    args: [--frozen, --all-groups]
+    stages: [pre-commit, post-checkout, post-merge, post-rewrite]
+- repo: https://github.com/codespell-project/codespell
+  rev: v2.4.2
+  hooks:
+  - id: codespell
+    additional_dependencies: [tomli]
+    args: [--write-changes]
+- repo: https://github.com/commitizen-tools/commitizen
+  rev: v4.13.9
+  hooks:
+  - id: commitizen
+  - id: commitizen-branch
+    stages: [post-commit]
+- repo: https://github.com/ComPWA/taplo-pre-commit
+  rev: v0.9.3
+  hooks:
+  - id: taplo-format
+- repo: local
+  hooks:
+  - id: format
+    name: Format Python code
+    entry: uv run --no-sync poe format
+    language: system
+    pass_filenames: false
+    types: [python]
+  - id: lint
+    name: Linters
+    entry: uv run --no-sync poe lint
+    language: system
+    pass_filenames: false
+    types: [python]
