@@ -1,7 +1,7 @@
 """i18n 衛生守衛：
 
 1. committed 的 .mo 必須跟 .po 同步（防「改了 .po 忘了 poe i18n-compile」）。
-2. 源碼字串必須是台灣漢語（擋常見中國用語）。
+2. 原始碼與 README 必須是台灣漢語（擋常見中國用語）。
 """
 
 from pathlib import Path
@@ -67,12 +67,13 @@ def test_en_mo_is_in_sync_with_po() -> None:
         set_lang(None)
 
 
-def test_source_uses_taiwanese_mandarin() -> None:
-    src = Path(__file__).resolve().parents[1] / "src" / "ring"
+def test_taiwanese_mandarin_in_code_and_readme() -> None:
+    root = Path(__file__).resolve().parents[1]
+    targets = [*(root / "src" / "ring").rglob("*.py"), root / "README.md"]
     offenders: list[str] = []
-    for py in src.rglob("*.py"):
-        text = py.read_text(encoding="utf-8")
+    for f in targets:
+        text = f.read_text(encoding="utf-8")
         for bad, good in _CHINA_ISMS.items():
             if bad in text:
-                offenders.append(f"{py.name}：「{bad}」應為「{good}」")
-    assert not offenders, "源碼出現中國用語：\n" + "\n".join(offenders)
+                offenders.append(f"{f.name}：「{bad}」應為「{good}」")
+    assert not offenders, "出現中國用語：\n" + "\n".join(offenders)

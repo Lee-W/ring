@@ -1,10 +1,12 @@
 # RiNG 🎤
 
-> **R**ealtime **I**nstance **N**otification **G**rid
-> ——看所有 active 的 Claude Code session 上台的**場館**。
+**台灣漢語** · [English](README.en.md)
 
-你同時開了好幾個 Claude Code，不知道哪個正在等你回話、哪個還在跑、哪個早就停了。
-RiNG 把它們全部請上同一個舞台，一眼看完——**誰在等你，排最前面**。
+> **R**ealtime **I**nstance **N**otification **G**rid
+> ——看所有 active 的 agent CLI session 上台的**場館**（內建 Claude Code，可擴充）。
+
+你同時開了好幾個 Claude Code（或別的 agent CLI），不知道哪個正在等你回話、哪個還在跑、
+哪個早就停了。RiNG 把它們全部請上同一個舞台，一眼看完——**誰在等你，排最前面**。
 session 需要你回話時，它「**ring** 你」。
 
 名字三重共鳴：📞 它 **ring** 你（待回覆通知）＋ 🎤 BanG Dream! 的 live house「RiNG」
@@ -99,18 +101,49 @@ zero-config 不必設定就能用；想要精準的「誰在等你」，再裝 h
 Claude Code 的 JSONL token 數字是壞的（input 差約 100 倍、output 差約 10 倍），
 所有靠它做帳的工具都中招。RiNG 只看**狀態**，不做 cost accounting——刻意避開這雷。
 
-## 精準的「待回覆」狀態（hook 模式）
+## hook 模式（精準的「待回覆」）
 
-zero-config 靠 mtime 猜不出「在等你回話」。裝 hook 後，RiNG 從 Claude Code 的
-事件直接拿到精準狀態（Stop / Notification → 🔴 等你；SessionEnd → 立刻消失）：
+zero-config 只靠檔案 mtime，**分不出「在等你回話」還是「剛跑完」**。裝 hook 後，
+RiNG 直接收 Claude Code 的事件，狀態才會精準——🔴 待回覆 ＋ 響鈴都要靠它。
+
+### 1. 先裝成全域指令
+
+hook 會被寫成「執行 `ring hook`」，所以 `ring` 要在 PATH 上、指向穩定路徑：
 
 ```sh
-uv tool install .          # 先裝成全域指令（讓 hook 指向穩定路徑）
-ring install-hooks         # 註冊進 ~/.claude/settings.json（合併，不覆蓋）
-ring install-hooks --dry-run   # 只想先看會寫什麼
+uv tool install '.[tui]'    # 在 repo 目錄裡
 ```
 
-裝完重開 session 即生效。RiNG 偵測到 `~/.config/ring/sessions/` 有資料就自動切精準模式。
+### 2. 註冊 hook
+
+```sh
+ring install-hooks            # 寫進 ~/.claude/settings.json（合併，不覆蓋既有 hooks）
+ring install-hooks --dry-run  # 只想先看會寫什麼、不動檔
+```
+
+它註冊這幾個事件，對應到狀態：
+
+| Claude Code 事件 | RiNG 狀態 |
+|---|---|
+| `SessionStart` / `UserPromptSubmit` | 🟢 工作中 |
+| `Stop` / `Notification` | 🔴 待回覆（回完一輪 / 卡權限） |
+| `SessionEnd` | 從看板消失 |
+
+### 3. 重開 session、確認生效
+
+hook 只對**新開的 session** 生效，所以裝完要重開。確認方法：
+
+```sh
+ls ~/.config/ring/sessions/   # 出現 <session_id>.json 就代表 hook 在寫了
+```
+
+RiNG 一偵測到 `~/.config/ring/sessions/` 有資料就自動切精準模式（hook 來源優先、
+zero-config 掃描補上沒裝 hook 的 session）。
+
+### 要移除
+
+`ring install-hooks` 寫的是標準 Claude Code hook，手動編輯 `~/.claude/settings.json`、
+把 `ring hook` 那幾條移掉即可。
 
 ## 設定（選用）
 
@@ -148,6 +181,40 @@ poe i18n-extract     # 從原始碼抽 msgid → src/ring/locale/ring.pot
 # 複製 ring.pot 成 src/ring/locale/<lang>/LC_MESSAGES/ring.po，填 msgstr
 poe i18n-compile     # 各 .po → .mo（.mo 要 commit；wheel 會自動帶上）
 ```
+
+## 擴充
+
+core 不綁死任何特定工具或終端。兩個擴充點都是「寫個小類別 ＋ 註冊」，主流程零改動。
+
+### 別的 agent CLI（`SessionSource`）
+
+內建 `ClaudeCodeSource`（掃 `~/.claude`）。要監測別的工具，寫一個 source 吐出
+`Session`、註冊即可：
+
+```python
+from ring.registry import Session, Status
+from ring.sources import register_source
+
+
+class MyToolSource:
+    name = "mytool"
+
+    def discover(self) -> list[Session]:
+        return [Session(session_id="…", cwd="…", status=Status.WORKING,
+                        last_active=0.0, last_action="→ …", source="mytool")]
+
+
+register_source(MyToolSource())
+```
+
+`Session` 是工具中立的（id / cwd / status / last_action / tty / todo…），各 source
+自己決定怎麼填。
+
+### 別的終端（`Focuser`）
+
+跳轉的終端整合也一樣——寫個符合 `Focuser` 協定的類別（`try_focus(session) ->
+(ok, msg) | None`），呼叫 `ring.focus.register_focuser(MyFocuser())`。內建 tmux /
+iTerm2 / Terminal.app，各自一個模組（`ring/focus/tmux.py` …）。
 
 ## 平台與隱私
 
