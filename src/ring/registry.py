@@ -394,27 +394,3 @@ def _hook_sessions(procs: list[tuple[str, str]]) -> list[Session]:
             if counts.get(s.cwd, 0) == 0:
                 s.status = Status.ENDED
     return out
-
-
-def discover_sessions() -> list[Session]:
-    """場館點名：合併 hook 與 scan 兩個來源（同一 session 以 hook 為準），配 tmux 座標、排序。
-
-    刻意「合併」而非「hook 優先就忽略 scan」——否則剛裝 hook、還沒觸發事件的現存
-    session 會憑空消失，打臉「看到所有 session」。hook 有的精準，沒有的用 scan 補。
-    """
-    procs = _claude_procs()
-    merged: dict[str, Session] = {s.session_id: s for s in _hook_sessions(procs)}
-    for s in _scan_sessions(procs):
-        merged.setdefault(s.session_id, s)  # hook 已有就不覆蓋
-    sessions = list(merged.values())
-    targets = _tmux_targets()
-    for s in sessions:
-        s.tmux_target = targets.get(s.cwd)
-    sessions.sort(key=lambda s: (s.status.rank, s.idle_for))
-    return sessions
-
-
-if __name__ == "__main__":
-    for s in discover_sessions():
-        prog = f"{s.todo[0]}/{s.todo[1]}" if s.todo else "-"
-        print(f"{s.status.marker} {s.project:20} {prog:>5} {int(s.idle_for):>5}s  {s.location:24} {s.last_action}")

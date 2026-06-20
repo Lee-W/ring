@@ -1,7 +1,7 @@
 [project]
-name = "ring-cc"
+name = "ring"
 version = "0.1.0"
-description = "RiNG — Realtime Instance Notification Grid：看所有 active Claude Code session 上台的場館 TUI。"
+description = "RiNG — Realtime Instance Notification Grid：看所有 active 的 agent CLI session（內建 Claude Code）上台的場館 TUI。"
 readme = "README.md"
 requires-python = ">=3.13"
 license = "MIT"
@@ -88,7 +88,7 @@ ci.env = { SKIP = "no-commit-to-branch" }
 setup-pre-commit.help = "Install pre-commit hooks"
 setup-pre-commit.cmd = "prek install"
 
-i18n-extract.help = "從源碼抽出可翻譯字串到 .pot（改字串後重抽，再 merge 進各 .po）"
+i18n-extract.help = "從原始碼抽出可翻譯字串到 .pot（改字串後重抽，再 merge 進各 .po）"
 i18n-extract.cmd = "pybabel extract -F babel.cfg -o src/ring/locale/ring.pot src/ring"
 
 i18n-compile.help = "把各語言的 .po 編成 .mo（改 .po 後要重編並 commit）"

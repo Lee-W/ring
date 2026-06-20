@@ -688,7 +688,7 @@ wheels = [
 ]
 
 [[package]]
-name = "ring-cc"
+name = "ring"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

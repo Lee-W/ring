@@ -1,6 +1,6 @@
 """RiNG 的 Textual live TUI——鍵盤導覽 + tmux / iTerm2 一鍵跳。
 
-需要 textual（``pip install 'ring-cc[tui]'``）。沒裝時 CLI 會自動退回 Rich poll。
+需要 textual（``pip install 'ring[tui]'``）。沒裝時 CLI 會自動退回 Rich poll。
 
 鍵：↑/↓ 選 session、Enter/Space 跳到它所在的終端、a 切換是否顯示已離場、r 刷新、q 離場。
 """

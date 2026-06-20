@@ -45,7 +45,7 @@ python -m ring
 
 - 裝了 **Textual**（`[tui]` extra）且在真終端 → **互動 TUI**：
   `↑/↓` 選 session、`Enter` 跳到它所在的終端、`a` 切換是否顯示已離場、`r` 刷新、`q` 離場。
-- 否則 → **Rich poll**（清屏重畫）；連 Rich 都沒有就純文字。三層優雅降級。
+- 否則 → **Rich poll**（清除畫面重畫）；連 Rich 都沒有就純文字。三層優雅降級。
 
 ### 跳到 session（`Enter` / `Space`）
 
@@ -138,13 +138,13 @@ muted = "grey50"
 ## 語言 / 翻譯
 
 UI 用 **gettext**，msgid 直接是**台灣漢語**——所以預設（zh-Hant）不需要任何 `.mo`，
-源碼即翻譯。切語言：`--lang en`（或 `RING_LANG=en` / config 的 `lang`）。複數用
+原始碼即翻譯。切語言：`--lang en`（或 `RING_LANG=en` / config 的 `lang`）。複數用
 `ngettext` 正確處理（`1 session` vs `2 sessions`）。
 
 加一個語言、或改了字串要重抽：
 
 ```sh
-poe i18n-extract     # 從源碼抽 msgid → src/ring/locale/ring.pot
+poe i18n-extract     # 從原始碼抽 msgid → src/ring/locale/ring.pot
 # 複製 ring.pot 成 src/ring/locale/<lang>/LC_MESSAGES/ring.po，填 msgstr
 poe i18n-compile     # 各 .po → .mo（.mo 要 commit；wheel 會自動帶上）
 ```

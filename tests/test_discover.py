@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 import ring.registry as registry
-from ring.registry import Status, discover_sessions
+from ring.registry import Status
+from ring.sources import discover_sessions
 
 
 def _write_session(projects: Path, project_enc: str, sid: str, cwd: str, mtime: float) -> None:

@@ -19,7 +19,8 @@ from ring import __version__
 from ring.config import get_config
 from ring.i18n import gettext as _
 from ring.i18n import ngettext, set_lang
-from ring.registry import Session, Status, discover_sessions, running_claude_pids
+from ring.registry import Session, Status, running_claude_pids
+from ring.sources import discover_sessions
 
 try:
     from rich.box import SIMPLE_HEAD

@@ -1,6 +1,6 @@
 """RiNG i18n — gettext。
 
-msgid 用**台灣漢語**：源碼即預設語言，所以 zh-Hant 不需要任何 ``.mo``。
+msgid 用**台灣漢語**：原始碼即預設語言，所以 zh-Hant 不需要任何 ``.mo``。
 其他語言放 ``locale/<lang>/LC_MESSAGES/ring.mo``（由 ``.po`` 編譯，見 README / ``poe i18n-compile``）。
 
 切語言：process 啟動時 ``set_lang()`` 裝上對應 translation；之後 ``_()`` / ``ngettext()`` 就用它。
