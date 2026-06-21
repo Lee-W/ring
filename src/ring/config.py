@@ -8,6 +8,7 @@
     legend = true
     active_window_seconds = 21600     # 只看最近這段時間動過的 session（預設 6h）
     working_threshold_seconds = 90    # 多久沒動就從 🟢 工作中 變 🟡 閒置
+    waiting_window_seconds = 1800     # IDLE 升 WAITING 的時間窗上限（預設 30 分）
     focusers = ["tmux", "iTerm2", "Terminal"]   # 跳轉嘗試順序；省略＝內建預設
 """
 
@@ -40,6 +41,7 @@ class Config:
     legend: bool = True
     active_window_seconds: int = 6 * 60 * 60
     working_threshold_seconds: int = 90
+    waiting_window_seconds: int = 1800  # IDLE 升 WAITING 的時間窗上限（預設 30 分）
     focusers: tuple[str, ...] = ()  # 空＝用內建預設順序
     colors: dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_COLORS))
 
@@ -86,6 +88,7 @@ def load(path: Path | None = None) -> Config:
         legend=_as_bool(raw.get("legend"), d.legend),
         active_window_seconds=_as_int(raw.get("active_window_seconds"), d.active_window_seconds),
         working_threshold_seconds=_as_int(raw.get("working_threshold_seconds"), d.working_threshold_seconds),
+        waiting_window_seconds=_as_int(raw.get("waiting_window_seconds"), d.waiting_window_seconds),
         focusers=_as_str_tuple(raw.get("focusers")),
         colors=_parse_colors(raw.get("colors")),
     )

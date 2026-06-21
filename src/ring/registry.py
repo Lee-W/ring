@@ -7,7 +7,8 @@
    等事件即時寫入。能精準知道「這個 session 正在等你」。
 2. zero-config fallback：直接掃 ``~/.claude/projects/**/*.jsonl``，用檔案 mtime
    推活躍度，從記錄裡的 ``cwd`` 欄位還原真實路徑（避開目錄名以 ``-`` 編碼
-   造成的 hyphen 還原歧義）。
+   造成的 hyphen 還原歧義）。scan 模式現在能標「回完一輪在等你」這種 🔴 WAITING，
+   但測不到 Notification（卡權限等授權流程）那種——後者 JSONL 不留痕跡，仍需 hook 模式。
 
 額外富化：
 - ``tmux_target``：靠 tmux pane 的 current_path 對 cwd，給你「去哪」的座標。
@@ -35,6 +36,7 @@ RING_REGISTRY = Path.home() / ".config" / "ring" / "sessions"
 _CFG = get_config()
 ACTIVE_WINDOW_SECONDS = _CFG.active_window_seconds  # 只看最近這段時間動過的 session（預設 6h）
 WORKING_THRESHOLD_SECONDS = _CFG.working_threshold_seconds  # 多久沒動 → 🟢 工作中 變 🟡 閒置
+WAITING_WINDOW_SECONDS = _CFG.waiting_window_seconds  # IDLE 升 WAITING 的時間窗上限（預設 30 分）
 _SUBPROCESS_CACHE_TTL = 1.0  # ps / tmux 結果的短快取，省掉同一次刷新內的重複呼叫
 
 
@@ -67,6 +69,7 @@ class Session:
     tty: str | None = None  # e.g. "/dev/ttys003"，給非-tmux 終端（iTerm2 等）聚焦用
     todo: tuple[int, int] | None = None  # (done, total)
     recent_actions: list[str] = field(default_factory=list)
+    _tail_kind: str = field(default="none", repr=False, compare=False)  # 內部：scan 路徑暫存對話尾判定
 
     @property
     def project(self) -> str:
@@ -182,6 +185,80 @@ def _extract_todo(records: list[dict[str, Any]]) -> tuple[int, int] | None:
                     done = sum(1 for t in todos if isinstance(t, dict) and t.get("status") == "completed")
                     return done, len(todos)
     return None
+
+
+def _conversation_tail_kind(records: list[dict[str, Any]]) -> str:
+    """從對話尾巴往回走，判定最近一個「真訊息紀錄」的性質。
+
+    回傳值（str）：
+    - ``"waiting"``    : 對話最後是 assistant end_turn 收尾，Claude 回完在等你。
+    - ``"working"``    : 對話最後是真人送出的 prompt，輪到 Claude 回應。
+    - ``"interrupted"`` : 工具呼叫進行中（assistant tool_use / user tool_result），尚未完成一輪。
+    - ``"none"``       : 沒有可判定的訊息（空 records、全噪音、無 assistant/user 訊息）。
+
+    演算法：從 ``reversed(records)`` 往回走，跳過噪音，找第一個真訊息紀錄，
+    依 type 與 content 判定後立即 return。絕不直接看 records[-1]——尾巴幾乎都是噪音。
+
+    限制（誠實標明）：靠對話尾巴猜。Notification（卡權限等授權流程）在 JSONL 不留痕跡，
+    scan 模式測不到——那種待回覆仍需 hook 模式偵測。
+    """
+    for record in reversed(records):
+        t = record.get("type")
+        # --- 跳過噪音 ---
+        if t not in ("user", "assistant"):
+            continue  # file-history-snapshot / system / permission-mode / mode / last-prompt 等
+        if record.get("isMeta") is True:
+            continue
+        if record.get("isSidechain") is True:
+            continue
+        # --- 第一個真訊息紀錄，依 type 判定 ---
+        if t == "assistant":
+            msg = record.get("message")
+            stop_reason = msg.get("stop_reason") if isinstance(msg, dict) else None
+            # assistant 帶 tool_use block → 工具呼叫進行中
+            if any(
+                isinstance(b, dict) and b.get("type") == "tool_use"
+                for b in _blocks(record)
+            ):
+                return "interrupted"
+            if stop_reason == "end_turn":
+                return "waiting"
+            # tool_use / stop_sequence / None / 其他 → 視為中途被打斷
+            return "interrupted"
+        # t == "user"
+        # user 帶工具結果（toolUseResult 欄位，或 content 含 tool_result block）→ 中途
+        if record.get("toolUseResult") is not None:
+            return "interrupted"
+        if any(
+            isinstance(b, dict) and b.get("type") == "tool_result"
+            for b in _blocks(record)
+        ):
+            return "interrupted"
+        # command 噪音（slash-command stdout）→ 跳過，繼續往回走
+        text_blocks = [b for b in _blocks(record) if isinstance(b, dict) and b.get("type") == "text"]
+        if text_blocks and all(_clean_text(str(b.get("text", ""))) == "" for b in text_blocks):
+            continue
+        # 真人 prompt → 輪到 Claude 回應，不是在等你
+        return "working"
+    return "none"
+
+
+def _apply_waiting(
+    status: Status,
+    idle_seconds: float,
+    tail_kind: str,
+    waiting_window: float,
+) -> Status:
+    """在 IDLE 區間且對話尾是 end_turn 且在時間窗內，升為 WAITING；否則原狀回傳。
+
+    純函式、可單測，不依賴 module-level 常數。
+    只在 status is Status.IDLE 時考慮升級：
+    - WORKING（< 90s）：剛回完可能 Claude 馬上又動，標 🔴 會閃爍，維持 WORKING。
+    - ENDED：超過活躍窗，不升。
+    """
+    if status is Status.IDLE and tail_kind == "waiting" and idle_seconds < waiting_window:
+        return Status.WAITING
+    return status
 
 
 def _recent_actions(records: list[dict[str, Any]], n: int = 5) -> list[str]:
@@ -335,6 +412,7 @@ def _scan_sessions(procs: list[tuple[str, str]]) -> list[Session]:
                     source="scan",
                     todo=_extract_todo(records),
                     recent_actions=_recent_actions(records),
+                    _tail_kind=_conversation_tail_kind(records),
                 )
             )
 
@@ -354,6 +432,7 @@ def _scan_sessions(procs: list[tuple[str, str]]) -> list[Session]:
             idle = now - s.last_active
             if i < live_n or idle < WORKING_THRESHOLD_SECONDS:
                 s.status = _scan_status(idle)
+                s.status = _apply_waiting(s.status, idle, s._tail_kind, WAITING_WINDOW_SECONDS)
             if i == 0 and uniq_tty:
                 s.tty = uniq_tty
             out.append(s)
