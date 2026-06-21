@@ -32,6 +32,9 @@ class ClaudeCodeSource:
         merged: dict[str, Session] = {s.session_id: s for s in registry._hook_sessions(procs)}
         for s in registry._scan_sessions(procs):
             merged.setdefault(s.session_id, s)  # 同一 session 以 hook 為準
+        existing = list(merged.values())
+        for s in registry._synthetic_sessions(procs, existing):
+            merged.setdefault(s.session_id, s)  # 合成列只填無 row 的 cwd
         return list(merged.values())
 
 

@@ -53,3 +53,45 @@ def test_scan_action_parsed_from_jsonl(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert len(sessions) == 1
     assert sessions[0].last_action == "→ Edit"
     assert sessions[0].project == "app"
+
+
+# ---------------------------------------------------------------------------
+# 合成補列（Test plan B）
+# ---------------------------------------------------------------------------
+
+
+def test_discover_synthetic_row_for_live_proc_without_jsonl(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """live proc 有 cwd 但 projects 目錄裡無對應近期 jsonl → 多一列 source="proc"。"""
+    projects = tmp_path / "projects"
+    projects.mkdir()  # 空目錄，無任何 jsonl
+    monkeypatch.setattr(registry, "CLAUDE_PROJECTS", projects)
+    monkeypatch.setattr(registry, "RING_REGISTRY", tmp_path / "noreg")  # 無 hook 資料
+    monkeypatch.setattr(registry, "_claude_procs", lambda: [("/live/ghost", "/dev/ttys9")])
+    monkeypatch.setattr(registry, "_tmux_targets", lambda: {})
+
+    sessions = discover_sessions()
+    ghost = next((s for s in sessions if s.cwd == "/live/ghost"), None)
+    assert ghost is not None, "應補一列 cwd=/live/ghost"
+    assert ghost.status is Status.IDLE
+    assert ghost.source == "proc"
+    assert ghost.tty == "/dev/ttys9"
+
+
+def test_discover_no_synthetic_row_when_scan_covers_cwd(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """同一個 cwd 既有近期 jsonl（scan 列）又有 live proc → 只有 scan 那列，無合成列。"""
+    projects = tmp_path / "projects"
+    now = time.time()
+    _write_session(projects, "-work-app", "existing", "/work/app", now)
+    monkeypatch.setattr(registry, "CLAUDE_PROJECTS", projects)
+    monkeypatch.setattr(registry, "RING_REGISTRY", tmp_path / "noreg")
+    monkeypatch.setattr(registry, "_claude_procs", lambda: [("/work/app", "")])
+    monkeypatch.setattr(registry, "_tmux_targets", lambda: {})
+
+    sessions = discover_sessions()
+    app_sessions = [s for s in sessions if s.cwd == "/work/app"]
+    assert len(app_sessions) == 1, "同 cwd 不應同時存在 scan 列 + 合成列"
+    assert app_sessions[0].source == "scan"  # 以 scan 列為準，無合成列

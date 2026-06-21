@@ -64,7 +64,7 @@ class Session:
     status: Status
     last_active: float
     last_action: str
-    source: str  # "hook" | "scan"
+    source: str  # "hook" | "scan" | "proc"
     tmux_target: str | None = None  # e.g. "main:1.0"
     tty: str | None = None  # e.g. "/dev/ttys003"，給非-tmux 終端（iTerm2 等）聚焦用
     todo: tuple[int, int] | None = None  # (done, total)
@@ -436,6 +436,47 @@ def _scan_sessions(procs: list[tuple[str, str]]) -> list[Session]:
             if i == 0 and uniq_tty:
                 s.tty = uniq_tty
             out.append(s)
+    return out
+
+
+def _synthetic_sessions(procs: list[tuple[str, str]], existing: list[Session]) -> list[Session]:
+    """對「有 live process 卻無任何對應 row（scan + hook 都沒有）」的 cwd 合成最小資訊列。
+
+    :param procs:    每個還活著的 claude：(cwd, tty)，來自 ``_claude_procs()``。
+    :param existing: 已由 hook + scan 產出的 session 列表（用來計算差集）。
+    :returns:        補列清單（每個入選 cwd 各一列，source="proc"）。
+    """
+    existing_cwds = {s.cwd for s in existing}
+    # 先收集每個 cwd 的所有 tty（保留順序），以便取「第一個非空 tty」
+    cwd_ttys: dict[str, list[str]] = {}
+    for cwd, tty in procs:
+        if not cwd:
+            continue
+        cwd_ttys.setdefault(cwd, []).append(tty)
+
+    out: list[Session] = []
+    seen: set[str] = set()
+    for cwd, tty in procs:
+        if not cwd:  # _pid_cwd 失敗的情況，沒 cwd 撐不起一列
+            continue
+        if cwd in existing_cwds:  # 已經有 row 了（hook 或 scan 覆蓋）
+            continue
+        if cwd in seen:  # 同 cwd 多 process 只補一列
+            continue
+        seen.add(cwd)
+        # 取第一個非空 tty
+        first_tty = next((t for t in cwd_ttys.get(cwd, []) if t), None)
+        out.append(
+            Session(
+                session_id=f"synthetic:{cwd}",
+                cwd=cwd,
+                status=Status.IDLE,
+                last_active=time.time(),
+                last_action="—",
+                source="proc",
+                tty=first_tty,
+            )
+        )
     return out
 
 

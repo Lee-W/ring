@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 
 from ring.registry import (
+    Session,
     Status,
     _apply_waiting,
     _clean_text,
@@ -11,6 +12,7 @@ from ring.registry import (
     _extract_todo,
     _latest_action,
     _scan_status,
+    _synthetic_sessions,
     _tail_records,
     _tool_summary,
 )
@@ -210,3 +212,71 @@ def test_tail_kind_only_noise_records_is_none() -> None:
 )
 def test_apply_waiting(status: Status, age: int, tail_kind: str, window: int, expected: Status) -> None:
     assert _apply_waiting(status, age, tail_kind, window) is expected
+
+
+# ---------------------------------------------------------------------------
+# _synthetic_sessions (Test plan A)
+# ---------------------------------------------------------------------------
+
+
+def _make_session(cwd: str) -> Session:
+    """建立最小 Session，只填 cwd，其餘用預設值。"""
+    return Session(
+        session_id=f"scan:{cwd}",
+        cwd=cwd,
+        status=Status.IDLE,
+        last_active=0.0,
+        last_action="—",
+        source="scan",
+    )
+
+
+def test_synthetic_sessions_basic_one_row() -> None:
+    """procs 有一個 cwd、existing 空 → 補一列，各欄位正確。"""
+    result = _synthetic_sessions([("/a", "/dev/ttys1")], [])
+    assert len(result) == 1
+    s = result[0]
+    assert s.cwd == "/a"
+    assert s.status is Status.IDLE
+    assert s.source == "proc"
+    assert s.tty == "/dev/ttys1"
+    assert s.session_id == "synthetic:/a"
+
+
+def test_synthetic_sessions_skips_existing_cwd() -> None:
+    """existing 已含 cwd=/a 的 Session → 回 []，不補。"""
+    existing = [_make_session("/a")]
+    result = _synthetic_sessions([("/a", "/dev/ttys1")], existing)
+    assert result == []
+
+
+def test_synthetic_sessions_dedup_same_cwd_takes_first_nonnull_tty() -> None:
+    """同 cwd 兩筆 procs（第一筆 tty 空、第二筆有 tty）→ 只回一列，tty 取第一個非空。"""
+    result = _synthetic_sessions([("/b", ""), ("/b", "/dev/ttys2")], [])
+    assert len(result) == 1
+    assert result[0].cwd == "/b"
+    assert result[0].tty == "/dev/ttys2"
+
+
+def test_synthetic_sessions_skips_empty_cwd() -> None:
+    """空 cwd 的 proc → 跳過，不生列。"""
+    result = _synthetic_sessions([("", "")], [])
+    assert result == []
+
+
+@pytest.mark.parametrize(
+    "procs,n_existing_cwds,expected_len",
+    [
+        ([("/x", ""), ("/y", "/dev/ttys3")], 0, 2),  # 兩個不同 cwd，都不在 existing → 補兩列
+        ([("/x", ""), ("/y", "/dev/ttys3")], 1, 1),  # 第一個 cwd 在 existing → 只補一列
+        ([("/x", ""), ("", "")], 0, 1),               # 空 cwd 跳過 → 只補 /x
+    ],
+    ids=["two_cwds_both_new", "two_cwds_one_existing", "one_valid_one_empty"],
+)
+def test_synthetic_sessions_count(
+    procs: list[tuple[str, str]], n_existing_cwds: int, expected_len: int
+) -> None:
+    cwds = [cwd for cwd, _ in procs if cwd][:n_existing_cwds]
+    existing = [_make_session(c) for c in cwds]
+    result = _synthetic_sessions(procs, existing)
+    assert len(result) == expected_len
