@@ -14,7 +14,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.widgets import DataTable, Footer, Header, Static
 
-from ring.cli import _STATUS_STYLE, _header, _rel, board, status_label
+from ring.cli import _LOC_MAX, _STATUS_STYLE, _header, _middle_truncate, _rel, board, status_label
 from ring.focus import jump as focus_jump
 from ring.i18n import gettext as _
 from ring.i18n import set_lang
@@ -106,7 +106,8 @@ class RingApp(App[None]):
         for s in self._sessions:
             status_cell = Text(f"{s.status.marker} {status_label(s.status)}", style=_STATUS_STYLE[s.status])
             progress = f"{s.todo[0]}/{s.todo[1]}" if s.todo else "·"
-            table.add_row(status_cell, s.project, progress, _rel(s.idle_for), f"📍{s.location}", s.last_action)
+            loc_cell = f"📍{_middle_truncate(s.location, _LOC_MAX)}"
+            table.add_row(status_cell, s.project, progress, _rel(s.idle_for), loc_cell, s.last_action)
         if self._sessions:
             table.move_cursor(row=min(cursor, len(self._sessions) - 1))
 

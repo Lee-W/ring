@@ -55,6 +55,50 @@ def _rel(seconds: float) -> str:
     return f"{s // 3600}h{(s % 3600) // 60:02d}m"
 
 
+# 「去哪」欄路徑上限，三套渲染共用（Rich / plain / TUI）
+_LOC_MAX = 40
+
+
+def _middle_truncate(text: str, max_len: int) -> str:
+    """中段省略，保留路徑最後一層目錄完整。
+
+    截斷規則（四分支）：
+
+    1. ``len(text) <= max_len`` → 原樣回傳。
+       tmux 座標（如 ``main:1.0``）很短，自然走這條，不被動到。
+
+    2. 否則以 ``/`` 為界，保留最後一層目錄完整：
+       ``tail = "/" + text.rsplit("/", 1)[-1]``，
+       ``head_budget = max_len - 1 - len(tail)``（1 = ``…`` 的長度）。
+       若 ``head_budget >= 1``：回傳 ``text[:head_budget] + "…" + tail``。
+
+    3. ``head_budget < 1``（最後一層目錄名本身就超長，或 text 無 ``/``）：
+       退化為純字元中段省略——
+       ``keep = max_len - 1``；``front = (keep + 1) // 2``；``back = keep // 2``；
+       回傳 ``text[:front] + "…" + text[-back:]``（總長 == max_len）。
+
+    4. ``max_len <= 1`` 邊界：直接回傳 ``text[:max_len]``，避免負數切片。
+
+    ``…`` 用單一字元（U+2026），長度算 1，與 Rich ``overflow="ellipsis"`` 視覺一致。
+    """
+    if max_len <= 1:
+        return text[:max_len]
+    if len(text) <= max_len:
+        return text
+    # 以 / 為界，保留最後一層
+    tail = "/" + text.rsplit("/", 1)[-1]
+    head_budget = max_len - 1 - len(tail)  # 1 for "…"
+    if head_budget >= 1:
+        return text[:head_budget] + "…" + tail
+    # 病態長尾段 fallback：純字元中段省略
+    keep = max_len - 1
+    front = (keep + 1) // 2
+    back = keep // 2
+    if back == 0:
+        return text[:max_len]
+    return text[:front] + "…" + text[-back:]
+
+
 def board(show_all: bool) -> list[Session]:
     sessions = discover_sessions()
     if show_all:
@@ -99,14 +143,15 @@ def _rich_renderable(sessions: list[Session], show_legend: bool) -> Group:
     table.add_column(_("專案"), style=_COLORS["project"], no_wrap=True)
     table.add_column(_("進度"), justify="right", no_wrap=True)
     table.add_column(_("閒置"), justify="right", no_wrap=True)
-    table.add_column(_("去哪"), style=_COLORS["location"], no_wrap=True, min_width=16)
+    table.add_column(_("去哪"), style=_COLORS["location"], no_wrap=True, min_width=16, max_width=_LOC_MAX)
     # action 可能很長：給 max_width 上限，否則 no_wrap 會吃掉整列寬度、把其他欄壓成 0。
     table.add_column(_("動作"), no_wrap=True, overflow="ellipsis", max_width=50)
 
     for s in sessions:
         status_cell = Text(f"{s.status.marker} {status_label(s.status)}", style=_STATUS_STYLE[s.status])
         progress = f"{s.todo[0]}/{s.todo[1]}" if s.todo else "·"
-        table.add_row(status_cell, s.project, progress, _rel(s.idle_for), f"📍{s.location}", s.last_action)
+        loc_cell = f"📍{_middle_truncate(s.location, _LOC_MAX)}"
+        table.add_row(status_cell, s.project, progress, _rel(s.idle_for), loc_cell, s.last_action)
 
     blocks.append(table)
     return Group(*blocks)
@@ -129,7 +174,7 @@ def _render_plain(sessions: list[Session], show_legend: bool) -> str:
             s.project,
             f"{s.todo[0]}/{s.todo[1]}" if s.todo else "·",
             _rel(s.idle_for),
-            s.location,
+            _middle_truncate(s.location, _LOC_MAX),
             s.last_action[:48],
         )
         for s in sessions
