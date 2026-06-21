@@ -8,3 +8,4 @@ dist/
 # 覆蓋全域 ~/.gitignore 的 *.mo / *.pot 規則。
 !src/ring/locale/**/*.mo
 !src/ring/locale/ring.pot
+junit.xml
