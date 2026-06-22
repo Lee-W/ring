@@ -70,10 +70,18 @@ class Session:
     todo: tuple[int, int] | None = None  # (done, total)
     recent_actions: list[str] = field(default_factory=list)
     _tail_kind: str = field(default="none", repr=False, compare=False)  # 內部：scan 路徑暫存對話尾判定
+    origin_cwd: str = ""  # 開場 cwd（session 第一筆帶 cwd 紀錄），用於歸屬；空時 fallback 到 cwd
 
     @property
     def project(self) -> str:
-        return Path(self.cwd).name or self.cwd
+        """session 所屬專案名稱。
+
+        優先用 ``origin_cwd``（開場 cwd）——確保中途 ``cd`` 過的 session 仍歸屬到
+        它真正的專案，而非漂到目的地專案。``origin_cwd`` 未設時 fallback 到 ``cwd``，
+        行為與舊版一致（hook / proc 等來源的 cwd 本就穩定）。
+        """
+        base = self.origin_cwd or self.cwd
+        return Path(base).name or base
 
     @property
     def idle_for(self) -> float:
@@ -109,6 +117,40 @@ def _tail_records(path: Path, max_tail: int = 128 * 1024) -> list[dict[str, Any]
         except json.JSONDecodeError:
             continue
     return out
+
+
+def _head_cwd(path: Path, max_head: int = 128 * 1024) -> str:
+    """讀 JSONL 檔頭，回傳第一筆含非空 ``cwd`` 欄位的紀錄之 cwd。
+
+    目的：修補 scan 模式「中途 cd 漂移」問題。Claude Code session 中途 ``cd``
+    後，新紀錄的 ``cwd`` 已指向目的地目錄，若只看檔尾（``_tail_records``）會
+    誤判 session 歸屬。改讀檔頭取「開場 cwd」才能把 session 留在它真正所屬的
+    專案列，而非漂到目的地專案。
+
+    跳過 JSONL 裡無 ``cwd`` 的 meta 筆（last-prompt、mode、permission-mode、
+    file-history-snapshot 等）；命中即停，不必整檔讀完。
+
+    :param path:     JSONL 檔案路徑。
+    :param max_head: 從檔頭最多讀取的位元組數，預設 128 KiB，足以涵蓋早期幾十筆紀錄。
+    :returns:        第一筆非空 cwd 字串；找不到（空檔、全無 cwd）回 ``""``。
+    """
+    try:
+        with path.open("rb") as f:
+            chunk = f.read(max_head)
+    except OSError:
+        return ""
+    for raw in chunk.splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            record = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        cwd = record.get("cwd")
+        if cwd and isinstance(cwd, str):
+            return cwd
+    return ""
 
 
 def _blocks(record: dict[str, Any]) -> list[Any]:
@@ -400,8 +442,17 @@ def _scan_sessions(procs: list[tuple[str, str]]) -> list[Session]:
             if records:
                 cwd = str(records[-1].get("cwd") or "")
                 last_action = _latest_action(records)
-            if not cwd:
+            origin = _head_cwd(jsonl)
+            if not cwd and not origin:
+                # 兩者皆空時走 dash-還原 fallback，origin 與 cwd 退回同一值
                 cwd = "/" + project_dir.name.lstrip("-").replace("-", "/")
+                origin = cwd
+            elif not cwd:
+                # 只有 cwd 空、origin 有值時，cwd fallback 到 origin
+                cwd = origin
+            elif not origin:
+                # 只有 origin 空時，退回 cwd（開場 == 當下）
+                origin = cwd
             raw.append(
                 Session(
                     session_id=jsonl.stem,
@@ -413,22 +464,29 @@ def _scan_sessions(procs: list[tuple[str, str]]) -> list[Session]:
                     todo=_extract_todo(records),
                     recent_actions=_recent_actions(records),
                     _tail_kind=_conversation_tail_kind(records),
+                    origin_cwd=origin,
                 )
             )
 
-    # 每個 cwd 群組裡，mtime 最新的 N 個＝活著（N=該 cwd 的 claude 數），其餘＝已離場。
+    # 按「當下 cwd」（s.cwd）分組——確保 liveness 排名母體與計數母體一致。
+    # counts / cwd_ttys 的鍵是 live process 回報的當下 cwd，分組鍵必須相同才能正確比對。
+    # 每個 cwd 群組裡，mtime 最新的 N 個＝活著（N 取決於該 cwd 的 live claude 數）。
     # 另外：working 門檻內還在寫的，無論如何算活著（cwd 比對失敗時的保險）。
+    #
+    # 注意：「此 session 屬於哪個專案」由 Session.project property 讀 origin_cwd 獨立處理，
+    # 與這裡的 liveness 分組無關——兩者語意已分離，不需要讓分組鍵跟著改。
     by_cwd: dict[str, list[Session]] = {}
     for s in raw:
         by_cwd.setdefault(s.cwd, []).append(s)
     out: list[Session] = []
-    for cwd, group in by_cwd.items():
+    for _cwd, group in by_cwd.items():
         group.sort(key=lambda s: s.last_active, reverse=True)
-        live_n = counts.get(cwd, 0)
-        # cwd 只有一個 claude 時，把它的 tty 給那個活著的 session（終端跳轉用）；
-        # 多個 claude 同 cwd 無法精準對應，留給 hook 模式處理。
-        uniq_tty = cwd_ttys[cwd][0] if live_n == 1 and cwd_ttys.get(cwd) else ""
+        # 同一 cwd 組內，各 session 依自己的當下 cwd 查 live 名額與 tty
         for i, s in enumerate(group):
+            live_n = counts.get(s.cwd, 0)
+            # 當下 cwd 只有一個 claude 時，把它的 tty 給那個活著的 session（終端跳轉用）；
+            # 多個 claude 同 cwd 無法精準對應，留給 hook 模式處理。
+            uniq_tty = cwd_ttys[s.cwd][0] if live_n == 1 and cwd_ttys.get(s.cwd) else ""
             idle = now - s.last_active
             if i < live_n or idle < WORKING_THRESHOLD_SECONDS:
                 s.status = _scan_status(idle)
@@ -475,6 +533,7 @@ def _synthetic_sessions(procs: list[tuple[str, str]], existing: list[Session]) -
                 last_action="—",
                 source="proc",
                 tty=first_tty,
+                origin_cwd=cwd,  # synthetic 列自身就是開場，origin == 當下
             )
         )
     return out
