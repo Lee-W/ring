@@ -116,6 +116,8 @@ def run_hook(provider: str = "claude-code") -> int:
     }
     if todo:
         payload["todo"] = list(todo)
+    if event.waiting_for:
+        payload["waiting_for"] = event.waiting_for
     tty = event.tty or _session_tty(adapter.process_names)
     if tty:
         payload["tty"] = tty

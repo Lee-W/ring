@@ -48,6 +48,26 @@ def test_version_exits() -> None:
         cli.main(["--version"])
 
 
+def test_help_lists_hidden_commands(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        cli.main(["--help"])
+
+    out = capsys.readouterr().out
+    assert "install-hooks" in out
+    assert "remove-hooks" in out
+    assert "hook --provider" in out
+    assert "focus SESSION_ID" in out
+
+
+def test_install_hooks_help_does_not_install(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("ring.hook.install_hooks") as mock_install:
+        rc = cli.main(["install-hooks", "--help"])
+
+    assert rc == 0
+    mock_install.assert_not_called()
+    assert "usage: ring install-hooks" in capsys.readouterr().out
+
+
 # ---------------------------------------------------------------------------
 # remove-hooks 路由
 # ---------------------------------------------------------------------------

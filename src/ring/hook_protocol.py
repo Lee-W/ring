@@ -34,6 +34,7 @@ class NormalizedHookEvent:
     transcript_path: str = ""
     tty: str = ""
     last_action: str = ""
+    waiting_for: str = ""
 
 
 _ALWAYS_STATUS = {
@@ -47,6 +48,35 @@ _ALWAYS_STATUS = {
 _ACTION_REQUIRED_NOTIFICATION_TYPES = {
     "permission_prompt",
     "elicitation_dialog",
+}
+
+_ACTION_REQUIRED_WAITING_FOR = {
+    "approval",
+    "choice",
+    "choices",
+    "elicitation",
+    "input",
+    "option",
+    "options",
+    "permission",
+    "question",
+    "questions",
+    "selection",
+    "user",
+    "user_input",
+}
+
+_IDLE_WAITING_FOR = {
+    "",
+    "complete",
+    "done",
+    "idle",
+    "instruction",
+    "next_step",
+    "none",
+    "prompt",
+    "turn_complete",
+    "user_prompt",
 }
 
 
@@ -66,7 +96,14 @@ class CommonHookAdapter:
         if not event or not sid:
             return None
         status = _ALWAYS_STATUS.get(event)
-        if event == "Notification":
+        explicit_requires_action = _explicit_requires_action(data)
+        if event == "SessionEnd":
+            status = Status.ENDED
+        elif event in {"SessionStart", "UserPromptSubmit"}:
+            status = Status.WORKING
+        elif explicit_requires_action is not None:
+            status = Status.WAITING if explicit_requires_action else Status.IDLE
+        elif event == "Notification":
             status = Status.WAITING if _is_action_required_notification(data) else Status.IDLE
         elif event == "PreToolUse" and _is_action_required_payload(data):
             status = Status.WAITING
@@ -81,6 +118,7 @@ class CommonHookAdapter:
             transcript_path=_first_str(data, "transcript_path", "transcriptPath", "rollout_path", "rolloutPath"),
             tty=_first_str(data, "tty"),
             last_action=_first_str(data, "last_action", "lastAction", "message", "title"),
+            waiting_for=_waiting_for(data),
         )
 
 
@@ -118,6 +156,32 @@ def _is_action_required_notification(data: Mapping[str, Any]) -> bool:
     return _is_action_required_payload(data)
 
 
+def _explicit_requires_action(data: Mapping[str, Any]) -> bool | None:
+    for key in (
+        "requires_action",
+        "requiresAction",
+        "action_required",
+        "actionRequired",
+        "needs_user_action",
+        "needsUserAction",
+        "requires_input",
+        "requiresInput",
+        "interactive",
+    ):
+        parsed = _parse_bool(data.get(key))
+        if parsed is not None:
+            return parsed
+
+    waiting_for = _waiting_for(data)
+    if not waiting_for:
+        return None
+    if waiting_for in _ACTION_REQUIRED_WAITING_FOR:
+        return True
+    if waiting_for in _IDLE_WAITING_FOR:
+        return False
+    return None
+
+
 def _is_action_required_payload(data: Mapping[str, Any]) -> bool:
     tool_name = _first_str(data, "tool_name", "toolName", "tool")
     if tool_name == "AskUserQuestion":
@@ -137,6 +201,33 @@ def _is_action_required_payload(data: Mapping[str, Any]) -> bool:
         if isinstance(value, list) and value:
             return True
     return False
+
+
+def _waiting_for(data: Mapping[str, Any]) -> str:
+    return _normalize_token(
+        _first_str(
+            data,
+            "waiting_for",
+            "waitingFor",
+            "requires",
+            "reason",
+            "interaction",
+            "interaction_type",
+            "interactionType",
+        )
+    ).replace("-", "_")
+
+
+def _parse_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off"}:
+            return False
+    return None
 
 
 def _normalize_token(value: str) -> str:

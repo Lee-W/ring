@@ -261,8 +261,60 @@ def _peek_lang(raw: list[str]) -> str | None:
     return None
 
 
+def _commands_help() -> str:
+    return _(
+        """
+commands:
+  hook [PROVIDER]              從 stdin 讀 provider hook payload，寫入 RiNG registry
+  hook --provider PROVIDER     同上，明確指定 provider（例如 codex）
+  install-hooks [--dry-run]    安裝 Claude Code hooks
+  remove-hooks [--dry-run]     移除 Claude Code hooks
+  focus SESSION_ID             聚焦指定 session；TUI 在跑時會回到 RiNG 並選中該列
+"""
+    )
+
+
+def _subcommand_help(name: str) -> str:
+    helps = {
+        "hook": _(
+            """usage: ring hook [PROVIDER] [--provider PROVIDER]
+
+從 stdin 讀 hook JSON，依 provider 正規化後寫入 RiNG registry。
+"""
+        ),
+        "install-hooks": _(
+            """usage: ring install-hooks [--dry-run]
+
+安裝 Claude Code hooks 到 ~/.claude/settings.json。
+"""
+        ),
+        "remove-hooks": _(
+            """usage: ring remove-hooks [--dry-run]
+
+從 ~/.claude/settings.json 移除 RiNG 安裝的 Claude Code hooks。
+"""
+        ),
+        "focus": _(
+            """usage: ring focus SESSION_ID
+
+聚焦指定 session；若 RiNG TUI 正在執行，會回到 TUI 並選中該列。
+"""
+        ),
+    }
+    return helps.get(name, "")
+
+
 def main(argv: list[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
+    cfg = get_config()
+    set_lang(_peek_lang(raw) or cfg.lang)  # 在 import ring.tui 前設好，Footer 按鍵說明也跟著語言
+
+    if raw and raw[0] in {"hook", "install-hooks", "remove-hooks", "focus"} and any(
+        arg in {"-h", "--help"} for arg in raw[1:]
+    ):
+        print(_subcommand_help(raw[0]), end="")
+        return 0
+
     if raw and raw[0] == "hook":
         from ring.hook import run_hook
 
@@ -301,9 +353,12 @@ def main(argv: list[str] | None = None) -> int:
             focus_jump(session)
         return 0
 
-    cfg = get_config()
-    set_lang(_peek_lang(raw) or cfg.lang)  # 在 import ring.tui 前設好，Footer 按鍵說明也跟著語言
-    parser = argparse.ArgumentParser(prog="ring", description=_("看所有 agent CLI session 上台。"))
+    parser = argparse.ArgumentParser(
+        prog="ring",
+        description=_("看所有 agent CLI session 上台。"),
+        epilog=_commands_help(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--version", action="version", version=f"ring {__version__}")
     parser.add_argument("--watch", action="store_true", help=_("持續刷新"))
     parser.add_argument("--interval", type=float, default=cfg.interval, help=_("watch 刷新秒數"))

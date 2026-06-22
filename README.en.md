@@ -125,6 +125,8 @@ Payload field names are intentionally loose. At minimum, provide a session id, e
   "session_id": "thread-123",
   "event": "Notification",
   "notification_type": "permission_prompt",
+  "requires_action": true,
+  "waiting_for": "permission",
   "cwd": "/repo/app",
   "tty": "/dev/ttys003",
   "last_action": "waiting for permission"
@@ -135,6 +137,11 @@ Event semantics match Claude Code: `SessionStart` / `UserPromptSubmit` → 🟢,
 actionable `Notification` / `PermissionRequest` → 🔴, and `SessionEnd` removes the session from
 the board. Non-Claude session ids are provider-qualified automatically, for example
 `codex:thread-123`, to avoid collisions.
+
+When a provider can distinguish "needs user action now" from "just waiting for the next prompt",
+send an explicit field: `requires_action = true/false` or
+`waiting_for = "permission" | "options" | "next_step"`. RiNG trusts those first and only falls
+back to event / notification-type inference when they are absent.
 
 **System notifications (🔔 click-to-focus):** when a session turns 🔴 waiting, RiNG sends a
 system notification (both headless `--watch` and TUI). If it stays waiting, RiNG reminds you

@@ -29,6 +29,54 @@ def test_stop_writes_idle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     assert data["cwd"] == "/x"
 
 
+def test_stop_with_requires_action_writes_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "Stop", "cwd": "/x", "requires_action": True})
+
+    assert hook.run_hook() == 0
+
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WAITING.value
+
+
+def test_waiting_for_next_step_writes_idle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "Notification",
+            "cwd": "/x",
+            "waiting_for": "next_step",
+        },
+    )
+
+    assert hook.run_hook() == 0
+
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.IDLE.value
+    assert data["waiting_for"] == "next_step"
+
+
+def test_waiting_for_permission_writes_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "Notification",
+            "cwd": "/x",
+            "waiting_for": "permission",
+        },
+    )
+
+    assert hook.run_hook() == 0
+
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WAITING.value
+    assert data["waiting_for"] == "permission"
+
+
 def test_permission_notification_writes_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
     _feed(

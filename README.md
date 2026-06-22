@@ -170,6 +170,8 @@ payload 欄位採寬鬆命名，至少需要 session id、event、cwd：
   "session_id": "thread-123",
   "event": "Notification",
   "notification_type": "permission_prompt",
+  "requires_action": true,
+  "waiting_for": "permission",
   "cwd": "/repo/app",
   "tty": "/dev/ttys003",
   "last_action": "waiting for permission"
@@ -180,6 +182,10 @@ payload 欄位採寬鬆命名，至少需要 session id、event、cwd：
 `Stop` → 🟡，actionable `Notification` / `PermissionRequest` → 🔴，`SessionEnd` →
 從看板移除。非 Claude provider 的 session id 會自動加上 provider prefix
 （例如 `codex:thread-123`），避免不同工具撞 id。
+
+provider 若能分辨「立刻需要使用者」與「只是等下一步」，請直接給明確欄位：
+`requires_action = true/false` 或 `waiting_for = "permission" | "options" | "next_step"`。
+RiNG 會優先相信這些欄位；沒有時才退回 event / notification type 推論。
 
 ### 系統通知（🔔 waiting 自動通知 + 點擊聚焦）
 
