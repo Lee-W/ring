@@ -234,6 +234,8 @@ def test_install_hooks_fresh(
     for event in hook._HOOK_EVENTS:
         cmds = [h["command"] for g in data["hooks"][event] for h in g.get("hooks", [])]
         assert "ring hook" in cmds, f"event {event} 應有 ring hook"
+    assert "PermissionRequest" in data["hooks"]
+    assert "PreToolUse" in data["hooks"]
     assert "已註冊" in capsys.readouterr().out
 
 

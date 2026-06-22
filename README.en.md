@@ -99,6 +99,7 @@ and the status becomes precise — 🔴 waiting plus the beep both rely on it.
    | `SessionStart` / `UserPromptSubmit` | 🟢 working |
    | `Stop` | 🟡 idle |
    | `Notification` with `permission_prompt` / `elicitation_dialog` | 🔴 waiting |
+   | `PermissionRequest` / `PreToolUse` with `AskUserQuestion` | 🔴 waiting |
    | `SessionEnd` | disappears from the board |
 
 3. **Reopen sessions** (hooks only apply to new ones) and verify:

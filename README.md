@@ -141,6 +141,7 @@ ring install-hooks --dry-run  # 只想先看會寫什麼、不動檔
 | `SessionStart` / `UserPromptSubmit` | 🟢 工作中 |
 | `Stop` | 🟡 跑完停著 |
 | `Notification` 的 `permission_prompt` / `elicitation_dialog` | 🔴 待回覆（卡權限 / 需要選項） |
+| `PermissionRequest` / `PreToolUse` 的 `AskUserQuestion` | 🔴 待回覆（權限 / 選項需要你決策） |
 | `SessionEnd` | 從看板消失 |
 
 hook 只對**新開的 session** 生效，所以裝完要重開。確認方法：

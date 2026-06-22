@@ -242,4 +242,12 @@ def _qualified_session_id(provider: str, sid: str) -> str:
     return f"{provider}:{sid}"
 
 
-HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "Notification", "Stop", "SessionEnd")
+HOOK_EVENTS = (
+    "SessionStart",
+    "UserPromptSubmit",
+    "Notification",
+    "PermissionRequest",
+    "PreToolUse",
+    "Stop",
+    "SessionEnd",
+)
