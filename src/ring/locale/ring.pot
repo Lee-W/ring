@@ -135,6 +135,15 @@ msgstr ""
 msgid "重開 Claude Code session 後，🔴 待回覆狀態就會精準起來。"
 msgstr ""
 
+#: src/ring/hook.py:182
+#, python-brace-format
+msgid "⚠️ 偵測到其他工具也掛在 {events}：{cmds}"
+msgstr ""
+
+#: src/ring/hook.py:183
+msgid "它們會跟 RiNG 的通知重複觸發；要完全改用 RiNG，建議移除它們。"
+msgstr ""
+
 #: src/ring/hook.py:247
 #, python-brace-format
 msgid "ℹ️ {path} 不存在，沒有可移除的 hook。"

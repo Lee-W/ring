@@ -289,6 +289,42 @@ def test_install_hooks_already_installed(
     assert "已經裝過" in capsys.readouterr().out
 
 
+def test_install_hooks_warns_on_coresident_handler(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """裝 ring hook 時，若 PermissionRequest/Notification 上還掛著別的工具 → 警告會重複觸發。"""
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    data = {
+        "hooks": {
+            "PermissionRequest": [{"hooks": [{"type": "command", "command": "other-notifier callback"}]}],
+        }
+    }
+    settings.write_text(json.dumps(data))
+    monkeypatch.setattr("ring.hook.Path.home", lambda: tmp_path)
+
+    install_hooks()
+    out = capsys.readouterr().out
+    assert "other-notifier callback" in out
+    assert "重複觸發" in out
+    # 警告歸警告，他人 hook 仍保留不動
+    result = json.loads(settings.read_text())
+    pr_cmds = [h["command"] for g in result["hooks"]["PermissionRequest"] for h in g.get("hooks", [])]
+    assert "other-notifier callback" in pr_cmds
+
+
+def test_install_hooks_no_warning_when_clean(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """沒有共存的互動 hook → 不印警告。"""
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    monkeypatch.setattr("ring.hook.Path.home", lambda: tmp_path)
+
+    install_hooks()
+    assert "重複觸發" not in capsys.readouterr().out
+
+
 def test_install_hooks_preserves_other_hooks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """別人的 hook 條目原封不動。"""
     settings = tmp_path / ".claude" / "settings.json"

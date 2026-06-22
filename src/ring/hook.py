@@ -150,6 +150,39 @@ def _ring_command() -> str:
     return "ring hook"
 
 
+# install-hooks 會就「使用者互動」事件警告：別的工具若也掛在這上面（彈自己的對話框 /
+# 通知），會跟 RiNG 的通知重複觸發。其餘事件（PostToolUse 掛 formatter 之類）是正常
+# 共存，不警告。
+_CONFLICT_EVENTS = ("PermissionRequest", "Notification")
+
+
+def _coresident_handlers(hooks: dict[str, Any]) -> list[str]:
+    """列出掛在「使用者互動」事件上、非 RiNG 的 command（去重、保序）。
+
+    這些 command 會跟 RiNG 在同一批事件觸發；若想完全改用 RiNG，通常得移除它們，
+    免得通知 / dialog 重複。回傳空清單代表沒有衝突。
+    """
+    seen: list[str] = []
+    for event in _CONFLICT_EVENTS:
+        for g in hooks.get(event) or []:
+            if not isinstance(g, dict):
+                continue
+            for h in g.get("hooks", []):
+                cmd = h.get("command", "")
+                if cmd and not _is_ring_hook_command(cmd) and cmd not in seen:
+                    seen.append(cmd)
+    return seen
+
+
+def _print_conflict_warning(hooks: dict[str, Any]) -> None:
+    """偵測到其他工具也掛在使用者互動事件上時，提醒它們會跟 RiNG 重複觸發。"""
+    conflicts = _coresident_handlers(hooks)
+    if not conflicts:
+        return
+    print(_("⚠️ 偵測到其他工具也掛在 {events}：{cmds}", events=", ".join(_CONFLICT_EVENTS), cmds=", ".join(conflicts)))
+    print("   " + _("它們會跟 RiNG 的通知重複觸發；要完全改用 RiNG，建議移除它們。"))
+
+
 def _remove_ring_hooks_from_groups(groups: list[Any]) -> tuple[list[Any], bool]:
     """從 hook groups 列表中移除所有 _is_ring_hook_command 命中的條目，並清掉變空的 group。
 
@@ -221,6 +254,7 @@ def install_hooks(dry_run: bool = False) -> int:
 
     if not events_need_change:
         print(_("✅ RiNG hooks 已經裝過了，沒有變更。"))
+        _print_conflict_warning(hooks)
         return 0
 
     # 第二輪：只對需要變更的 event 操作
@@ -234,6 +268,7 @@ def install_hooks(dry_run: bool = False) -> int:
     settings.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
     print(_("✅ 已註冊 RiNG hooks（{events}）到 {path}", events=", ".join(events_need_change), path=settings))
     print("   " + _("重開 Claude Code session 後，🔴 待回覆狀態就會精準起來。"))
+    _print_conflict_warning(hooks)
     return 0
 
 

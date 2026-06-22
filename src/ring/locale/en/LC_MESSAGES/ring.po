@@ -134,6 +134,13 @@ msgstr "✅ Registered RiNG hooks ({events}) into {path}"
 msgid "重開 Claude Code session 後，🔴 待回覆狀態就會精準起來。"
 msgstr "Restart your Claude Code sessions and the 🔴 waiting state becomes precise."
 
+# ── install-hooks：遷移衝突警告 ──
+msgid "⚠️ 偵測到其他工具也掛在 {events}：{cmds}"
+msgstr "⚠️ Other tools are also hooked on {events}: {cmds}"
+
+msgid "它們會跟 RiNG 的通知重複觸發；要完全改用 RiNG，建議移除它們。"
+msgstr "They fire alongside RiNG's notifications; to switch fully to RiNG, remove them."
+
 # ── remove-hooks ──
 msgid "ℹ️ {path} 不存在，沒有可移除的 hook。"
 msgstr "ℹ️ {path} does not exist; nothing to remove."
