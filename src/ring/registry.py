@@ -4,11 +4,11 @@
 
 1. hook registry（精準模式）：``~/.config/ring/sessions/*.json``，由 RiNG 的 hook
    腳本在 SessionStart / Notification / UserPromptSubmit / Stop / SessionEnd
-   等事件即時寫入。能精準知道「這個 session 正在等你」。
+   等事件即時寫入。能精準知道「這個 session 需要你決策」。
 2. zero-config fallback：直接掃 ``~/.claude/projects/**/*.jsonl``，用檔案 mtime
    推活躍度，從記錄裡的 ``cwd`` 欄位還原真實路徑（避開目錄名以 ``-`` 編碼
-   造成的 hyphen 還原歧義）。scan 模式現在能標「回完一輪在等你」這種 🔴 WAITING，
-   但測不到 Notification（卡權限等授權流程）那種——後者 JSONL 不留痕跡，仍需 hook 模式。
+   造成的 hyphen 還原歧義）。scan 模式不把「回完一輪」當成 🔴 WAITING；
+   WAITING 只保留給 hook 可確認的權限 / 選項等互動。
 
 額外富化：
 - ``tmux_target``：靠 tmux pane 的 current_path 對 cwd，給你「去哪」的座標。
@@ -236,7 +236,7 @@ def _conversation_tail_kind(records: list[dict[str, Any]]) -> str:
     """從對話尾巴往回走，判定最近一個「真訊息紀錄」的性質。
 
     回傳值（str）：
-    - ``"waiting"``    : 對話最後是 assistant end_turn 收尾，Claude 回完在等你。
+    - ``"waiting"``    : 對話最後是 assistant end_turn 收尾，Claude 回完一輪。
     - ``"working"``    : 對話最後是真人送出的 prompt，輪到 Claude 回應。
     - ``"interrupted"`` : 工具呼叫進行中（assistant tool_use / user tool_result），尚未完成一輪。
     - ``"none"``       : 沒有可判定的訊息（空 records、全噪音、無 assistant/user 訊息）。
@@ -245,7 +245,7 @@ def _conversation_tail_kind(records: list[dict[str, Any]]) -> str:
     依 type 與 content 判定後立即 return。絕不直接看 records[-1]——尾巴幾乎都是噪音。
 
     限制（誠實標明）：靠對話尾巴猜。Notification（卡權限等授權流程）在 JSONL 不留痕跡，
-    scan 模式測不到——那種待回覆仍需 hook 模式偵測。
+    scan 模式測不到——那種需要使用者決策的狀態仍需 hook 模式偵測。
     """
     for record in reversed(records):
         t = record.get("type")
@@ -277,7 +277,7 @@ def _conversation_tail_kind(records: list[dict[str, Any]]) -> str:
         text_blocks = [b for b in _blocks(record) if isinstance(b, dict) and b.get("type") == "text"]
         if text_blocks and all(_clean_text(str(b.get("text", ""))) == "" for b in text_blocks):
             continue
-        # 真人 prompt → 輪到 Claude 回應，不是在等你
+        # 真人 prompt → 輪到 Claude 回應，不是回合結束
         return "working"
     return "none"
 
@@ -288,15 +288,15 @@ def _apply_waiting(
     tail_kind: str,
     waiting_window: float,
 ) -> Status:
-    """在 IDLE 區間且對話尾是 end_turn 且在時間窗內，升為 WAITING；否則原狀回傳。
+    """對話尾是 end_turn 且在時間窗內時，將 live/idle scan row 收斂為 IDLE。
 
     純函式、可單測，不依賴 module-level 常數。
-    只在 status is Status.IDLE 時考慮升級：
-    - WORKING（< 90s）：剛回完可能 Claude 馬上又動，標 🔴 會閃爍，維持 WORKING。
+    不把回合結束升成 WAITING；WAITING 只保留給 hook 確認的權限 / 選項互動：
+    - WORKING（< 90s）：若尾端已是 end_turn，代表回合其實結束了，收斂成 IDLE。
     - ENDED：超過活躍窗，不升。
     """
-    if status is Status.IDLE and tail_kind == "waiting" and idle_seconds < waiting_window:
-        return Status.WAITING
+    if status in {Status.WORKING, Status.IDLE} and tail_kind == "waiting" and idle_seconds < waiting_window:
+        return Status.IDLE
     return status
 
 
@@ -559,10 +559,7 @@ def _codex_threads(procs: list[tuple[str, str]]) -> list[Session]:
         for i, s in enumerate(group):
             if i < live_n:
                 idle = now - s.last_active
-                if s._tail_kind == "waiting":
-                    s.status = Status.WAITING
-                else:
-                    s.status = _scan_status(idle)
+                s.status = Status.IDLE if s._tail_kind == "waiting" else _scan_status(idle)
                 if i == 0 and uniq_tty:
                     s.tty = uniq_tty
             out.append(s)

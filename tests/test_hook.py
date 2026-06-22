@@ -20,13 +20,68 @@ def _settings_with_ring_hook(settings: Path, cmd: str = "ring hook") -> None:
     settings.write_text(json.dumps(data, indent=2))
 
 
-def test_stop_writes_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_stop_writes_idle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
     _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "Stop", "cwd": "/x"})
     assert hook.run_hook() == 0
     data = json.loads((tmp_path / "s1.json").read_text())
-    assert data["status"] == Status.WAITING.value
+    assert data["status"] == Status.IDLE.value
     assert data["cwd"] == "/x"
+
+
+def test_permission_notification_writes_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {"session_id": "s1", "hook_event_name": "Notification", "notification_type": "permission_prompt", "cwd": "/x"},
+    )
+
+    assert hook.run_hook() == 0
+
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WAITING.value
+
+
+def test_regular_notification_writes_idle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {"session_id": "s1", "hook_event_name": "Notification", "notification_type": "auth_success", "cwd": "/x"},
+    )
+
+    assert hook.run_hook() == 0
+
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.IDLE.value
+
+
+def test_permission_request_writes_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/x"})
+
+    assert hook.run_hook() == 0
+
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WAITING.value
+
+
+def test_ask_user_question_writes_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "PreToolUse",
+            "tool_name": "AskUserQuestion",
+            "tool_input": {"questions": [{"id": "choice", "options": [{"label": "A"}]}]},
+            "cwd": "/x",
+        },
+    )
+
+    assert hook.run_hook() == 0
+
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WAITING.value
 
 
 def test_user_prompt_writes_working(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -45,7 +100,7 @@ def test_codex_provider_writes_qualified_session(monkeypatch: pytest.MonkeyPatch
     data = json.loads((tmp_path / "codex:thread-1.json").read_text())
     assert data["session_id"] == "codex:thread-1"
     assert data["provider"] == "codex"
-    assert data["status"] == Status.WAITING.value
+    assert data["status"] == Status.IDLE.value
 
 
 def test_payload_provider_overrides_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -75,9 +75,9 @@ provider-neutral `ring hook` protocol directly.
 
 ## hook mode (precise "waiting for reply")
 
-Zero-config only has file mtimes or local state snapshots, so it **can't reliably tell "waiting
-for your reply" from "just finished"**. With hooks, RiNG receives agent-CLI events directly and
-the status becomes precise — 🔴 waiting plus the beep both rely on it.
+Zero-config only has file mtimes or local state snapshots, so it **can't reliably tell "needs a
+decision from you" from "just finished"**. With hooks, RiNG receives agent-CLI events directly
+and the status becomes precise — 🔴 waiting plus the beep both rely on it.
 
 ### Claude Code: built-in installer
 
@@ -97,7 +97,8 @@ the status becomes precise — 🔴 waiting plus the beep both rely on it.
    | Claude Code event | RiNG status |
    |---|---|
    | `SessionStart` / `UserPromptSubmit` | 🟢 working |
-   | `Stop` / `Notification` | 🔴 waiting |
+   | `Stop` | 🟡 idle |
+   | `Notification` with `permission_prompt` / `elicitation_dialog` | 🔴 waiting |
    | `SessionEnd` | disappears from the board |
 
 3. **Reopen sessions** (hooks only apply to new ones) and verify:
@@ -122,16 +123,18 @@ Payload field names are intentionally loose. At minimum, provide a session id, e
 {
   "provider": "codex",
   "session_id": "thread-123",
-  "event": "Stop",
+  "event": "Notification",
+  "notification_type": "permission_prompt",
   "cwd": "/repo/app",
   "tty": "/dev/ttys003",
-  "last_action": "finished responding"
+  "last_action": "waiting for permission"
 }
 ```
 
-Event semantics match Claude Code: `SessionStart` / `UserPromptSubmit` → 🟢, `Stop` /
-`Notification` → 🔴, and `SessionEnd` removes the session from the board. Non-Claude session ids
-are provider-qualified automatically, for example `codex:thread-123`, to avoid collisions.
+Event semantics match Claude Code: `SessionStart` / `UserPromptSubmit` → 🟢, `Stop` → 🟡,
+actionable `Notification` / `PermissionRequest` → 🔴, and `SessionEnd` removes the session from
+the board. Non-Claude session ids are provider-qualified automatically, for example
+`codex:thread-123`, to avoid collisions.
 
 **System notifications (🔔 click-to-focus):** when a session turns 🔴 waiting, RiNG sends a
 system notification (both headless `--watch` and TUI). If it stays waiting, RiNG reminds you

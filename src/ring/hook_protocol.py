@@ -36,12 +36,17 @@ class NormalizedHookEvent:
     last_action: str = ""
 
 
-_COMMON_EVENT_STATUS = {
+_ALWAYS_STATUS = {
     "SessionStart": Status.WORKING,
     "UserPromptSubmit": Status.WORKING,
-    "Notification": Status.WAITING,
-    "Stop": Status.WAITING,
+    "Stop": Status.IDLE,
     "SessionEnd": Status.ENDED,
+    "PermissionRequest": Status.WAITING,
+}
+
+_ACTION_REQUIRED_NOTIFICATION_TYPES = {
+    "permission_prompt",
+    "elicitation_dialog",
 }
 
 
@@ -60,7 +65,11 @@ class CommonHookAdapter:
         sid = _first_str(data, "session_id", "sessionId", "thread_id", "threadId", "id")
         if not event or not sid:
             return None
-        status = _COMMON_EVENT_STATUS.get(event)
+        status = _ALWAYS_STATUS.get(event)
+        if event == "Notification":
+            status = Status.WAITING if _is_action_required_notification(data) else Status.IDLE
+        elif event == "PreToolUse" and _is_action_required_payload(data):
+            status = Status.WAITING
         if status is None:
             return None
         return NormalizedHookEvent(
@@ -100,6 +109,40 @@ def _first_str(data: Mapping[str, Any], *keys: str) -> str:
     return ""
 
 
+def _is_action_required_notification(data: Mapping[str, Any]) -> bool:
+    notification_type = _normalize_token(
+        _first_str(data, "notification_type", "notificationType", "raw_notification_type", "rawNotificationType")
+    )
+    if notification_type in _ACTION_REQUIRED_NOTIFICATION_TYPES:
+        return True
+    return _is_action_required_payload(data)
+
+
+def _is_action_required_payload(data: Mapping[str, Any]) -> bool:
+    tool_name = _first_str(data, "tool_name", "toolName", "tool")
+    if tool_name == "AskUserQuestion":
+        return True
+
+    tool_input = data.get("tool_input") or data.get("toolInput") or data.get("input")
+    if isinstance(tool_input, Mapping):
+        questions = tool_input.get("questions")
+        if isinstance(questions, list) and questions:
+            return True
+        options = tool_input.get("options")
+        if isinstance(options, list) and options:
+            return True
+
+    for key in ("questions", "options", "choices"):
+        value = data.get(key)
+        if isinstance(value, list) and value:
+            return True
+    return False
+
+
+def _normalize_token(value: str) -> str:
+    return value.strip().lower()
+
+
 def _qualified_session_id(provider: str, sid: str) -> str:
     if ":" in sid:
         return sid
@@ -108,4 +151,4 @@ def _qualified_session_id(provider: str, sid: str) -> str:
     return f"{provider}:{sid}"
 
 
-HOOK_EVENTS = tuple(_COMMON_EVENT_STATUS)
+HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "Notification", "Stop", "SessionEnd")

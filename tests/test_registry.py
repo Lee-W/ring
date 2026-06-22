@@ -201,19 +201,19 @@ def test_tail_kind_only_noise_records_is_none() -> None:
 @pytest.mark.parametrize(
     "status,age,tail_kind,window,expected",
     [
-        (Status.IDLE, 600, "waiting", 1800, Status.WAITING),
+        (Status.IDLE, 600, "waiting", 1800, Status.IDLE),
         (Status.IDLE, 3600, "waiting", 1800, Status.IDLE),
         (Status.IDLE, 600, "interrupted", 1800, Status.IDLE),
         (Status.IDLE, 600, "none", 1800, Status.IDLE),
-        (Status.WORKING, 10, "waiting", 1800, Status.WORKING),
+        (Status.WORKING, 10, "waiting", 1800, Status.IDLE),
         (Status.ENDED, 100, "waiting", 1800, Status.ENDED),
     ],
     ids=[
-        "idle_within_window_upgrades_to_waiting",
+        "idle_within_window_stays_idle",
         "idle_beyond_window_stays_idle",
         "interrupted_tail_stays_idle",
         "none_tail_stays_idle",
-        "working_status_not_upgraded",
+        "working_turn_complete_becomes_idle",
         "ended_status_not_upgraded",
     ],
 )
@@ -422,7 +422,7 @@ def test_codex_latest_action_prefers_function_call() -> None:
     assert _codex_latest_action(records, "fallback") == "→ exec_command"
 
 
-def test_codex_threads_reads_state_and_marks_live_waiting(
+def test_codex_threads_reads_state_and_marks_live_idle(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     rollout = tmp_path / "rollout.jsonl"
@@ -451,7 +451,7 @@ def test_codex_threads_reads_state_and_marks_live_waiting(
     assert len(sessions) == 1
     assert sessions[0].session_id == "codex:codex-session"
     assert sessions[0].source == "codex"
-    assert sessions[0].status is Status.WAITING
+    assert sessions[0].status is Status.IDLE
     assert sessions[0].tty == "/dev/ttys003"
 
 
