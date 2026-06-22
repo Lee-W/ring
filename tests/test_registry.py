@@ -328,6 +328,27 @@ def test_hook_sessions_ends_stale_tty_even_when_same_cwd_has_live_proc(
     assert by_id["live"].status is Status.WAITING
 
 
+def test_hook_sessions_matches_live_proc_through_symlink(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """hook cwd 是 symlink 路徑、live proc cwd 是 realpath 時，仍要對得上、不誤判離場。
+
+    lsof 回報解析後的真實路徑，hook 記的是字面路徑；沒有 realpath 正規化，symlink
+    專案的活著 session 會因 counts 對不上而被標 ENDED。
+    """
+    real = tmp_path / "real-proj"
+    real.mkdir()
+    link = tmp_path / "link-proj"
+    link.symlink_to(real)
+
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(registry_dir, "live", str(link), "")  # hook 記 symlink 路徑
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+
+    # live proc 的 cwd 是 realpath（lsof 風格）
+    sessions = _hook_sessions([(str(real), "/dev/ttys009")])
+
+    assert sessions[0].status is Status.WAITING, "symlink 路徑下活著的 session 不該被誤判離場"
+
+
 def test_hook_sessions_keeps_cwd_fallback_when_live_tty_unknown(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

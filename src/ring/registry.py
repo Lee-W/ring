@@ -404,6 +404,22 @@ def _pid_cwd(pid: int) -> str:
     return ""
 
 
+def _real(path: str) -> str:
+    """正規化路徑供「session cwd ↔ live process cwd」比對。
+
+    lsof 回報的是解析過 symlink 的真實路徑，但 hook / JSONL / sqlite 記的常是字面
+    路徑；兩者直接字串比對，遇到 symlink 專案路徑會對不上，導致活著的 session 被誤判
+    離場（counts 為 0）或被補成重複列。各自 realpath 後再比對即可避免。只用於比對鍵，
+    不改動 ``Session.cwd`` 的顯示值。
+    """
+    if not path:
+        return path
+    try:
+        return os.path.realpath(path)
+    except OSError:
+        return path
+
+
 def _pid_tty(pid: int) -> str:
     """claude process 的控制終端，正規化成 iTerm2 認得的 "/dev/ttysNNN"。"""
     try:
@@ -517,8 +533,9 @@ def _codex_threads(procs: list[tuple[str, str]]) -> list[Session]:
     counts: dict[str, int] = {}
     cwd_ttys: dict[str, list[str]] = {}
     for cwd, tty in procs:
-        counts[cwd] = counts.get(cwd, 0) + 1
-        cwd_ttys.setdefault(cwd, []).append(tty)
+        key = _real(cwd)
+        counts[key] = counts.get(key, 0) + 1
+        cwd_ttys.setdefault(key, []).append(tty)
 
     raw: list[Session] = []
     for row in rows:
@@ -554,8 +571,9 @@ def _codex_threads(procs: list[tuple[str, str]]) -> list[Session]:
     out: list[Session] = []
     for cwd, group in by_cwd.items():
         group.sort(key=lambda s: s.last_active, reverse=True)
-        live_n = counts.get(cwd, 0)
-        uniq_tty = cwd_ttys[cwd][0] if live_n == 1 and cwd_ttys.get(cwd) else ""
+        ckey = _real(cwd)
+        live_n = counts.get(ckey, 0)
+        uniq_tty = cwd_ttys[ckey][0] if live_n == 1 and cwd_ttys.get(ckey) else ""
         for i, s in enumerate(group):
             if i < live_n:
                 idle = now - s.last_active
@@ -581,8 +599,9 @@ def _scan_sessions(procs: list[tuple[str, str]]) -> list[Session]:
     counts: dict[str, int] = {}
     cwd_ttys: dict[str, list[str]] = {}
     for cwd, tty in procs:
-        counts[cwd] = counts.get(cwd, 0) + 1
-        cwd_ttys.setdefault(cwd, []).append(tty)
+        key = _real(cwd)
+        counts[key] = counts.get(key, 0) + 1
+        cwd_ttys.setdefault(key, []).append(tty)
 
     raw: list[Session] = []
     for project_dir in CLAUDE_PROJECTS.iterdir():
@@ -642,10 +661,11 @@ def _scan_sessions(procs: list[tuple[str, str]]) -> list[Session]:
         group.sort(key=lambda s: s.last_active, reverse=True)
         # 同一 cwd 組內，各 session 依自己的當下 cwd 查 live 名額與 tty
         for i, s in enumerate(group):
-            live_n = counts.get(s.cwd, 0)
+            skey = _real(s.cwd)
+            live_n = counts.get(skey, 0)
             # 當下 cwd 只有一個 claude 時，把它的 tty 給那個活著的 session（終端跳轉用）；
             # 多個 claude 同 cwd 無法精準對應，留給 hook 模式處理。
-            uniq_tty = cwd_ttys[s.cwd][0] if live_n == 1 and cwd_ttys.get(s.cwd) else ""
+            uniq_tty = cwd_ttys[skey][0] if live_n == 1 and cwd_ttys.get(skey) else ""
             idle = now - s.last_active
             if i < live_n or idle < WORKING_THRESHOLD_SECONDS:
                 s.status = _scan_status(idle)
@@ -663,7 +683,7 @@ def _synthetic_sessions(procs: list[tuple[str, str]], existing: list[Session]) -
     :param existing: 已由 hook + scan 產出的 session 列表（用來計算差集）。
     :returns:        補列清單（每個入選 cwd 各一列，source="proc"）。
     """
-    existing_cwds = {s.cwd for s in existing}
+    existing_cwds = {_real(s.cwd) for s in existing}
     # 先收集每個 cwd 的所有 tty（保留順序），以便取「第一個非空 tty」
     cwd_ttys: dict[str, list[str]] = {}
     for cwd, tty in procs:
@@ -676,11 +696,12 @@ def _synthetic_sessions(procs: list[tuple[str, str]], existing: list[Session]) -
     for cwd, tty in procs:
         if not cwd:  # _pid_cwd 失敗的情況，沒 cwd 撐不起一列
             continue
-        if cwd in existing_cwds:  # 已經有 row 了（hook 或 scan 覆蓋）
+        rkey = _real(cwd)
+        if rkey in existing_cwds:  # 已經有 row 了（hook 或 scan 覆蓋）
             continue
-        if cwd in seen:  # 同 cwd 多 process 只補一列
+        if rkey in seen:  # 同 cwd 多 process 只補一列
             continue
-        seen.add(cwd)
+        seen.add(rkey)
         # 取第一個非空 tty
         first_tty = next((t for t in cwd_ttys.get(cwd, []) if t), None)
         out.append(
@@ -746,11 +767,13 @@ def _hook_sessions(
             counts: dict[str, int] = {}
             live_ttys: dict[str, set[str]] = {}
             for cwd, tty in provider_procs:
-                counts[cwd] = counts.get(cwd, 0) + 1
+                key = _real(cwd)
+                counts[key] = counts.get(key, 0) + 1
                 if tty:
-                    live_ttys.setdefault(cwd, set()).add(tty)
-            if counts.get(s.cwd, 0) == 0:
+                    live_ttys.setdefault(key, set()).add(tty)
+            skey = _real(s.cwd)
+            if counts.get(skey, 0) == 0:
                 s.status = Status.ENDED
-            elif s.tty and live_ttys.get(s.cwd) and s.tty not in live_ttys[s.cwd]:
+            elif s.tty and live_ttys.get(skey) and s.tty not in live_ttys[skey]:
                 s.status = Status.ENDED
     return out
