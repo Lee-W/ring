@@ -47,6 +47,8 @@ class RingApp(App[None]):
         self._interval = interval
         self._show_all = show_all
         self._sessions: list[Session] = []
+        # 通知點過來時指向的 session：那一列要持續醒目標記，直到它離開 WAITING（你回應了）或不在場。
+        self._focused_sid: str | None = None
         cfg = get_config()
         self._alerts = WaitingAlertScheduler(cfg.notify_repeat_seconds, cfg.notify_repeat_max)
         self.title = "RiNG 🎤"
@@ -123,46 +125,42 @@ class RingApp(App[None]):
             names = ", ".join(sorted(s.project for s in alerts))
             self.notify(_("🔔 {names} 在等你回話", names=names), timeout=8)
 
-    def _poll_focus_request(self) -> None:
-        """讀一次 focus-request 檔，有效的話把游標跳過去並 activate 自己視窗。
+    def _activate_own_window(self) -> None:
+        """把 RiNG 自己的終端視窗帶到前景（best-effort，失敗安靜吞）。
 
-        流程（對應 plan 設計 C.1–C.7）：
-        1. 讀 focus-request；無 / 過期 / 解析失敗 → 直接回傳（read_focus_request 已消費即焚）。
-        2. 在 _sessions 找 session_id → 取得 row index。
-        3. 移游標到對應 row。
-        4. 用 AppleScriptTTYFocuser activate 自己視窗（reuse 既有機制，餵自己的 tty）。
-        5. 設 status 提示 + notify。
-        6. 找不到 session_id → 走「已不在場」分支，仍 activate 視窗讓使用者看到全貌。
+        複用既有 focuser 鏈（tmux / iTerm2 / Terminal）：用自己的 tty 組一個 self-Session
+        丟給 ``focus_jump``，誰接得住誰來——這樣 tmux 與各 macOS 終端都走同一條路，
+        不必在這裡手寫 AppleScript。
         """
-        from ring.focus.base import AppleScriptTTYFocuser
-        from ring.focus.iterm2 import _SCRIPT as _iterm2_script
-        from ring.focus.terminal import _SCRIPT as _terminal_script
+        if not self._own_tty:
+            return
+        try:
+            focus_jump(Session("self", "/", Status.WORKING, 0.0, "", "ipc", tty=self._own_tty))
+        except Exception:
+            pass
 
+    def _poll_focus_request(self) -> None:
+        """讀一次 focus-request 檔，有效的話把游標跳過去、持續標記，並 activate 自己視窗。
+
+        1. 讀 focus-request；無 / 過期 / 解析失敗 → 直接回傳（read_focus_request 已消費即焚）。
+        2. activate 自己視窗（複用 focuser 鏈）。
+        3. 在 _sessions 找 session_id → 移游標 + 記住 _focused_sid（那列持續標記直到回應）。
+        4. 找不到 → 走「已不在場」分支，清掉 _focused_sid。
+        """
         sid = read_focus_request()
         if sid is None:
             return
 
-        # 找到 session → 取得 row index
+        self._activate_own_window()
+
         target_row: int | None = None
         for idx, s in enumerate(self._sessions):
             if s.session_id == sid:
                 target_row = idx
                 break
 
-        # activate 自己視窗（best-effort，失敗安靜吞）
-        tty = self._own_tty
-        if tty:
-            try:
-                _dummy = Session(sid, "/", Status.WORKING, 0.0, "", "ipc", tty=tty)
-                for script in (_iterm2_script, _terminal_script):
-                    focuser = AppleScriptTTYFocuser("self", script)
-                    result = focuser.try_focus(_dummy)
-                    if result is not None and result[0]:
-                        break
-            except Exception:
-                pass
-
         if target_row is not None:
+            self._focused_sid = sid
             table = self.query_one(DataTable)
             table.move_cursor(row=target_row)
             found_session = self._sessions[target_row]
@@ -170,12 +168,21 @@ class RingApp(App[None]):
             self._set_status(msg)
             self.notify(msg, timeout=8)
         else:
+            self._focused_sid = None
             msg = _("那個 session 已不在場")
             self._set_status(msg)
             self.notify(msg, severity="warning", timeout=8)
 
     def _reload(self) -> None:
+        # 每次刷新都續寫 presence，避免 TUI 開超過 TTL 後 `ring focus` 誤判 TUI 沒在跑、
+        # 退回去跳 session 自己的終端（scan 模式常沒 tty → 跳轉失敗）。
+        write_tui_presence()
         self._sessions = board(self._show_all)
+        # 通知指向的 session 一旦離開 WAITING（你回應了）或不在場，就解除醒目標記。
+        if self._focused_sid is not None:
+            cur = next((s for s in self._sessions if s.session_id == self._focused_sid), None)
+            if cur is None or cur.status is not Status.WAITING:
+                self._focused_sid = None
         alerts = self._alerts.feed(self._sessions)
         self._ring_on_waiting_alerts(alerts)
         try:
@@ -189,7 +196,10 @@ class RingApp(App[None]):
         cursor = table.cursor_row
         table.clear()
         for s in self._sessions:
-            status_cell = Text(f"{s.status.marker} {status_label(s.status)}", style=_STATUS_STYLE[s.status])
+            focused = s.session_id == self._focused_sid
+            marker = "👉 " if focused else ""
+            style = f"reverse {_STATUS_STYLE[s.status]}" if focused else _STATUS_STYLE[s.status]
+            status_cell = Text(f"{marker}{s.status.marker} {status_label(s.status)}", style=style)
             progress = f"{s.todo[0]}/{s.todo[1]}" if s.todo else "·"
             loc_cell = f"📍{_middle_truncate(s.location, _LOC_MAX)}"
             table.add_row(status_cell, s.project, progress, _rel(s.idle_for), loc_cell, s.last_action)
@@ -219,6 +229,8 @@ class RingApp(App[None]):
         if s is None:
             self._set_status(_("（沒有選到 session）"))
             return
+        if s.session_id == self._focused_sid:
+            self._focused_sid = None  # 你已親自跳過去處理，解除通知標記
         ok, msg = focus_jump(s)
         if ok:
             text = _("→ {project}（{where}）", project=s.project, where=msg)

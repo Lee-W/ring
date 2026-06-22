@@ -171,9 +171,25 @@ def test_session_end_deletes_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
 
 def test_unknown_event_is_ignored(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
-    _feed(monkeypatch, {"session_id": "s3", "hook_event_name": "PreToolUse", "cwd": "/x"})
+    _feed(monkeypatch, {"session_id": "s3", "hook_event_name": "SomethingWeird", "cwd": "/x"})
     assert hook.run_hook() == 0
     assert not (tmp_path / "s3.json").exists()
+
+
+def test_pre_tool_use_non_action_writes_working(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """非 action 的 PreToolUse（一般工具）→ 🟢 WORKING，清掉上一個卡住的 WAITING。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PreToolUse", "tool_name": "Bash", "cwd": "/x"})
+    assert hook.run_hook() == 0
+    assert json.loads((tmp_path / "s1.json").read_text())["status"] == Status.WORKING.value
+
+
+def test_post_tool_use_writes_working(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """PostToolUse（工具跑完、使用者已放行）→ 🟢 WORKING，止住重複通知。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PostToolUse", "tool_name": "Bash", "cwd": "/x"})
+    assert hook.run_hook() == 0
+    assert json.loads((tmp_path / "s1.json").read_text())["status"] == Status.WORKING.value
 
 
 def test_malformed_stdin_never_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

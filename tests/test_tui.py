@@ -99,7 +99,7 @@ async def test_tui_clears_presence_on_unmount(monkeypatch: pytest.MonkeyPatch, t
 
 @pytest.mark.asyncio
 async def test_poll_focus_request_moves_cursor(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """有有效 request + _own_tty 非空 → 游標移到對應 row，且 AppleScriptTTYFocuser.try_focus 被呼叫。"""
+    """有有效 request + _own_tty 非空 → 游標移到對應 row、記住 _focused_sid，且 focus_jump 被呼叫餵自己的 tty。"""
     from unittest.mock import MagicMock
 
     from ring.ipc import write_focus_request
@@ -120,10 +120,8 @@ async def test_poll_focus_request_moves_cursor(monkeypatch: pytest.MonkeyPatch, 
 
         return _r(request_path=req_path)
 
-    # mock AppleScriptTTYFocuser：讓 try_focus 回傳成功，並記錄呼叫
-    mock_focuser_instance = MagicMock()
-    mock_focuser_instance.try_focus.return_value = (True, "mocked-tty")
-    mock_focuser_cls = MagicMock(return_value=mock_focuser_instance)
+    # mock focus_jump（self-activation 複用的 focuser 鏈入口）
+    mock_jump = MagicMock(return_value=(True, "mocked-tty"))
 
     app = tui.RingApp(lang="en")
     # 設定 _own_tty 非空，讓 activate 路徑實際執行
@@ -131,7 +129,7 @@ async def test_poll_focus_request_moves_cursor(monkeypatch: pytest.MonkeyPatch, 
 
     with (
         patch("ring.tui.read_focus_request", _read_with_tmp),
-        patch("ring.focus.base.AppleScriptTTYFocuser", mock_focuser_cls),
+        patch("ring.tui.focus_jump", mock_jump),
     ):
         async with app.run_test():
             table = app.query_one(DataTable)
@@ -139,9 +137,11 @@ async def test_poll_focus_request_moves_cursor(monkeypatch: pytest.MonkeyPatch, 
             assert table.cursor_row == 1
             # request 被消費
             assert not req_path.exists()
-            # activate 路徑：AppleScriptTTYFocuser 有被實例化並呼叫 try_focus
-            assert mock_focuser_cls.called
-            assert mock_focuser_instance.try_focus.called
+            # 通知指向的 session 被記住，供持續標記
+            assert app._focused_sid == "second-id"
+            # activate 路徑：focus_jump 有被呼叫，且餵的是自己的 tty
+            assert mock_jump.called
+            assert mock_jump.call_args.args[0].tty == "/dev/ttys001"
 
 
 @pytest.mark.asyncio
@@ -166,7 +166,7 @@ async def test_poll_focus_request_headless_skips_activate(monkeypatch: pytest.Mo
 
         return _r(request_path=req_path)
 
-    mock_focuser_cls = MagicMock()
+    mock_jump = MagicMock()
 
     app = tui.RingApp(lang="en")
     # headless：_own_tty 為空字串，activate 整段應被跳過
@@ -174,7 +174,7 @@ async def test_poll_focus_request_headless_skips_activate(monkeypatch: pytest.Mo
 
     with (
         patch("ring.tui.read_focus_request", _read_with_tmp),
-        patch("ring.focus.base.AppleScriptTTYFocuser", mock_focuser_cls),
+        patch("ring.tui.focus_jump", mock_jump),
     ):
         async with app.run_test():
             table = app.query_one(DataTable)
@@ -182,8 +182,8 @@ async def test_poll_focus_request_headless_skips_activate(monkeypatch: pytest.Mo
             assert table.cursor_row == 1
             # request 被消費
             assert not req_path.exists()
-            # activate 路徑被跳過：AppleScriptTTYFocuser 完全沒被實例化
-            mock_focuser_cls.assert_not_called()
+            # activate 路徑被跳過：focus_jump 完全沒被呼叫
+            mock_jump.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -210,3 +210,35 @@ async def test_poll_focus_request_session_not_found_does_not_crash(
         async with app.run_test():
             # 不崩即可
             assert app.query_one(DataTable).row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_focused_highlight_clears_when_no_longer_waiting(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """通知指向的 session 回應後（離開 WAITING）→ 持續標記自動解除。"""
+    from ring.ipc import write_focus_request
+
+    req_path = tmp_path / "focus-request"
+    state: dict[str, list[Session]] = {
+        "sessions": [Session("sid-1", "/x/proj", Status.WAITING, 0.0, "→ Edit", "hook")]
+    }
+    monkeypatch.setattr(tui, "board", lambda show_all: state["sessions"])
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+
+    write_focus_request("sid-1", request_path=req_path)
+
+    def _read_once(**kw: object) -> str | None:
+        from ring.ipc import read_focus_request as _r
+
+        return _r(request_path=req_path)
+
+    app = tui.RingApp(lang="en")
+    app._own_tty = ""  # 跳過 activate
+    with patch("ring.tui.read_focus_request", _read_once):
+        async with app.run_test():
+            assert app._focused_sid == "sid-1"  # 通知指向已記住
+            # session 回應 → 不再 WAITING
+            state["sessions"] = [Session("sid-1", "/x/proj", Status.WORKING, 0.0, "hi", "hook")]
+            app._reload()
+            assert app._focused_sid is None  # 標記自動解除

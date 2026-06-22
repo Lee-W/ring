@@ -105,8 +105,15 @@ class CommonHookAdapter:
             status = Status.WAITING if explicit_requires_action else Status.IDLE
         elif event == "Notification":
             status = Status.WAITING if _is_action_required_notification(data) else Status.IDLE
-        elif event == "PreToolUse" and _is_action_required_payload(data):
-            status = Status.WAITING
+        elif event == "PreToolUse":
+            # 工具要動了：權限 / 選項類 → 🔴 WAITING；其餘 → 🟢 WORKING。
+            # 非 action 的 PreToolUse 也明確收斂成 WORKING（而非不寫），這樣
+            # 上一個 WAITING（例如剛答完的權限）會被下一個工具動作清掉。
+            status = Status.WAITING if _is_action_required_payload(data) else Status.WORKING
+        elif event == "PostToolUse":
+            # 工具跑完代表使用者已放行、agent 又在動 → 🟢 WORKING。
+            # 這是「回應完」最乾淨的訊號，用來清掉卡住的 WAITING、止住重複通知。
+            status = Status.WORKING
         if status is None:
             return None
         return NormalizedHookEvent(
@@ -248,6 +255,7 @@ HOOK_EVENTS = (
     "Notification",
     "PermissionRequest",
     "PreToolUse",
+    "PostToolUse",
     "Stop",
     "SessionEnd",
 )
