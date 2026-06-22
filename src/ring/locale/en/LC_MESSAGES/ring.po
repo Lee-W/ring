@@ -115,6 +115,9 @@ msgid "{project}：{msg}"
 msgstr "{project}: {msg}"
 
 # ── 跳轉 ──
+msgid "已離場的 session 無法跳轉"
+msgstr "ended sessions cannot be focused"
+
 msgid "沒有 focuser 接得住（裝 hook，或一個專案只開一個 session 才測得到 tty）"
 msgstr "no focuser handled it (install hooks, or keep one session per project so tty is detectable)"
 

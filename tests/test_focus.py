@@ -17,6 +17,16 @@ def test_jump_no_target_reports_reason() -> None:
     assert "tty" in msg
 
 
+def test_jump_ended_session_refuses_before_focusers(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = Session("ended", "/x", Status.ENDED, 0.0, "-", "hook", tmux_target="main:1.0", tty="/dev/ttys003")
+    monkeypatch.setattr("ring.focus._FOCUSERS", [])
+
+    ok, msg = focus.jump(session)
+
+    assert ok is False
+    assert "已離場" in msg
+
+
 def test_tmux_focuser(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 

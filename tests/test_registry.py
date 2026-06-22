@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,7 @@ from ring.registry import (
     _clean_text,
     _conversation_tail_kind,
     _extract_todo,
+    _hook_sessions,
     _latest_action,
     _scan_status,
     _synthetic_sessions,
@@ -280,3 +282,56 @@ def test_synthetic_sessions_count(
     existing = [_make_session(c) for c in cwds]
     result = _synthetic_sessions(procs, existing)
     assert len(result) == expected_len
+
+
+# ---------------------------------------------------------------------------
+# _hook_sessions stale row cleanup
+# ---------------------------------------------------------------------------
+
+
+def _write_hook_session(registry_dir: Path, sid: str, cwd: str, tty: str) -> None:
+    registry_dir.mkdir(parents=True, exist_ok=True)
+    (registry_dir / f"{sid}.json").write_text(
+        json.dumps(
+            {
+                "session_id": sid,
+                "cwd": cwd,
+                "status": "waiting",
+                "last_active": 123.0,
+                "last_action": "—",
+                "tty": tty,
+            }
+        )
+    )
+
+
+def test_hook_sessions_ends_stale_tty_even_when_same_cwd_has_live_proc(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """同 cwd 仍有 live claude 時，舊 hook row 也要用 tty 判斷是否已離場。
+
+    使用者關掉一個 session，但同專案另有 session 還活著時，若只用 cwd 判斷，
+    舊 row 會繼續顯示且跳轉失敗。hook 有 tty 時應以 tty 精準排除 stale row。
+    """
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(registry_dir, "stale", "/work/app", "/dev/ttys001")
+    _write_hook_session(registry_dir, "live", "/work/app", "/dev/ttys002")
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+
+    by_id = {s.session_id: s for s in _hook_sessions([("/work/app", "/dev/ttys002")])}
+
+    assert by_id["stale"].status is Status.ENDED
+    assert by_id["live"].status is Status.WAITING
+
+
+def test_hook_sessions_keeps_cwd_fallback_when_live_tty_unknown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """live proc 有 cwd 但 tty 取不到時，保留既有 cwd fallback，避免誤殺。"""
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(registry_dir, "maybe-live", "/work/app", "/dev/ttys001")
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+
+    sessions = _hook_sessions([("/work/app", "")])
+
+    assert sessions[0].status is Status.WAITING

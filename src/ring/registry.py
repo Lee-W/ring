@@ -564,12 +564,19 @@ def _hook_sessions(procs: list[tuple[str, str]]) -> list[Session]:
             )
         except (KeyError, ValueError):
             continue
-    # SessionEnd 沒觸發（crash）會留下幽靈檔：cwd 底下沒有活著的 claude 就標已離場。
+    # SessionEnd 沒觸發（crash）會留下幽靈檔。
+    # 先用 tty 精準判斷：同一 cwd 可能還有另一個 live claude，但舊 session 的 tty
+    # 已不存在，不能只因 cwd 還活著就保留舊 hook row。沒有 tty 資訊時才退回 cwd 判斷。
     if out:
         counts: dict[str, int] = {}
-        for cwd, _tty in procs:
+        live_ttys: dict[str, set[str]] = {}
+        for cwd, tty in procs:
             counts[cwd] = counts.get(cwd, 0) + 1
+            if tty:
+                live_ttys.setdefault(cwd, set()).add(tty)
         for s in out:
             if counts.get(s.cwd, 0) == 0:
+                s.status = Status.ENDED
+            elif s.tty and live_ttys.get(s.cwd) and s.tty not in live_ttys[s.cwd]:
                 s.status = Status.ENDED
     return out

@@ -13,7 +13,7 @@ from ring.focus.iterm2 import focuser as _iterm2
 from ring.focus.terminal import focuser as _terminal
 from ring.focus.tmux import focuser as _tmux
 from ring.i18n import gettext as _
-from ring.registry import Session
+from ring.registry import Session, Status
 
 # 內建 focuser。順序可由 config 的 `focusers` 覆寫。
 _BUILTIN: dict[str, Focuser] = {"tmux": _tmux, "iTerm2": _iterm2, "Terminal": _terminal}
@@ -44,6 +44,8 @@ def focusers() -> list[Focuser]:
 
 def jump(session: Session) -> tuple[bool, str]:
     """依序問每個 focuser，誰先接手就用誰。回傳 (成功?, 訊息)。"""
+    if session.status is Status.ENDED:
+        return False, _("已離場的 session 無法跳轉")
     failures: list[str] = []
     for focuser in _FOCUSERS:
         result = focuser.try_focus(session)

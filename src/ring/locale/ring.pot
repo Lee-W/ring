@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-06-22 14:52+0800\n"
+"POT-Creation-Date: 2026-06-22 15:06+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -192,7 +192,11 @@ msgstr ""
 msgid "{project}：{msg}"
 msgstr ""
 
-#: src/ring/focus/__init__.py:58
+#: src/ring/focus/__init__.py:48
+msgid "已離場的 session 無法跳轉"
+msgstr ""
+
+#: src/ring/focus/__init__.py:60
 msgid "沒有 focuser 接得住（裝 hook，或一個專案只開一個 session 才測得到 tty）"
 msgstr ""
 
