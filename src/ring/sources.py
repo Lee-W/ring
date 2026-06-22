@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Protocol
 
 import ring.registry as registry
-from ring.registry import Session
+from ring.registry import Session, Status
 
 
 class SessionSource(Protocol):
@@ -83,13 +83,37 @@ def discover_sessions() -> list[Session]:
     merged: dict[str, Session] = {}
     for source in _SOURCES:
         for s in source.discover():
-            merged.setdefault(s.session_id, s)
+            current = merged.get(s.session_id)
+            merged[s.session_id] = s if current is None else _merge_duplicate_session(current, s)
     found = list(merged.values())
     targets = registry._tmux_targets()
     for s in found:
         s.tmux_target = targets.get(s.cwd)
     found.sort(key=lambda s: (s.status.rank, s.idle_for))
     return found
+
+
+def _merge_duplicate_session(current: Session, candidate: Session) -> Session:
+    """同一 session 來自多個來源時合併。
+
+    hook registry 通常最精準，所以預設保留先到的 hook row。不過 Claude Code 有些
+    action-required 狀態之後未必會送出能清掉 waiting 的 hook；如果 zero-config scan
+    已看到同一 session 有更新紀錄且不再是 WAITING，就用 scan 清掉 stale waiting，
+    同時保留 hook 拿到的 tty，避免跳轉能力退化。
+    """
+    if (
+        current.source == "hook"
+        and current.status is Status.WAITING
+        and candidate.provider == current.provider
+        and candidate.status is not Status.WAITING
+        and candidate.last_active > current.last_active
+    ):
+        if not candidate.tty:
+            candidate.tty = current.tty
+        if not candidate.tmux_target:
+            candidate.tmux_target = current.tmux_target
+        return candidate
+    return current
 
 
 def get_by_id(session_id: str) -> Session | None:
