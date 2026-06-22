@@ -130,3 +130,13 @@ msgstr "✅ Registered RiNG hooks ({events}) into {path}"
 
 msgid "重開 Claude Code session 後，🔴 待回覆狀態就會精準起來。"
 msgstr "Restart your Claude Code sessions and the 🔴 waiting state becomes precise."
+
+# ── remove-hooks ──
+msgid "ℹ️ {path} 不存在，沒有可移除的 hook。"
+msgstr "ℹ️ {path} does not exist; nothing to remove."
+
+msgid "ℹ️ 沒有找到 RiNG hook 條目，無需移除。"
+msgstr "ℹ️ No RiNG hook entries found; nothing to remove."
+
+msgid "✅ 已移除 RiNG hooks（{events}）從 {path}"
+msgstr "✅ Removed RiNG hooks ({events}) from {path}"

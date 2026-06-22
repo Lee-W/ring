@@ -18,7 +18,9 @@ from ring.cli import _LOC_MAX, _STATUS_STYLE, _header, _middle_truncate, _rel, b
 from ring.focus import jump as focus_jump
 from ring.i18n import gettext as _
 from ring.i18n import set_lang
+from ring.notify import notify_waiting
 from ring.registry import Session, Status, running_claude_pids
+from ring.watcher import WaitingWatcher
 
 _ORDER = (Status.WAITING, Status.WORKING, Status.IDLE, Status.ENDED)
 
@@ -42,8 +44,7 @@ class RingApp(App[None]):
         self._interval = interval
         self._show_all = show_all
         self._sessions: list[Session] = []
-        self._waiting_ids: set[str] = set()  # 已知在等你的 session，用來偵測「新轉為等你」
-        self._primed = False  # 第一次 reload 只記錄、不響鈴（避免開場就為既有 waiting 響）
+        self._watcher = WaitingWatcher()
         self.title = "RiNG 🎤"
 
     def compose(self) -> ComposeResult:
@@ -84,21 +85,21 @@ class RingApp(App[None]):
             legend.append(f"{status.marker} {status_label(status)}   ", style=_STATUS_STYLE[status])
         self.query_one("#legend", Static).update(legend)
 
-    def _ring_on_new_waiting(self) -> None:
-        """有 session 新轉為 🔴 等你 → RiNG 真的「ring」你（響鈴 + 通知）。"""
-        waiting = {s.session_id for s in self._sessions if s.status is Status.WAITING}
-        if self._primed:
-            newly = waiting - self._waiting_ids
-            if newly:
-                self.bell()
-                names = ", ".join(sorted(s.project for s in self._sessions if s.session_id in newly))
-                self.notify(_("🔔 {names} 在等你回話", names=names), timeout=8)
-        self._waiting_ids = waiting
-        self._primed = True
+    def _ring_on_new_waiting(self, newly: list[Session]) -> None:
+        """有 session 新轉為 🔴 等你 → RiNG 真的「ring」你（響鈴 + toast 通知）。"""
+        if newly:
+            self.bell()
+            names = ", ".join(sorted(s.project for s in newly))
+            self.notify(_("🔔 {names} 在等你回話", names=names), timeout=8)
 
     def _reload(self) -> None:
         self._sessions = board(self._show_all)
-        self._ring_on_new_waiting()
+        newly = self._watcher.feed(self._sessions)
+        self._ring_on_new_waiting(newly)
+        try:
+            notify_waiting(newly)
+        except Exception:
+            pass
         self.sub_title = _header(len(self._sessions), len(running_claude_pids()))
         table = self.query_one(DataTable)
         cursor = table.cursor_row

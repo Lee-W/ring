@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -128,8 +127,50 @@ def run_hook() -> int:
     return 0
 
 
+def _is_ring_hook_command(cmd: str) -> bool:
+    """判斷一條 command 字串是否為 RiNG 自己安裝的 hook 條目。
+
+    判定規則（涵蓋新舊兩種形式）：
+    - 把 command 以空白切成 tokens；
+    - tokens 結尾是 ``hook`` 且倒數第二個 token 的 basename 為 ``ring``。
+
+    涵蓋：``"ring hook"``、``"/usr/local/bin/ring hook"``、``"~/.local/bin/ring hook"``。
+    不命中：``"some-other-tool hook"``、``"ring"``、``""``、別人裝的任意 command。
+    """
+    tokens = cmd.split()
+    if len(tokens) < 2:
+        return False
+    return tokens[-1] == "hook" and os.path.basename(tokens[-2]) == "ring"
+
+
 def _ring_command() -> str:
-    return f"{shutil.which('ring') or 'ring'} hook"
+    return "ring hook"
+
+
+def _remove_ring_hooks_from_groups(groups: list[Any]) -> tuple[list[Any], bool]:
+    """從 hook groups 列表中移除所有 _is_ring_hook_command 命中的條目，並清掉變空的 group。
+
+    回傳 (cleaned_groups, was_changed)：
+    - cleaned_groups：移除後的 groups（因此變空的 group 也被移除）；
+    - was_changed：是否有任何條目被移除。
+    """
+    new_groups = []
+    changed = False
+    for g in groups:
+        if not isinstance(g, dict):
+            new_groups.append(g)
+            continue
+        hooks_in_g = g.get("hooks", [])
+        filtered = [h for h in hooks_in_g if not _is_ring_hook_command(h.get("command", ""))]
+        if len(filtered) < len(hooks_in_g):
+            changed = True
+            # 有條目被移除：若還有其他 hook 保留就縮減；group 清空就整個丟掉
+            if filtered:
+                new_groups.append({**g, "hooks": filtered})
+            # else: group 清空，不加回
+        else:
+            new_groups.append(g)
+    return new_groups, changed
 
 
 def install_hooks(dry_run: bool = False) -> int:
@@ -146,26 +187,93 @@ def install_hooks(dry_run: bool = False) -> int:
 
     cmd = _ring_command()
     hooks = data.setdefault("hooks", {})
-    added = []
+
+    # 第一輪：掃描各 event，判斷是否有任何 event 需要變更
+    # - already_exact：該 event 下已有完全正確的 "ring hook"（無需動）
+    # - has_old：該 event 下有舊 full-path 形式的 ring hook（需替換）
+    # - has_none：該 event 下沒有任何 ring hook（需新增）
+    events_need_change: list[str] = []
     for event in _HOOK_EVENTS:
-        groups = hooks.setdefault(event, [])
-        already = any(h.get("command") == cmd for g in groups if isinstance(g, dict) for h in g.get("hooks", []))
-        if already:
-            continue
-        groups.append({"hooks": [{"type": "command", "command": cmd, "timeout": 10}]})
-        added.append(event)
+        groups = list(hooks.get(event) or [])
+        already_exact = any(
+            h.get("command") == cmd
+            for g in groups
+            if isinstance(g, dict)
+            for h in g.get("hooks", [])
+        )
+        has_old_path = any(
+            _is_ring_hook_command(h.get("command", "")) and h.get("command") != cmd
+            for g in groups
+            if isinstance(g, dict)
+            for h in g.get("hooks", [])
+        )
+        if not already_exact or has_old_path:
+            events_need_change.append(event)
 
     if dry_run:
+        # dry_run：先套用變更到 hooks（不寫檔）再顯示
+        for event in _HOOK_EVENTS:
+            groups = list(hooks.get(event) or [])
+            cleaned, _changed = _remove_ring_hooks_from_groups(groups)
+            cleaned.append({"hooks": [{"type": "command", "command": cmd, "timeout": 10}]})
+            hooks[event] = cleaned
         print(f"# dry-run → {settings}\n")
         print(json.dumps({"hooks": {e: hooks[e] for e in _HOOK_EVENTS}}, indent=2, ensure_ascii=False))
         return 0
 
-    if not added:
+    if not events_need_change:
         print(_("✅ RiNG hooks 已經裝過了，沒有變更。"))
         return 0
 
+    # 第二輪：只對需要變更的 event 操作
+    for event in events_need_change:
+        groups = list(hooks.get(event) or [])
+        cleaned, _changed = _remove_ring_hooks_from_groups(groups)
+        cleaned.append({"hooks": [{"type": "command", "command": cmd, "timeout": 10}]})
+        hooks[event] = cleaned
+
     settings.parent.mkdir(parents=True, exist_ok=True)
     settings.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
-    print(_("✅ 已註冊 RiNG hooks（{events}）到 {path}", events=", ".join(added), path=settings))
+    print(_("✅ 已註冊 RiNG hooks（{events}）到 {path}", events=", ".join(events_need_change), path=settings))
     print("   " + _("重開 Claude Code session 後，🔴 待回覆狀態就會精準起來。"))
+    return 0
+
+
+def uninstall_hooks(dry_run: bool = False) -> int:
+    """從 ~/.claude/settings.json 移除所有 RiNG hook 條目（對稱於 install_hooks）。"""
+    set_lang(get_config().lang)
+    settings = Path.home() / ".claude" / "settings.json"
+    if not settings.exists():
+        print(_("ℹ️ {path} 不存在，沒有可移除的 hook。", path=settings))
+        return 0
+
+    try:
+        data: dict[str, Any] = json.loads(settings.read_text() or "{}")
+    except json.JSONDecodeError:
+        print(_("⚠️ {path} 不是合法 JSON，先處理它再來。", path=settings))
+        return 1
+
+    hooks = data.get("hooks", {})
+    removed: list[str] = []
+    for event in _HOOK_EVENTS:
+        groups = hooks.get(event)
+        if not isinstance(groups, list):
+            continue
+        cleaned, was_removed = _remove_ring_hooks_from_groups(groups)
+        if was_removed:
+            removed.append(event)
+            hooks[event] = cleaned
+
+    if dry_run:
+        print(f"# dry-run → {settings}\n")
+        preview_hooks = {e: hooks.get(e, []) for e in _HOOK_EVENTS}
+        print(json.dumps({"hooks": preview_hooks}, indent=2, ensure_ascii=False))
+        return 0
+
+    if not removed:
+        print(_("ℹ️ 沒有找到 RiNG hook 條目，無需移除。"))
+        return 0
+
+    settings.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    print(_("✅ 已移除 RiNG hooks（{events}）從 {path}", events=", ".join(removed), path=settings))
     return 0

@@ -67,3 +67,19 @@ def discover_sessions() -> list[Session]:
         s.tmux_target = targets.get(s.cwd)
     found.sort(key=lambda s: (s.status.rank, s.idle_for))
     return found
+
+
+def get_by_id(session_id: str) -> Session | None:
+    """現查現給：重跑 discover_sessions() 後 filter 出指定 session_id。
+
+    每次呼叫都重跑 discover，不快取舊 Session——scan 的 tty 只在「該 cwd 剛好一個
+    live claude」才填，舊 Session 的 tty 可能已失效（例如點擊通知時），
+    必須重新 discover 才能拿到當下有效的 tty。
+
+    :param session_id: 要查詢的 session id。
+    :returns: 找到時回對應 Session；找不到回 None。
+    """
+    for s in discover_sessions():
+        if s.session_id == session_id:
+            return s
+    return None

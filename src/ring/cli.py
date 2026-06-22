@@ -199,13 +199,23 @@ def print_snapshot(sessions: list[Session], show_legend: bool) -> None:
 
 
 def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int:
+    from ring.notify import notify_waiting
+    from ring.watcher import WaitingWatcher
+
     frames = 0
     footer_text = _("每 {interval}s 刷新 · Ctrl-C 離場", interval=int(interval))
     if not HAVE_RICH:
+        watcher = WaitingWatcher()
         try:
             while True:
                 sys.stdout.write("\033[2J\033[H")
-                print(_render_plain(board(show_all), show_legend))
+                sessions = board(show_all)
+                new_waiting = watcher.feed(sessions)
+                try:
+                    notify_waiting(new_waiting)
+                except Exception:
+                    pass
+                print(_render_plain(sessions, show_legend))
                 print("\n" + footer_text)
                 sys.stdout.flush()
                 frames += 1
@@ -216,10 +226,17 @@ def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int
             return 0
 
     console = Console()
+    watcher = WaitingWatcher()
     try:
         with Live(console=console, screen=True, auto_refresh=False) as live:
             while True:
-                body = _rich_renderable(board(show_all), show_legend)
+                sessions = board(show_all)
+                new_waiting = watcher.feed(sessions)
+                try:
+                    notify_waiting(new_waiting)
+                except Exception:
+                    pass
+                body = _rich_renderable(sessions, show_legend)
                 live.update(Group(body, Text("\n" + footer_text, style=_MUTED)), refresh=True)
                 frames += 1
                 if count and frames >= count:
@@ -249,6 +266,19 @@ def main(argv: list[str] | None = None) -> int:
         from ring.hook import install_hooks
 
         return install_hooks(dry_run="--dry-run" in raw)
+    if raw and raw[0] == "remove-hooks":
+        from ring.hook import uninstall_hooks
+
+        return uninstall_hooks(dry_run="--dry-run" in raw)
+    if raw and raw[0] == "focus" and len(raw) >= 2:
+        from ring.focus import jump as focus_jump
+        from ring.sources import get_by_id
+
+        session = get_by_id(raw[1])
+        if session is None:
+            return 0
+        focus_jump(session)
+        return 0
 
     cfg = get_config()
     set_lang(_peek_lang(raw) or cfg.lang)  # 在 import ring.tui 前設好，Footer 按鍵說明也跟著語言

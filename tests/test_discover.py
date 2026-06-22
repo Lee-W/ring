@@ -2,12 +2,13 @@ import json
 import os
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 import ring.registry as registry
-from ring.registry import Status, _head_cwd
-from ring.sources import discover_sessions
+from ring.registry import Session, Status, _head_cwd
+from ring.sources import discover_sessions, get_by_id
 
 
 def _write_session(
@@ -263,3 +264,52 @@ def test_scan_commitizen_regression(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert s.source == "scan"
     # proc 有活，應標為 WORKING（剛建立，idle < threshold）
     assert s.status is Status.WORKING
+
+
+# ---------------------------------------------------------------------------
+# get_by_id
+# ---------------------------------------------------------------------------
+
+
+def test_get_by_id_returns_session_when_found() -> None:
+    """get_by_id 對存在的 uuid 回對應 Session，且每次呼叫都重跑 discover。"""
+    session_a = Session("uuid-a", "/x/a", Status.WAITING, 0.0, "→ Edit", "hook")
+    session_b = Session("uuid-b", "/x/b", Status.WORKING, 0.0, "→ Bash", "hook")
+    call_count = 0
+
+    def fake_discover() -> list[Session]:
+        nonlocal call_count
+        call_count += 1
+        return [session_a, session_b]
+
+    with patch("ring.sources.discover_sessions", fake_discover):
+        result = get_by_id("uuid-a")
+
+    assert result is session_a
+    assert call_count == 1
+
+
+def test_get_by_id_returns_none_when_not_found() -> None:
+    """get_by_id 對不存在的 uuid 回 None。"""
+    session_a = Session("uuid-a", "/x/a", Status.WAITING, 0.0, "→ Edit", "hook")
+
+    with patch("ring.sources.discover_sessions", return_value=[session_a]):
+        result = get_by_id("nonexistent-uuid")
+
+    assert result is None
+
+
+def test_get_by_id_reruns_discover_each_call() -> None:
+    """每次呼叫 get_by_id 都重跑 discover_sessions（不快取）。"""
+    call_count = 0
+
+    def fake_discover() -> list[Session]:
+        nonlocal call_count
+        call_count += 1
+        return []
+
+    with patch("ring.sources.discover_sessions", fake_discover):
+        get_by_id("uuid-x")
+        get_by_id("uuid-x")
+
+    assert call_count == 2, "每次呼叫 get_by_id 都應重跑 discover_sessions"

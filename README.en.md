@@ -98,7 +98,20 @@ plus the beep both rely on it.
    ls ~/.config/ring/sessions/   # a <session_id>.json means hooks are writing
    ```
 
-To remove, edit `~/.claude/settings.json` and drop the `ring hook` lines.
+**System notifications (🔔 click-to-focus):** when a session turns 🔴 waiting, RiNG sends a
+system notification (both headless `--watch` and TUI). Install `terminal-notifier` for
+click-to-focus; without it, notifications fall back to plain macOS alerts (no click action):
+
+```sh
+brew install terminal-notifier
+```
+
+To remove hooks:
+
+```sh
+ring remove-hooks             # removes ring hook entries from ~/.claude/settings.json
+ring remove-hooks --dry-run   # preview without touching the file
+```
 
 ## Configuration (optional)
 
