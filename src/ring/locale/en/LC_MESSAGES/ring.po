@@ -24,10 +24,10 @@ msgid_plural "{n} 個 session 在場"
 msgstr[0] "{n} session on stage"
 msgstr[1] "{n} sessions on stage"
 
-msgid "{n} 個 claude process 跑著"
-msgid_plural "{n} 個 claude process 跑著"
-msgstr[0] "{n} claude process running"
-msgstr[1] "{n} claude processes running"
+msgid "{n} 個 agent process 跑著"
+msgid_plural "{n} 個 agent process 跑著"
+msgstr[0] "{n} agent process running"
+msgstr[1] "{n} agent processes running"
 
 msgid "🎤 RiNG — {sess} · {proc}"
 msgstr "🎤 RiNG — {sess} · {proc}"
@@ -61,8 +61,8 @@ msgid "每 {interval}s 刷新 · Ctrl-C 離場"
 msgstr "refresh every {interval}s · Ctrl-C to leave"
 
 # ── CLI ──
-msgid "看所有 Claude Code session 上台。"
-msgstr "Watch all your Claude Code sessions on one stage."
+msgid "看所有 agent CLI session 上台。"
+msgstr "Watch all your agent CLI sessions on one stage."
 
 msgid "持續刷新"
 msgstr "keep refreshing"

@@ -3,9 +3,9 @@
 **台灣漢語** · [English](README.en.md)
 
 > **R**ealtime **I**nstance **N**otification **G**rid
-> ——看所有 active 的 agent CLI session 上台的**場館**（內建 Claude Code，可擴充）。
+> ——看所有 active 的 agent CLI session 上台的**場館**（內建 Claude Code / Codex，可擴充）。
 
-你同時開了好幾個 Claude Code（或別的 agent CLI），不知道哪個正在等你回話、哪個還在跑、
+你同時開了好幾個 Claude Code / Codex，不知道哪個正在等你回話、哪個還在跑、
 哪個早就停了。RiNG 把它們全部請上同一個舞台，一眼看完——**誰在等你，排最前面**。
 session 需要你回話時，它「**ring** 你」。
 
@@ -19,9 +19,9 @@ session 需要你回話時，它「**ring** 你」。
 才在「老闆」的要求下蓋的；而且它跟 CiRCLE **共用同一套訂單／帳號系統**。
 這把工具的定位講得剛剛好：
 
-- **一樣的誕生理由**：你的並行 Claude Code session 也暴增了，需要一個專門的地方一眼看完。
-- **不取代、是分店**：RiNG 不是另一個 client——它讀的是同一套 `~/.claude` 後台、
-  跟 Claude Code 共用資料，只是替你多開的第二個觀測視窗。
+- **一樣的誕生理由**：你的並行 agent CLI session 也暴增了，需要一個專門的地方一眼看完。
+- **不取代、是分店**：RiNG 不是另一個 client——它讀的是 Claude Code / Codex 的本機後台，
+  只是替你多開的第二個觀測視窗。
 
 ## 跑起來
 
@@ -62,8 +62,9 @@ focuser**——core 不綁任何特定 vendor，加一個終端＝加一個 focu
 （`try_focus(session) -> (ok, msg) | None`），呼叫 `ring.focus.register_focuser(MyFocuser())`
 即可——core 零改動。嘗試順序也能用 config 的 `focusers` 調整。
 
-「哪個 session 在哪個終端」靠它的 `tty` 對應——**hook 模式最精準**；zero-config 下
-每個專案只開一個 session 時也對得上。
+「哪個 session 在哪個終端」靠它的 `tty` 對應——**Claude Code hook 模式最精準**；
+zero-config 下每個專案只開一個 session 時也對得上。Codex 目前走 zero-config，
+同一個 cwd 只開一個 live Codex 時可跳轉；同 cwd 多個 Codex 只能保守顯示，避免跳錯。
 
 ### 它會 ring 你 🔔
 
@@ -80,7 +81,7 @@ brew install terminal-notifier
 沒裝時退化為 macOS 原生純文字通知（不可點擊跳轉），RiNG 會在第一次走到這條路時提示一次。
 
 ```
-🎤 RiNG — 3 session 在場 · 2 claude process 跑著
+🎤 RiNG — 3 session 在場 · 2 agent process 跑著
 
   🔴 maigo            12s  → 等你確認權限
   🟢 pelican-osm       3s  → Edit
@@ -91,10 +92,11 @@ brew install terminal-notifier
 
 | 模式 | 來源 | 狀態精度 |
 |------|------|----------|
-| **zero-config**（預設） | 掃 `~/.claude/projects/**/*.jsonl` 的 mtime + 記錄裡的 `cwd` 欄位 | 粗（活躍度分層，測不到「正在等你」） |
-| **hook**（opt-in，精準） | RiNG hook 在 `Notification` / `UserPromptSubmit` / `Stop` / `SessionEnd` 即時寫 `~/.config/ring/sessions/` | 準（🔴 等你 / 🟢 工作 / 🟡 idle / ⚫ 離場） |
+| **Claude Code zero-config**（預設） | 掃 `~/.claude/projects/**/*.jsonl` 的 mtime + 記錄裡的 `cwd` 欄位 | 中（可從 transcript 尾端猜回完一輪；測不到 permission notification） |
+| **Codex zero-config**（預設） | 讀 `~/.codex/state_5.sqlite` threads + rollout JSONL，並用 live `codex` process 配 tty | 中（可辨識 live / ended / 回完一輪；同 cwd 多 session 跳轉不保證精準） |
+| **Claude Code hook**（opt-in，精準） | RiNG hook 在 `Notification` / `UserPromptSubmit` / `Stop` / `SessionEnd` 即時寫 `~/.config/ring/sessions/` | 準（🔴 等你 / 🟢 工作 / 🟡 idle / ⚫ 離場） |
 
-zero-config 不必設定就能用；想要精準的「誰在等你」，再裝 hook。
+zero-config 不必設定就能用；想要 Claude Code 精準的「誰在等你」，再裝 hook。
 
 ## 狀態機
 
@@ -210,8 +212,8 @@ core 不綁死任何特定工具或終端。兩個擴充點都是「寫個小類
 
 ### 別的 agent CLI（`SessionSource`）
 
-內建 `ClaudeCodeSource`（掃 `~/.claude`）。要監測別的工具，寫一個 source 吐出
-`Session`、註冊即可：
+內建 `ClaudeCodeSource`（掃 `~/.claude` + hook registry）與 `CodexSource`（讀
+`~/.codex/state_5.sqlite`）。要監測別的工具，寫一個 source 吐出 `Session`、註冊即可：
 
 ```python
 from ring.registry import Session, Status
@@ -241,7 +243,7 @@ iTerm2 / Terminal.app，各自一個模組（`ring/focus/tmux.py` …）。
 ## 平台與隱私
 
 - **平台**：macOS / Linux（靠 `ps` / `lsof` / `tmux` 偵測；Windows 未支援）。
-- **隱私**：全程在你本機跑——只**讀** `~/.claude/projects/` 的 transcript、只**寫**
+- **隱私**：全程在你本機跑——只**讀** `~/.claude/`、`~/.codex/` 的本機資料，只**寫**
   `~/.config/ring/`。不連網、不上傳、不外送任何資料。
 
 ## License

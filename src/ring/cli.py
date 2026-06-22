@@ -19,7 +19,7 @@ from ring import __version__
 from ring.config import get_config
 from ring.i18n import gettext as _
 from ring.i18n import ngettext, set_lang
-from ring.registry import Session, Status, running_claude_pids
+from ring.registry import Session, Status, running_agent_pids
 from ring.sources import discover_sessions
 
 try:
@@ -117,7 +117,7 @@ def status_label(status: Status) -> str:
 
 def _header(n: int, pids: int) -> str:
     sess = ngettext("{n} 個 session 在場", "{n} 個 session 在場", n, n=n)
-    proc = ngettext("{n} 個 claude process 跑著", "{n} 個 claude process 跑著", pids, n=pids)
+    proc = ngettext("{n} 個 agent process 跑著", "{n} 個 agent process 跑著", pids, n=pids)
     return _("🎤 RiNG — {sess} · {proc}", sess=sess, proc=proc)
 
 
@@ -130,7 +130,7 @@ def _rich_legend() -> Text:
 
 
 def _rich_renderable(sessions: list[Session], show_legend: bool) -> Group:
-    pids = running_claude_pids()
+    pids = running_agent_pids()
     blocks: list[Any] = [Text(_header(len(sessions), len(pids)), style="bold")]
     if show_legend:
         blocks.append(_rich_legend())
@@ -159,7 +159,7 @@ def _rich_renderable(sessions: list[Session], show_legend: bool) -> Group:
 
 # ----------------------------------------------------------------------------- plain fallback
 def _render_plain(sessions: list[Session], show_legend: bool) -> str:
-    pids = running_claude_pids()
+    pids = running_agent_pids()
     lines = [_header(len(sessions), len(pids))]
     if show_legend:
         items = "   ".join(f"{st.marker} {status_label(st)}" for st in Status)
@@ -293,7 +293,7 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg = get_config()
     set_lang(_peek_lang(raw) or cfg.lang)  # 在 import ring.tui 前設好，Footer 按鍵說明也跟著語言
-    parser = argparse.ArgumentParser(prog="ring", description=_("看所有 Claude Code session 上台。"))
+    parser = argparse.ArgumentParser(prog="ring", description=_("看所有 agent CLI session 上台。"))
     parser.add_argument("--version", action="version", version=f"ring {__version__}")
     parser.add_argument("--watch", action="store_true", help=_("持續刷新"))
     parser.add_argument("--interval", type=float, default=cfg.interval, help=_("watch 刷新秒數"))

@@ -13,7 +13,7 @@ def _sessions() -> list[Session]:
 
 def test_main_snapshot_en(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setattr(cli, "board", lambda show_all: _sessions())
-    monkeypatch.setattr(cli, "running_claude_pids", lambda: [1])
+    monkeypatch.setattr(cli, "running_agent_pids", lambda: [1])
     rc = cli.main(["--lang", "en", "--no-legend"])
     out = capsys.readouterr().out
     assert rc == 0
@@ -23,7 +23,7 @@ def test_main_snapshot_en(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Captur
 
 def test_main_snapshot_default_is_zh(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setattr(cli, "board", lambda show_all: _sessions())
-    monkeypatch.setattr(cli, "running_claude_pids", lambda: [1])
+    monkeypatch.setattr(cli, "running_agent_pids", lambda: [1])
     rc = cli.main(["--no-legend"])
     out = capsys.readouterr().out
     assert rc == 0
@@ -32,7 +32,7 @@ def test_main_snapshot_default_is_zh(monkeypatch: pytest.MonkeyPatch, capsys: py
 
 def test_main_empty_board(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setattr(cli, "board", lambda show_all: [])
-    monkeypatch.setattr(cli, "running_claude_pids", lambda: [])
+    monkeypatch.setattr(cli, "running_agent_pids", lambda: [])
     assert cli.main(["--lang", "en"]) == 0
     assert "stage" in capsys.readouterr().out
 

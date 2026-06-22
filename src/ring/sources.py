@@ -38,8 +38,17 @@ class ClaudeCodeSource:
         return list(merged.values())
 
 
+class CodexSource:
+    """Codex CLI：讀 ``~/.codex/state_5.sqlite`` threads，並用 live ``codex`` process 配 tty。"""
+
+    name = "codex"
+
+    def discover(self) -> list[Session]:
+        return registry._codex_threads(registry._codex_procs())
+
+
 # 註冊表（順序＝彙整順序）。外部要支援新工具就 register_source() 多塞一個。
-_SOURCES: list[SessionSource] = [ClaudeCodeSource()]
+_SOURCES: list[SessionSource] = [ClaudeCodeSource(), CodexSource()]
 
 
 def register_source(source: SessionSource, *, first: bool = False) -> None:

@@ -21,7 +21,7 @@ from ring.i18n import gettext as _
 from ring.i18n import set_lang
 from ring.ipc import clear_tui_presence, read_focus_request, write_tui_presence
 from ring.notify import notify_waiting
-from ring.registry import Session, Status, running_claude_pids
+from ring.registry import Session, Status, running_agent_pids
 from ring.watcher import WaitingWatcher
 
 _ORDER = (Status.WAITING, Status.WORKING, Status.IDLE, Status.ENDED)
@@ -182,7 +182,7 @@ class RingApp(App[None]):
                 self.notify(hint, timeout=10)
         except Exception:
             pass
-        self.sub_title = _header(len(self._sessions), len(running_claude_pids()))
+        self.sub_title = _header(len(self._sessions), len(running_agent_pids()))
         table = self.query_one(DataTable)
         cursor = table.cursor_row
         table.clear()

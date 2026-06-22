@@ -1,4 +1,6 @@
 import json
+import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +11,9 @@ from ring.registry import (
     Status,
     _apply_waiting,
     _clean_text,
+    _codex_latest_action,
+    _codex_tail_kind,
+    _codex_threads,
     _conversation_tail_kind,
     _extract_todo,
     _hook_sessions,
@@ -333,3 +338,132 @@ def test_hook_sessions_keeps_cwd_fallback_when_live_tty_unknown(
     sessions = _hook_sessions([("/work/app", "")])
 
     assert sessions[0].status is Status.WAITING
+
+
+# ---------------------------------------------------------------------------
+# Codex source helpers
+# ---------------------------------------------------------------------------
+
+
+def _write_codex_state(db: Path, rows: list[dict[str, object]]) -> None:
+    con = sqlite3.connect(db)
+    try:
+        con.execute(
+            """
+            create table threads (
+                id text primary key,
+                cwd text not null,
+                title text not null,
+                rollout_path text not null,
+                preview text not null default '',
+                updated_at integer not null,
+                updated_at_ms integer not null,
+                archived integer not null default 0
+            )
+            """
+        )
+        con.executemany(
+            """
+            insert into threads
+                (id, cwd, title, rollout_path, preview, updated_at, updated_at_ms, archived)
+            values
+                (:id, :cwd, :title, :rollout_path, :preview, :updated_at, :updated_at_ms, :archived)
+            """,
+            rows,
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def _write_rollout(path: Path, records: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+
+
+def test_codex_tail_kind_detects_waiting_after_task_complete() -> None:
+    records = [
+        {"type": "event_msg", "payload": {"type": "user_message", "message": "do it"}},
+        {"type": "event_msg", "payload": {"type": "task_complete"}},
+    ]
+
+    assert _codex_tail_kind(records) == "waiting"
+
+
+def test_codex_tail_kind_detects_working_during_tool_call() -> None:
+    records = [
+        {"type": "event_msg", "payload": {"type": "task_complete"}},
+        {"type": "response_item", "payload": {"type": "function_call", "name": "exec_command"}},
+    ]
+
+    assert _codex_tail_kind(records) == "working"
+
+
+def test_codex_latest_action_prefers_function_call() -> None:
+    records = [{"type": "response_item", "payload": {"type": "function_call", "name": "exec_command"}}]
+
+    assert _codex_latest_action(records, "fallback") == "→ exec_command"
+
+
+def test_codex_threads_reads_state_and_marks_live_waiting(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rollout = tmp_path / "rollout.jsonl"
+    _write_rollout(rollout, [{"type": "event_msg", "payload": {"type": "task_complete"}}])
+    db = tmp_path / "state.sqlite"
+    now_ms = int(time.time() * 1000)
+    _write_codex_state(
+        db,
+        [
+            {
+                "id": "codex-session",
+                "cwd": "/work/app",
+                "title": "Implement thing",
+                "rollout_path": str(rollout),
+                "preview": "Implement thing",
+                "updated_at": now_ms // 1000,
+                "updated_at_ms": now_ms,
+                "archived": 0,
+            }
+        ],
+    )
+    monkeypatch.setattr("ring.registry.CODEX_STATE", db)
+
+    sessions = _codex_threads([("/work/app", "/dev/ttys003")])
+
+    assert len(sessions) == 1
+    assert sessions[0].session_id == "codex:codex-session"
+    assert sessions[0].source == "codex"
+    assert sessions[0].status is Status.WAITING
+    assert sessions[0].tty == "/dev/ttys003"
+
+
+def test_codex_threads_hides_closed_recent_thread(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rollout = tmp_path / "rollout.jsonl"
+    _write_rollout(rollout, [{"type": "event_msg", "payload": {"type": "task_complete"}}])
+    db = tmp_path / "state.sqlite"
+    now_ms = int(time.time() * 1000)
+    _write_codex_state(
+        db,
+        [
+            {
+                "id": "closed",
+                "cwd": "/work/app",
+                "title": "Old but recent",
+                "rollout_path": str(rollout),
+                "preview": "Old but recent",
+                "updated_at": now_ms // 1000,
+                "updated_at_ms": now_ms,
+                "archived": 0,
+            }
+        ],
+    )
+    monkeypatch.setattr("ring.registry.CODEX_STATE", db)
+
+    sessions = _codex_threads([])
+
+    assert len(sessions) == 1
+    assert sessions[0].status is Status.ENDED
+    assert sessions[0].tty is None

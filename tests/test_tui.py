@@ -15,7 +15,7 @@ async def test_tui_mounts_and_lists_sessions(monkeypatch: pytest.MonkeyPatch) ->
         Session("b", "/y/blog", Status.WORKING, 0.0, "hi", "scan"),
     ]
     monkeypatch.setattr(tui, "board", lambda show_all: sessions)
-    monkeypatch.setattr(tui, "running_claude_pids", lambda: [1, 2])
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1, 2])
 
     app = tui.RingApp(lang="en")
     async with app.run_test() as pilot:
@@ -29,7 +29,7 @@ async def test_tui_mounts_and_lists_sessions(monkeypatch: pytest.MonkeyPatch) ->
 async def test_tui_jump_without_tmux_target_does_not_crash(monkeypatch: pytest.MonkeyPatch) -> None:
     sessions = [Session("a", "/x/maigo", Status.WAITING, 0.0, "→ Edit", "scan")]  # tmux_target=None
     monkeypatch.setattr(tui, "board", lambda show_all: sessions)
-    monkeypatch.setattr(tui, "running_claude_pids", lambda: [1])
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
 
     app = tui.RingApp(lang="en")
     async with app.run_test() as pilot:
@@ -41,7 +41,7 @@ async def test_tui_jump_without_tmux_target_does_not_crash(monkeypatch: pytest.M
 async def test_new_waiting_rings_bell(monkeypatch: pytest.MonkeyPatch) -> None:
     state: dict[str, list[Session]] = {"sessions": [Session("a", "/x/p", Status.WORKING, 0.0, "-", "scan")]}
     monkeypatch.setattr(tui, "board", lambda show_all: state["sessions"])
-    monkeypatch.setattr(tui, "running_claude_pids", lambda: [1])
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
 
     app = tui.RingApp(lang="en")
     async with app.run_test():
@@ -62,7 +62,7 @@ async def test_tui_writes_presence_on_mount(monkeypatch: pytest.MonkeyPatch, tmp
     """TUI 啟動後 presence 檔存在。"""
     sessions = [Session("a", "/x/maigo", Status.WAITING, 0.0, "→ Edit", "scan")]
     monkeypatch.setattr(tui, "board", lambda show_all: sessions)
-    monkeypatch.setattr(tui, "running_claude_pids", lambda: [1])
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
 
     pres_path = tmp_path / "tui-presence"
 
@@ -80,7 +80,7 @@ async def test_tui_clears_presence_on_unmount(monkeypatch: pytest.MonkeyPatch, t
     """TUI 離場後 clear_tui_presence 被呼叫。"""
     sessions = [Session("a", "/x/maigo", Status.WAITING, 0.0, "→ Edit", "scan")]
     monkeypatch.setattr(tui, "board", lambda show_all: sessions)
-    monkeypatch.setattr(tui, "running_claude_pids", lambda: [1])
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
 
     cleared: list[int] = []
 
@@ -110,7 +110,7 @@ async def test_poll_focus_request_moves_cursor(monkeypatch: pytest.MonkeyPatch, 
         Session("second-id", "/y/proj2", Status.WORKING, 0.0, "hi", "hook"),
     ]
     monkeypatch.setattr(tui, "board", lambda show_all: sessions)
-    monkeypatch.setattr(tui, "running_claude_pids", lambda: [1])
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
 
     # 預先寫入 request
     write_focus_request("second-id", request_path=req_path)
@@ -157,7 +157,7 @@ async def test_poll_focus_request_headless_skips_activate(monkeypatch: pytest.Mo
         Session("second-id", "/y/proj2", Status.WORKING, 0.0, "hi", "hook"),
     ]
     monkeypatch.setattr(tui, "board", lambda show_all: sessions)
-    monkeypatch.setattr(tui, "running_claude_pids", lambda: [1])
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
 
     write_focus_request("second-id", request_path=req_path)
 
@@ -196,7 +196,7 @@ async def test_poll_focus_request_session_not_found_does_not_crash(
     req_path = tmp_path / "focus-request"
     sessions = [Session("only-id", "/x/proj", Status.WAITING, 0.0, "→ Edit", "hook")]
     monkeypatch.setattr(tui, "board", lambda show_all: sessions)
-    monkeypatch.setattr(tui, "running_claude_pids", lambda: [1])
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
 
     write_focus_request("nonexistent-id", request_path=req_path)
 

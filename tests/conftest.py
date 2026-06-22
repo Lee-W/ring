@@ -1,7 +1,9 @@
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
+import ring.registry as registry
 from ring.i18n import set_lang
 
 
@@ -14,6 +16,7 @@ def _reset_lang(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """
     monkeypatch.delenv("RING_LANG", raising=False)
     monkeypatch.delenv("LANG", raising=False)
+    monkeypatch.setattr(registry, "CODEX_STATE", Path("/nonexistent/ring-test-codex-state.sqlite"))
     set_lang(None)
     yield
     set_lang(None)

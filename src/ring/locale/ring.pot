@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-06-22 15:06+0800\n"
+"POT-Creation-Date: 2026-06-22 15:26+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -42,8 +42,8 @@ msgstr[1] ""
 
 #: src/ring/cli.py:120
 #, python-brace-format
-msgid "{n} 個 claude process 跑著"
-msgid_plural "{n} 個 claude process 跑著"
+msgid "{n} 個 agent process 跑著"
+msgid_plural "{n} 個 agent process 跑著"
 msgstr[0] ""
 msgstr[1] ""
 
@@ -90,7 +90,7 @@ msgid "每 {interval}s 刷新 · Ctrl-C 離場"
 msgstr ""
 
 #: src/ring/cli.py:285
-msgid "看所有 Claude Code session 上台。"
+msgid "看所有 agent CLI session 上台。"
 msgstr ""
 
 #: src/ring/cli.py:287

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -32,6 +33,7 @@ from ring.config import get_config
 
 CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
 RING_REGISTRY = Path.home() / ".config" / "ring" / "sessions"
+CODEX_STATE = Path.home() / ".codex" / "state_5.sqlite"
 
 _CFG = get_config()
 ACTIVE_WINDOW_SECONDS = _CFG.active_window_seconds  # 只看最近這段時間動過的 session（預設 6h）
@@ -335,6 +337,7 @@ def _tmux_targets() -> dict[str, str]:
 
 
 _pids_cache: tuple[float, list[int]] = (-1.0, [])
+_codex_pids_cache: tuple[float, list[int]] = (-1.0, [])
 
 
 def running_claude_pids() -> list[int]:
@@ -356,6 +359,32 @@ def running_claude_pids() -> list[int]:
                 pass
     _pids_cache = (now, pids)
     return pids
+
+
+def running_codex_pids() -> list[int]:
+    global _codex_pids_cache
+    now = time.monotonic()
+    if 0.0 <= now - _codex_pids_cache[0] <= _SUBPROCESS_CACHE_TTL:
+        return _codex_pids_cache[1]
+    try:
+        out = subprocess.run(["ps", "-Ao", "pid,comm"], capture_output=True, text=True, timeout=3).stdout
+    except (OSError, subprocess.SubprocessError):
+        out = ""
+    pids: list[int] = []
+    for line in out.splitlines()[1:]:
+        parts = line.split(None, 1)
+        if len(parts) == 2 and os.path.basename(parts[1].strip()) == "codex":
+            try:
+                pids.append(int(parts[0]))
+            except ValueError:
+                pass
+    _codex_pids_cache = (now, pids)
+    return pids
+
+
+def running_agent_pids() -> list[int]:
+    """所有內建來源看得到的 live agent CLI 行程。"""
+    return [*running_claude_pids(), *running_codex_pids()]
 
 
 def _pid_cwd(pid: int) -> str:
@@ -400,6 +429,142 @@ def _claude_procs() -> list[tuple[str, str]]:
         if cwd:
             procs.append((cwd, _pid_tty(pid)))
     return procs
+
+
+def _codex_procs() -> list[tuple[str, str]]:
+    """每個還活著的 Codex CLI：(cwd, tty)。"""
+    procs: list[tuple[str, str]] = []
+    for pid in running_codex_pids():
+        cwd = _pid_cwd(pid)
+        if cwd:
+            procs.append((cwd, _pid_tty(pid)))
+    return procs
+
+
+def _codex_tail_kind(records: list[dict[str, Any]]) -> str:
+    """判定 Codex rollout 尾端狀態。
+
+    回傳值：
+    - ``"waiting"``：Codex 已完成一輪、回到等使用者輸入。
+    - ``"working"``：最後仍在處理使用者輸入或工具呼叫。
+    - ``"none"``：沒有可判斷事件。
+    """
+    for record in reversed(records):
+        record_type = record.get("type")
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            payload = {}
+        if record_type == "event_msg":
+            event_type = payload.get("type")
+            if event_type == "task_complete":
+                return "waiting"
+            if event_type in {"task_started", "user_message", "agent_message"}:
+                return "working"
+        if record_type == "response_item":
+            item_type = payload.get("type")
+            if item_type == "message":
+                if payload.get("role") == "assistant" and payload.get("phase") == "final_answer":
+                    return "waiting"
+                return "working"
+            if item_type in {"function_call", "function_call_output"}:
+                return "working"
+    return "none"
+
+
+def _codex_latest_action(records: list[dict[str, Any]], fallback: str) -> str:
+    """從 Codex rollout 尾端取簡短動作摘要。"""
+    for record in reversed(records):
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if record.get("type") == "response_item" and payload.get("type") == "function_call":
+            name = str(payload.get("name") or "").strip()
+            if name:
+                return f"→ {name}"
+        if record.get("type") == "event_msg" and payload.get("type") == "agent_message":
+            msg = str(payload.get("message") or "").strip()
+            if msg:
+                return msg.splitlines()[0][:80]
+    return fallback or "—"
+
+
+def _codex_threads(procs: list[tuple[str, str]]) -> list[Session]:
+    """從 Codex state sqlite 讀 thread，並用 live codex process 粗略判斷活性。"""
+    if not CODEX_STATE.exists():
+        return []
+    try:
+        con = sqlite3.connect(f"file:{CODEX_STATE}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            """
+            select id, cwd, title, rollout_path, preview, updated_at, updated_at_ms
+            from threads
+            where archived = 0
+            order by coalesce(nullif(updated_at_ms, 0), updated_at * 1000) desc
+            limit 200
+            """
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        try:
+            con.close()
+        except UnboundLocalError:
+            pass
+
+    now = time.time()
+    counts: dict[str, int] = {}
+    cwd_ttys: dict[str, list[str]] = {}
+    for cwd, tty in procs:
+        counts[cwd] = counts.get(cwd, 0) + 1
+        cwd_ttys.setdefault(cwd, []).append(tty)
+
+    raw: list[Session] = []
+    for row in rows:
+        cwd = str(row["cwd"] or "")
+        if not cwd:
+            continue
+        updated_ms = int(row["updated_at_ms"] or 0)
+        last_active = updated_ms / 1000 if updated_ms else float(row["updated_at"] or 0)
+        if now - last_active > ACTIVE_WINDOW_SECONDS and counts.get(cwd, 0) == 0:
+            continue
+        rollout_path = Path(str(row["rollout_path"] or ""))
+        records = _tail_records(rollout_path) if rollout_path else []
+        title = str(row["title"] or row["preview"] or "")
+        tail_kind = _codex_tail_kind(records)
+        raw.append(
+            Session(
+                session_id=f"codex:{row['id']}",
+                cwd=cwd,
+                status=Status.ENDED,
+                last_active=last_active,
+                last_action=_codex_latest_action(records, title),
+                source="codex",
+                _tail_kind=tail_kind,
+                origin_cwd=cwd,
+            )
+        )
+
+    by_cwd: dict[str, list[Session]] = {}
+    for s in raw:
+        by_cwd.setdefault(s.cwd, []).append(s)
+
+    out: list[Session] = []
+    for cwd, group in by_cwd.items():
+        group.sort(key=lambda s: s.last_active, reverse=True)
+        live_n = counts.get(cwd, 0)
+        uniq_tty = cwd_ttys[cwd][0] if live_n == 1 and cwd_ttys.get(cwd) else ""
+        for i, s in enumerate(group):
+            if i < live_n:
+                idle = now - s.last_active
+                if s._tail_kind == "waiting":
+                    s.status = Status.WAITING
+                else:
+                    s.status = _scan_status(idle)
+                if i == 0 and uniq_tty:
+                    s.tty = uniq_tty
+            out.append(s)
+    return out
 
 
 def _scan_status(idle_seconds: float) -> Status:

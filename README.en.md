@@ -3,9 +3,9 @@
 [台灣漢語](README.md) · **English**
 
 > **R**ealtime **I**nstance **N**otification **G**rid
-> — a stage where all your active agent-CLI sessions perform (Claude Code built-in, extensible).
+> — a stage where all your active agent-CLI sessions perform (Claude Code / Codex built in, extensible).
 
-You've got several Claude Code (or other agent CLIs) running at once and can't tell which one
+You've got several Claude Code / Codex sessions running at once and can't tell which one
 is waiting for your reply, which is still working, and which died long ago. RiNG puts them all
 on one stage at a glance — **whoever's waiting for you comes first**. When a session needs you,
 it literally **rings** you.
@@ -50,8 +50,10 @@ terminal integration is a **pluggable focuser**; the core isn't tied to any vend
   AppleScript, picking the right app automatically (an app that isn't running won't be woken up).
   The first time you'll get a system "Automation" prompt — allow once.
 
-Which session lives in which terminal is matched by its `tty` — **most precise in hook mode**;
-under zero-config it also lines up when a project has only one session.
+Which session lives in which terminal is matched by its `tty` — **most precise in Claude Code
+hook mode**; under zero-config it also lines up when a project has only one session. Codex
+currently uses zero-config: jump works when a cwd has one live Codex process; with multiple
+live Codex sessions in the same cwd, RiNG shows them conservatively to avoid focusing the wrong tab.
 
 ### It rings you 🔔
 
@@ -62,10 +64,11 @@ true to its name, it really rings you. (Zero-config can't detect WAITING, so thi
 
 | Mode | Source | Status precision |
 |------|--------|------------------|
-| **zero-config** (default) | scans `~/.claude/projects/**/*.jsonl` mtimes + the `cwd` field in records | coarse (activity tiers only; can't tell "waiting for you") |
-| **hook** (opt-in, precise) | RiNG hooks write `~/.config/ring/sessions/` on `Notification` / `UserPromptSubmit` / `Stop` / `SessionEnd` | precise (🔴 waiting / 🟢 working / 🟡 idle / ⚫ ended) |
+| **Claude Code zero-config** (default) | scans `~/.claude/projects/**/*.jsonl` mtimes + the `cwd` field in records | medium (can infer turn-ended from transcript tail; can't see permission notifications) |
+| **Codex zero-config** (default) | reads `~/.codex/state_5.sqlite` threads + rollout JSONL and matches live `codex` processes to ttys | medium (live / ended / turn-ended; same-cwd multi-session jumps are not guaranteed) |
+| **Claude Code hook** (opt-in, precise) | RiNG hooks write `~/.config/ring/sessions/` on `Notification` / `UserPromptSubmit` / `Stop` / `SessionEnd` | precise (🔴 waiting / 🟢 working / 🟡 idle / ⚫ ended) |
 
-Zero-config needs no setup; for a precise "who's waiting for me", add the hooks.
+Zero-config needs no setup; for precise Claude Code "who's waiting for me", add the hooks.
 
 ## hook mode (precise "waiting for reply")
 
@@ -165,8 +168,9 @@ and register it", with zero changes to the main flow.
 
 ### Another agent CLI (`SessionSource`)
 
-`ClaudeCodeSource` is built in (scans `~/.claude`). To watch another tool, write a source that
-emits `Session` objects and register it:
+`ClaudeCodeSource` is built in (scans `~/.claude` + hook registry), as is `CodexSource`
+(reads `~/.codex/state_5.sqlite`). To watch another tool, write a source that emits `Session`
+objects and register it:
 
 ```python
 from ring.registry import Session, Status
@@ -196,8 +200,8 @@ tmux / iTerm2 / Terminal.app ship built in, each as its own module (`ring/focus/
 ## Platform & privacy
 
 - **Platform**: macOS / Linux (detection via `ps` / `lsof` / `tmux`; Windows unsupported).
-- **Privacy**: entirely local — it only **reads** `~/.claude/projects/` transcripts and only
-  **writes** `~/.config/ring/`. No network, no uploads, nothing sent anywhere.
+- **Privacy**: entirely local — it only **reads** local `~/.claude/` and `~/.codex/` data, and
+  only **writes** `~/.config/ring/`. No network, no uploads, nothing sent anywhere.
 
 ## License
 

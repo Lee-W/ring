@@ -17,7 +17,7 @@ def test_default_is_chinese_msgid() -> None:
 def test_english_translation_loads_from_mo() -> None:
     set_lang("en")
     assert _("等你") == "waiting"
-    assert _("看所有 Claude Code session 上台。") == "Watch all your Claude Code sessions on one stage."
+    assert _("看所有 agent CLI session 上台。") == "Watch all your agent CLI sessions on one stage."
 
 
 def test_english_plurals() -> None:
