@@ -9,6 +9,10 @@
     active_window_seconds = 21600     # 只看最近這段時間動過的 session（預設 6h）
     working_threshold_seconds = 90    # 多久沒動就從 🟢 工作中 變 🟡 閒置
     waiting_window_seconds = 1800     # IDLE 升 WAITING 的時間窗上限（預設 30 分）
+    notify_sound = true               # 系統通知帶聲音
+    notify_sound_name = "Glass"       # macOS / terminal-notifier sound name
+    notify_repeat_seconds = [30, 120, 300]  # waiting 未解除時，多久後重複提醒
+    notify_repeat_max = 3             # 重複提醒上限；0 = 不限
     focusers = ["tmux", "iTerm2", "Terminal"]   # 跳轉嘗試順序；省略＝內建預設
 """
 
@@ -42,6 +46,10 @@ class Config:
     active_window_seconds: int = 6 * 60 * 60
     working_threshold_seconds: int = 90
     waiting_window_seconds: int = 1800  # IDLE 升 WAITING 的時間窗上限（預設 30 分）
+    notify_sound: bool = True
+    notify_sound_name: str = "Glass"
+    notify_repeat_seconds: tuple[int, ...] = (30, 120, 300)
+    notify_repeat_max: int = 3  # 0 = 不限
     focusers: tuple[str, ...] = ()  # 空＝用內建預設順序
     colors: dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_COLORS))
 
@@ -64,6 +72,13 @@ def _as_str_tuple(v: object) -> tuple[str, ...]:
     if isinstance(v, list):
         return tuple(x for x in v if isinstance(x, str))
     return ()
+
+
+def _as_positive_int_tuple(v: object, default: tuple[int, ...]) -> tuple[int, ...]:
+    if isinstance(v, list):
+        parsed = tuple(x for x in v if isinstance(x, int) and not isinstance(x, bool) and x > 0)
+        return parsed or default
+    return default
 
 
 def _parse_colors(v: object) -> dict[str, str]:
@@ -89,6 +104,12 @@ def load(path: Path | None = None) -> Config:
         active_window_seconds=_as_int(raw.get("active_window_seconds"), d.active_window_seconds),
         working_threshold_seconds=_as_int(raw.get("working_threshold_seconds"), d.working_threshold_seconds),
         waiting_window_seconds=_as_int(raw.get("waiting_window_seconds"), d.waiting_window_seconds),
+        notify_sound=_as_bool(raw.get("notify_sound"), d.notify_sound),
+        notify_sound_name=(
+            raw["notify_sound_name"] if isinstance(raw.get("notify_sound_name"), str) else d.notify_sound_name
+        ),
+        notify_repeat_seconds=_as_positive_int_tuple(raw.get("notify_repeat_seconds"), d.notify_repeat_seconds),
+        notify_repeat_max=max(0, _as_int(raw.get("notify_repeat_max"), d.notify_repeat_max)),
         focusers=_as_str_tuple(raw.get("focusers")),
         colors=_parse_colors(raw.get("colors")),
     )

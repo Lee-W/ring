@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from ring.config import Config
 from ring.notify import notify_waiting
 from ring.registry import Session, Status
 
@@ -104,6 +105,32 @@ class TestNotifyWithTerminalNotifier:
         assert "myproject" in message_val  # project name
         assert "checkout-123" in message_val  # tail = cwd 末段
 
+    def test_terminal_notifier_uses_sound_when_enabled(self) -> None:
+        session = _s("uuid-1", "maigo")
+        with (
+            patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("ring.notify.get_config", return_value=Config(notify_sound=True, notify_sound_name="Glass")),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            notify_waiting([session])
+
+        args = mock_run.call_args[0][0]
+        assert args[args.index("-sound") + 1] == "Glass"
+
+    def test_terminal_notifier_omits_sound_when_disabled(self) -> None:
+        session = _s("uuid-1", "maigo")
+        with (
+            patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("ring.notify.get_config", return_value=Config(notify_sound=False)),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            notify_waiting([session])
+
+        args = mock_run.call_args[0][0]
+        assert "-sound" not in args
+
 
 class TestNotifyWithOsascript:
     def test_falls_back_to_osascript_when_no_terminal_notifier(self) -> None:
@@ -147,6 +174,21 @@ class TestNotifyWithOsascript:
             notify_waiting([session])
         script = mock_osa.call_args[0][0]
         assert "myproject" in script
+
+    def test_osascript_uses_sound_when_enabled(self) -> None:
+        session = _s("uuid-1", "maigo")
+        with (
+            patch("shutil.which", return_value=None),
+            patch("ring.notify.get_config", return_value=Config(notify_sound=True, notify_sound_name="Glass")),
+            patch("ring.notify.osascript") as mock_osa,
+            patch("ring.notify._HINT_MARKER") as mock_marker,
+        ):
+            mock_osa.return_value = (0, "", "")
+            mock_marker.exists.return_value = True
+            notify_waiting([session])
+
+        script = mock_osa.call_args[0][0]
+        assert 'sound name "Glass"' in script
 
     def test_osascript_failure_silently_swallowed(self) -> None:
         """osascript 拋例外 → 被吞、無例外外漏。"""

@@ -14,6 +14,10 @@ def test_parses_values(tmp_path: Path) -> None:
         "interval = 1.5\n"
         "show_all = true\n"
         "working_threshold_seconds = 30\n"
+        "notify_sound = false\n"
+        'notify_sound_name = "Ping"\n'
+        "notify_repeat_seconds = [10, 20, 60]\n"
+        "notify_repeat_max = 0\n"
         'focusers = ["Terminal", "iTerm2"]\n'
     )
     cfg = load(p)
@@ -21,6 +25,10 @@ def test_parses_values(tmp_path: Path) -> None:
     assert cfg.interval == 1.5
     assert cfg.show_all is True
     assert cfg.working_threshold_seconds == 30
+    assert cfg.notify_sound is False
+    assert cfg.notify_sound_name == "Ping"
+    assert cfg.notify_repeat_seconds == (10, 20, 60)
+    assert cfg.notify_repeat_max == 0
     assert cfg.focusers == ("Terminal", "iTerm2")
 
 
@@ -30,6 +38,7 @@ def test_bad_types_fall_back_to_defaults(tmp_path: Path) -> None:
     cfg = load(p)
     assert cfg.interval == Config().interval
     assert cfg.focusers == ()
+    assert cfg.notify_repeat_seconds == Config().notify_repeat_seconds
 
 
 def test_invalid_toml_returns_defaults(tmp_path: Path) -> None:

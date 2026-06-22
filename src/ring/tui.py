@@ -16,13 +16,14 @@ from textual.binding import Binding, BindingType
 from textual.widgets import DataTable, Footer, Header, Static
 
 from ring.cli import _LOC_MAX, _STATUS_STYLE, _header, _middle_truncate, _rel, board, status_label
+from ring.config import get_config
 from ring.focus import jump as focus_jump
 from ring.i18n import gettext as _
 from ring.i18n import set_lang
 from ring.ipc import clear_tui_presence, read_focus_request, write_tui_presence
 from ring.notify import notify_waiting
 from ring.registry import Session, Status, running_agent_pids
-from ring.watcher import WaitingWatcher
+from ring.watcher import WaitingAlertScheduler
 
 _ORDER = (Status.WAITING, Status.WORKING, Status.IDLE, Status.ENDED)
 
@@ -46,7 +47,8 @@ class RingApp(App[None]):
         self._interval = interval
         self._show_all = show_all
         self._sessions: list[Session] = []
-        self._watcher = WaitingWatcher()
+        cfg = get_config()
+        self._alerts = WaitingAlertScheduler(cfg.notify_repeat_seconds, cfg.notify_repeat_max)
         self.title = "RiNG 🎤"
         # 記下自己的 controlling tty，供 _poll_focus_request activate 視窗用。
         self._own_tty: str = self._detect_own_tty()
@@ -114,11 +116,11 @@ class RingApp(App[None]):
             legend.append(f"{status.marker} {status_label(status)}   ", style=_STATUS_STYLE[status])
         self.query_one("#legend", Static).update(legend)
 
-    def _ring_on_new_waiting(self, newly: list[Session]) -> None:
-        """有 session 新轉為 🔴 等你 → RiNG 真的「ring」你（響鈴 + toast 通知）。"""
-        if newly:
+    def _ring_on_waiting_alerts(self, alerts: list[Session]) -> None:
+        """有 session 需要提醒 → RiNG 真的「ring」你（響鈴 + toast 通知）。"""
+        if alerts:
             self.bell()
-            names = ", ".join(sorted(s.project for s in newly))
+            names = ", ".join(sorted(s.project for s in alerts))
             self.notify(_("🔔 {names} 在等你回話", names=names), timeout=8)
 
     def _poll_focus_request(self) -> None:
@@ -174,10 +176,10 @@ class RingApp(App[None]):
 
     def _reload(self) -> None:
         self._sessions = board(self._show_all)
-        newly = self._watcher.feed(self._sessions)
-        self._ring_on_new_waiting(newly)
+        alerts = self._alerts.feed(self._sessions)
+        self._ring_on_waiting_alerts(alerts)
         try:
-            hint = notify_waiting(newly)
+            hint = notify_waiting(alerts)
             if hint:
                 self.notify(hint, timeout=10)
         except Exception:

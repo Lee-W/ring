@@ -58,7 +58,8 @@ live Codex sessions in the same cwd, RiNG shows them conservatively to avoid foc
 ### It rings you 🔔
 
 With hooks installed, when a session flips from working to 🔴 waiting, RiNG **beeps and notifies** —
-true to its name, it really rings you. (Zero-config can't detect WAITING, so this needs hook mode.)
+true to its name, it really rings you. If it stays waiting, RiNG can remind you again on a
+configurable schedule. (Zero-config can't detect WAITING, so this needs hook mode.)
 
 ## Two data sources
 
@@ -102,10 +103,11 @@ plus the beep both rely on it.
    ```
 
 **System notifications (🔔 click-to-focus):** when a session turns 🔴 waiting, RiNG sends a
-system notification (both headless `--watch` and TUI). Clicking the notification jumps back to
-the RiNG TUI and selects that session. Install `terminal-notifier` for click-to-focus;
-without it, notifications fall back to plain macOS alerts (no click action), and RiNG will
-show a one-time install hint the first time:
+system notification (both headless `--watch` and TUI). If it stays waiting, RiNG reminds you
+again according to `notify_repeat_seconds` (30s / 120s / 300s by default). Clicking the
+notification jumps back to the RiNG TUI and selects that session. Install `terminal-notifier`
+for click-to-focus and notification sound; without it, notifications fall back to macOS alerts
+(sound works, no click action), and RiNG will show a one-time install hint the first time:
 
 ```sh
 brew install terminal-notifier
@@ -129,6 +131,10 @@ show_all = false                 # show ended sessions by default?
 legend = true                    # show the color legend by default?
 active_window_seconds = 21600    # only look at sessions touched recently (6h)
 working_threshold_seconds = 90   # idle this long → 🟢 working becomes 🟡 idle
+notify_sound = true              # play a sound for system notifications
+notify_sound_name = "Glass"      # macOS / terminal-notifier sound name
+notify_repeat_seconds = [30, 120, 300]  # remind again if a session keeps waiting
+notify_repeat_max = 3            # max repeat reminders; 0 = unlimited
 focusers = ["tmux", "iTerm2", "Terminal"]   # jump attempt order
 
 [colors]                         # Rich style strings, override per item

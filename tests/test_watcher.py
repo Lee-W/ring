@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ring.registry import Session, Status
-from ring.watcher import WaitingWatcher
+from ring.watcher import WaitingAlertScheduler, WaitingWatcher
 
 
 def _s(sid: str, status: Status) -> Session:
@@ -84,3 +84,63 @@ class TestWaitingWatcherDiff:
         watcher.feed([_s("a", Status.WAITING)])
         result = watcher.feed([])
         assert result == []
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class TestWaitingAlertScheduler:
+    def test_prime_does_not_alert_existing_waiting(self) -> None:
+        clock = _Clock()
+        scheduler = WaitingAlertScheduler((30,), 1, now=clock)
+
+        assert scheduler.feed([_s("a", Status.WAITING)]) == []
+
+    def test_new_waiting_alerts_immediately_after_prime(self) -> None:
+        clock = _Clock()
+        scheduler = WaitingAlertScheduler((30,), 1, now=clock)
+        scheduler.feed([_s("a", Status.WORKING)])
+
+        result = scheduler.feed([_s("a", Status.WAITING)])
+
+        assert [s.session_id for s in result] == ["a"]
+
+    def test_persistent_waiting_repeats_after_threshold(self) -> None:
+        clock = _Clock()
+        scheduler = WaitingAlertScheduler((30,), 1, now=clock)
+        scheduler.feed([_s("a", Status.WAITING)])
+
+        clock.advance(29)
+        assert scheduler.feed([_s("a", Status.WAITING)]) == []
+        clock.advance(1)
+        result = scheduler.feed([_s("a", Status.WAITING)])
+
+        assert [s.session_id for s in result] == ["a"]
+
+    def test_repeat_max_limits_repeats(self) -> None:
+        clock = _Clock()
+        scheduler = WaitingAlertScheduler((10,), 1, now=clock)
+        scheduler.feed([_s("a", Status.WAITING)])
+
+        clock.advance(10)
+        assert len(scheduler.feed([_s("a", Status.WAITING)])) == 1
+        clock.advance(10)
+        assert scheduler.feed([_s("a", Status.WAITING)]) == []
+
+    def test_leaving_waiting_resets_state(self) -> None:
+        clock = _Clock()
+        scheduler = WaitingAlertScheduler((30,), 1, now=clock)
+        scheduler.feed([_s("a", Status.WAITING)])
+        scheduler.feed([_s("a", Status.WORKING)])
+
+        result = scheduler.feed([_s("a", Status.WAITING)])
+
+        assert [s.session_id for s in result] == ["a"]

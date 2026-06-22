@@ -200,19 +200,20 @@ def print_snapshot(sessions: list[Session], show_legend: bool) -> None:
 
 def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int:
     from ring.notify import notify_waiting
-    from ring.watcher import WaitingWatcher
+    from ring.watcher import WaitingAlertScheduler
 
+    cfg = get_config()
     frames = 0
     footer_text = _("每 {interval}s 刷新 · Ctrl-C 離場", interval=int(interval))
     if not HAVE_RICH:
-        watcher = WaitingWatcher()
+        scheduler = WaitingAlertScheduler(cfg.notify_repeat_seconds, cfg.notify_repeat_max)
         try:
             while True:
                 sys.stdout.write("\033[2J\033[H")
                 sessions = board(show_all)
-                new_waiting = watcher.feed(sessions)
+                alerts = scheduler.feed(sessions)
                 try:
-                    hint = notify_waiting(new_waiting)
+                    hint = notify_waiting(alerts)
                     if hint:
                         print(hint)
                 except Exception:
@@ -228,14 +229,14 @@ def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int
             return 0
 
     console = Console()
-    watcher = WaitingWatcher()
+    scheduler = WaitingAlertScheduler(cfg.notify_repeat_seconds, cfg.notify_repeat_max)
     try:
         with Live(console=console, screen=True, auto_refresh=False) as live:
             while True:
                 sessions = board(show_all)
-                new_waiting = watcher.feed(sessions)
+                alerts = scheduler.feed(sessions)
                 try:
-                    hint = notify_waiting(new_waiting)
+                    hint = notify_waiting(alerts)
                     if hint:
                         print(hint)
                 except Exception:

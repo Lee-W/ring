@@ -6,6 +6,10 @@
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+
 from ring.registry import Session, Status
 
 
@@ -37,3 +41,67 @@ class WaitingWatcher:
         if not newly:
             return []
         return [s for s in sessions if s.session_id in newly]
+
+
+@dataclass
+class _AlertState:
+    first_seen: float
+    last_alert: float
+    repeats_sent: int = 0
+
+
+class WaitingAlertScheduler:
+    """決定哪些 waiting session 此輪需要通知。
+
+    第一輪只 prime，不通知既有 waiting；之後新轉 waiting 立即通知，持續 waiting 則依
+    ``repeat_seconds`` 做最多 ``repeat_max`` 次提醒（0 = 不限）。
+    """
+
+    def __init__(
+        self,
+        repeat_seconds: tuple[int, ...] = (),
+        repeat_max: int = 0,
+        *,
+        now: Callable[[], float] = time.time,
+    ) -> None:
+        self._repeat_seconds = repeat_seconds
+        self._repeat_max = max(0, repeat_max)
+        self._now = now
+        self._states: dict[str, _AlertState] = {}
+        self._primed = False
+
+    def feed(self, sessions: list[Session]) -> list[Session]:
+        current = {s.session_id: s for s in sessions if s.status is Status.WAITING}
+        now = self._now()
+
+        if not self._primed:
+            self._states = {sid: _AlertState(first_seen=now, last_alert=now) for sid in current}
+            self._primed = True
+            return []
+
+        due: list[Session] = []
+        next_states: dict[str, _AlertState] = {}
+        for sid, session in current.items():
+            state = self._states.get(sid)
+            if state is None:
+                next_states[sid] = _AlertState(first_seen=now, last_alert=now)
+                due.append(session)
+                continue
+
+            if self._should_repeat(state, now):
+                state.last_alert = now
+                state.repeats_sent += 1
+                due.append(session)
+            next_states[sid] = state
+
+        self._states = next_states
+        return due
+
+    def _should_repeat(self, state: _AlertState, now: float) -> bool:
+        if not self._repeat_seconds:
+            return False
+        if self._repeat_max and state.repeats_sent >= self._repeat_max:
+            return False
+        if state.repeats_sent < len(self._repeat_seconds):
+            return now - state.first_seen >= self._repeat_seconds[state.repeats_sent]
+        return now - state.last_alert >= self._repeat_seconds[-1]

@@ -17,6 +17,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from ring.config import get_config
 from ring.focus.base import osascript
 from ring.i18n import gettext as _
 from ring.registry import Session
@@ -55,20 +56,24 @@ def notify_waiting(sessions: list[Session]) -> str | None:
 
 def _notify_with_terminal_notifier(sessions: list[Session]) -> None:
     """每個 session 各發一則 terminal-notifier 通知，帶點擊聚焦回呼。"""
+    cfg = get_config()
     for s in sessions:
         tail = _cwd_tail(s)
         message = _("{project} · …/{tail}", project=s.project, tail=tail)
+        cmd = [
+            "terminal-notifier",
+            "-title",
+            _("RiNG · {project} 在等你回話", project=s.project),
+            "-message",
+            message,
+            "-execute",
+            f"ring focus {s.session_id}",
+        ]
+        if cfg.notify_sound:
+            cmd.extend(["-sound", cfg.notify_sound_name or "default"])
         try:
             subprocess.run(
-                [
-                    "terminal-notifier",
-                    "-title",
-                    _("RiNG · {project} 在等你回話", project=s.project),
-                    "-message",
-                    message,
-                    "-execute",
-                    f"ring focus {s.session_id}",
-                ],
+                cmd,
                 capture_output=True,
                 timeout=10,
             )
@@ -78,12 +83,14 @@ def _notify_with_terminal_notifier(sessions: list[Session]) -> None:
 
 def _notify_with_osascript(sessions: list[Session]) -> None:
     """用 osascript 逐 session 各發一則純文字通知（fallback，點擊不可聚焦）。"""
+    cfg = get_config()
     for s in sessions:
         tail = _cwd_tail(s)
         message = _("{project} · …/{tail}", project=s.project, tail=tail)
         title = _("RiNG · {project} 在等你回話", project=s.project)
+        sound = f' sound name "{cfg.notify_sound_name}"' if cfg.notify_sound else ""
         try:
-            osascript(f'display notification "{message}" with title "{title}"')
+            osascript(f'display notification "{message}" with title "{title}"{sound}')
         except Exception:
             pass
 
