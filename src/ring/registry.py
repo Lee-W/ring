@@ -71,6 +71,7 @@ class Session:
     tty: str | None = None  # e.g. "/dev/ttys003"，給非-tmux 終端（iTerm2 等）聚焦用
     todo: tuple[int, int] | None = None  # (done, total)
     recent_actions: list[str] = field(default_factory=list)
+    provider: str = ""
     _tail_kind: str = field(default="none", repr=False, compare=False)  # 內部：scan 路徑暫存對話尾判定
     origin_cwd: str = ""  # 開場 cwd（session 第一筆帶 cwd 紀錄），用於歸屬；空時 fallback 到 cwd
 
@@ -540,6 +541,7 @@ def _codex_threads(procs: list[tuple[str, str]]) -> list[Session]:
                 last_active=last_active,
                 last_action=_codex_latest_action(records, title),
                 source="codex",
+                provider="codex",
                 _tail_kind=tail_kind,
                 origin_cwd=cwd,
             )
@@ -622,6 +624,7 @@ def _scan_sessions(procs: list[tuple[str, str]]) -> list[Session]:
                     source="scan",
                     todo=_extract_todo(records),
                     recent_actions=_recent_actions(records),
+                    provider="claude-code",
                     _tail_kind=_conversation_tail_kind(records),
                     origin_cwd=origin,
                 )
@@ -692,13 +695,18 @@ def _synthetic_sessions(procs: list[tuple[str, str]], existing: list[Session]) -
                 last_action="—",
                 source="proc",
                 tty=first_tty,
+                provider="claude-code",
                 origin_cwd=cwd,  # synthetic 列自身就是開場，origin == 當下
             )
         )
     return out
 
 
-def _hook_sessions(procs: list[tuple[str, str]]) -> list[Session]:
+def _hook_sessions(
+    procs: list[tuple[str, str]] | None = None,
+    *,
+    procs_by_provider: dict[str, list[tuple[str, str]]] | None = None,
+) -> list[Session]:
     if not RING_REGISTRY.is_dir():
         return []
     out: list[Session] = []
@@ -709,6 +717,7 @@ def _hook_sessions(procs: list[tuple[str, str]]) -> list[Session]:
             continue
         try:
             todo = data.get("todo")
+            provider = str(data.get("provider", "claude-code") or "claude-code")
             out.append(
                 Session(
                     session_id=str(data["session_id"]),
@@ -719,6 +728,8 @@ def _hook_sessions(procs: list[tuple[str, str]]) -> list[Session]:
                     source="hook",
                     tty=str(data.get("tty", "")) or None,
                     todo=tuple(todo) if isinstance(todo, list) and len(todo) == 2 else None,
+                    provider=provider,
+                    origin_cwd=str(data.get("origin_cwd", "")),
                 )
             )
         except (KeyError, ValueError):
@@ -727,13 +738,20 @@ def _hook_sessions(procs: list[tuple[str, str]]) -> list[Session]:
     # 先用 tty 精準判斷：同一 cwd 可能還有另一個 live claude，但舊 session 的 tty
     # 已不存在，不能只因 cwd 還活著就保留舊 hook row。沒有 tty 資訊時才退回 cwd 判斷。
     if out:
-        counts: dict[str, int] = {}
-        live_ttys: dict[str, set[str]] = {}
-        for cwd, tty in procs:
-            counts[cwd] = counts.get(cwd, 0) + 1
-            if tty:
-                live_ttys.setdefault(cwd, set()).add(tty)
         for s in out:
+            if s.provider not in {"claude", "claude-code", "codex"}:
+                continue
+            provider_procs = procs_by_provider.get(s.provider, []) if procs_by_provider is not None else (procs or [])
+            if s.provider == "claude":
+                provider_procs = (
+                    procs_by_provider.get("claude-code", []) if procs_by_provider is not None else provider_procs
+                )
+            counts: dict[str, int] = {}
+            live_ttys: dict[str, set[str]] = {}
+            for cwd, tty in provider_procs:
+                counts[cwd] = counts.get(cwd, 0) + 1
+                if tty:
+                    live_ttys.setdefault(cwd, set()).add(tty)
             if counts.get(s.cwd, 0) == 0:
                 s.status = Status.ENDED
             elif s.tty and live_ttys.get(s.cwd) and s.tty not in live_ttys[s.cwd]:

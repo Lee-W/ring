@@ -13,8 +13,10 @@ terminal-notifier 不進 pyproject dependencies（brew 外部 binary）。
 
 from __future__ import annotations
 
+import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from ring.config import get_config
@@ -29,6 +31,23 @@ _HINT_MARKER: Path = Path.home() / ".config" / "ring" / ".tn-hint-shown"
 def _cwd_tail(session: Session) -> str:
     """取 cwd 最後一段（尾目錄），用於通知的區分資訊。"""
     return Path(session.cwd).name or session.cwd
+
+
+def _ring_executable() -> str:
+    """回傳可被 terminal-notifier click callback 執行的 ring 路徑。
+
+    macOS 從通知中心觸發 ``-execute`` 時不一定有使用者 shell 的 PATH；通知建立時
+    先解析成絕對路徑，點擊才不會因找不到 ``ring`` 而失效。
+    """
+    current = Path(sys.argv[0])
+    if current.is_absolute() and current.exists():
+        return str(current)
+    found = shutil.which("ring")
+    return found or "ring"
+
+
+def _ring_focus_command(session_id: str) -> str:
+    return f"{shlex.quote(_ring_executable())} focus {shlex.quote(session_id)}"
 
 
 def notify_waiting(sessions: list[Session]) -> str | None:
@@ -67,7 +86,7 @@ def _notify_with_terminal_notifier(sessions: list[Session]) -> None:
             "-message",
             message,
             "-execute",
-            f"ring focus {s.session_id}",
+            _ring_focus_command(s.session_id),
         ]
         if cfg.notify_sound:
             cmd.extend(["-sound", cfg.notify_sound_name or "default"])

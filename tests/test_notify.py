@@ -34,6 +34,7 @@ class TestNotifyWithTerminalNotifier:
         session = _s("test-uuid-123", "proj")
         with (
             patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("ring.notify._ring_executable", return_value="/opt/ring/bin/ring"),
             patch("subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=0)
@@ -42,7 +43,22 @@ class TestNotifyWithTerminalNotifier:
         # 找 -execute 參數值
         execute_idx = args.index("-execute")
         execute_val = args[execute_idx + 1]
-        assert "ring focus test-uuid-123" in execute_val
+        assert execute_val == "/opt/ring/bin/ring focus test-uuid-123"
+
+    def test_execute_quotes_session_id(self) -> None:
+        """session id 可能含 provider prefix；click callback 要安全 quote。"""
+        session = _s("codex:session with space", "proj")
+        with (
+            patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("ring.notify._ring_executable", return_value="/opt/ring/bin/ring"),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            notify_waiting([session])
+
+        args = mock_run.call_args[0][0]
+        execute_val = args[args.index("-execute") + 1]
+        assert execute_val == "/opt/ring/bin/ring focus 'codex:session with space'"
 
     def test_each_session_gets_own_notification(self) -> None:
         """多個 session 時，每筆各發一則通知。"""

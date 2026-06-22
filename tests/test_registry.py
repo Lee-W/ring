@@ -292,12 +292,13 @@ def test_synthetic_sessions_count(procs: list[tuple[str, str]], n_existing_cwds:
 # ---------------------------------------------------------------------------
 
 
-def _write_hook_session(registry_dir: Path, sid: str, cwd: str, tty: str) -> None:
+def _write_hook_session(registry_dir: Path, sid: str, cwd: str, tty: str, provider: str = "claude-code") -> None:
     registry_dir.mkdir(parents=True, exist_ok=True)
     (registry_dir / f"{sid}.json").write_text(
         json.dumps(
             {
                 "session_id": sid,
+                "provider": provider,
                 "cwd": cwd,
                 "status": "waiting",
                 "last_active": 123.0,
@@ -338,6 +339,22 @@ def test_hook_sessions_keeps_cwd_fallback_when_live_tty_unknown(
     sessions = _hook_sessions([("/work/app", "")])
 
     assert sessions[0].status is Status.WAITING
+
+
+def test_hook_sessions_cleanup_is_provider_specific(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """同 cwd 有 live Claude，不代表 Codex hook row 還活著。"""
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(registry_dir, "codex:stale", "/work/app", "", provider="codex")
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+
+    sessions = _hook_sessions(
+        procs_by_provider={
+            "claude-code": [("/work/app", "/dev/ttys002")],
+            "codex": [],
+        }
+    )
+
+    assert sessions[0].status is Status.ENDED
 
 
 # ---------------------------------------------------------------------------

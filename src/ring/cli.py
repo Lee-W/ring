@@ -266,7 +266,16 @@ def main(argv: list[str] | None = None) -> int:
     if raw and raw[0] == "hook":
         from ring.hook import run_hook
 
-        return run_hook()
+        provider = "claude-code"
+        hook_args = raw[1:]
+        if hook_args:
+            if hook_args[0] == "--provider" and len(hook_args) >= 2:
+                provider = hook_args[1]
+            elif hook_args[0].startswith("--provider="):
+                provider = hook_args[0].split("=", 1)[1]
+            elif not hook_args[0].startswith("-"):
+                provider = hook_args[0]
+        return run_hook(provider=provider)
     if raw and raw[0] == "install-hooks":
         from ring.hook import install_hooks
 

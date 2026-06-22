@@ -36,6 +36,28 @@ def test_user_prompt_writes_working(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert json.loads((tmp_path / "s1.json").read_text())["status"] == Status.WORKING.value
 
 
+def test_codex_provider_writes_qualified_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(monkeypatch, {"session_id": "thread-1", "event": "Stop", "cwd": "/repo"})
+
+    assert hook.run_hook(provider="codex") == 0
+
+    data = json.loads((tmp_path / "codex:thread-1.json").read_text())
+    assert data["session_id"] == "codex:thread-1"
+    assert data["provider"] == "codex"
+    assert data["status"] == Status.WAITING.value
+
+
+def test_payload_provider_overrides_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(monkeypatch, {"provider": "codex", "session_id": "thread-2", "event": "UserPromptSubmit", "cwd": "/repo"})
+
+    assert hook.run_hook() == 0
+
+    data = json.loads((tmp_path / "codex:thread-2.json").read_text())
+    assert data["status"] == Status.WORKING.value
+
+
 def test_session_end_deletes_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
     (tmp_path / "s2.json").write_text("{}")

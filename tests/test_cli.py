@@ -82,6 +82,41 @@ def test_remove_hooks_dry_run_routes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------------------------------------------------------------------------
+# hook provider 路由
+# ---------------------------------------------------------------------------
+
+
+def test_hook_provider_flag_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """hook --provider codex 會把 provider 傳給 run_hook。"""
+    called: list[str] = []
+
+    def fake_run_hook(provider: str = "claude-code") -> int:
+        called.append(provider)
+        return 0
+
+    with patch("ring.hook.run_hook", fake_run_hook):
+        rc = cli.main(["hook", "--provider", "codex"])
+
+    assert rc == 0
+    assert called == ["codex"]
+
+
+def test_hook_provider_positional_routes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """hook codex 是 --provider codex 的簡寫。"""
+    called: list[str] = []
+
+    def fake_run_hook(provider: str = "claude-code") -> int:
+        called.append(provider)
+        return 0
+
+    with patch("ring.hook.run_hook", fake_run_hook):
+        rc = cli.main(["hook", "codex"])
+
+    assert rc == 0
+    assert called == ["codex"]
+
+
+# ---------------------------------------------------------------------------
 # focus <session_id> 路由
 # ---------------------------------------------------------------------------
 

@@ -22,16 +22,30 @@ class SessionSource(Protocol):
     def discover(self) -> list[Session]: ...
 
 
+class HookRegistrySource:
+    """RiNG hook registry：所有 provider 的精準事件來源。"""
+
+    name = "hook"
+
+    def discover(self) -> list[Session]:
+        return registry._hook_sessions(
+            procs_by_provider={
+                "claude-code": registry._claude_procs(),
+                "codex": registry._codex_procs(),
+            }
+        )
+
+
 class ClaudeCodeSource:
-    """Claude Code：掃 ``~/.claude/projects`` 的 JSONL ＋ 讀 hook registry。"""
+    """Claude Code：掃 ``~/.claude/projects`` 的 JSONL。"""
 
     name = "claude-code"
 
     def discover(self) -> list[Session]:
         procs = registry._claude_procs()
-        merged: dict[str, Session] = {s.session_id: s for s in registry._hook_sessions(procs)}
+        merged: dict[str, Session] = {}
         for s in registry._scan_sessions(procs):
-            merged.setdefault(s.session_id, s)  # 同一 session 以 hook 為準
+            merged.setdefault(s.session_id, s)
         existing = list(merged.values())
         for s in registry._synthetic_sessions(procs, existing):
             merged.setdefault(s.session_id, s)  # 合成列只填無 row 的 cwd
@@ -47,8 +61,8 @@ class CodexSource:
         return registry._codex_threads(registry._codex_procs())
 
 
-# 註冊表（順序＝彙整順序）。外部要支援新工具就 register_source() 多塞一個。
-_SOURCES: list[SessionSource] = [ClaudeCodeSource(), CodexSource()]
+# 註冊表（順序＝彙整順序）。hook registry 先於 zero-config source，精準事件優先。
+_SOURCES: list[SessionSource] = [HookRegistrySource(), ClaudeCodeSource(), CodexSource()]
 
 
 def register_source(source: SessionSource, *, first: bool = False) -> None:

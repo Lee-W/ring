@@ -67,17 +67,21 @@ configurable schedule. (Zero-config can't detect WAITING, so this needs hook mod
 |------|--------|------------------|
 | **Claude Code zero-config** (default) | scans `~/.claude/projects/**/*.jsonl` mtimes + the `cwd` field in records | medium (can infer turn-ended from transcript tail; can't see permission notifications) |
 | **Codex zero-config** (default) | reads `~/.codex/state_5.sqlite` threads + rollout JSONL and matches live `codex` processes to ttys | medium (live / ended / turn-ended; same-cwd multi-session jumps are not guaranteed) |
-| **Claude Code hook** (opt-in, precise) | RiNG hooks write `~/.config/ring/sessions/` on `Notification` / `UserPromptSubmit` / `Stop` / `SessionEnd` | precise (🔴 waiting / 🟢 working / 🟡 idle / ⚫ ended) |
+| **hook registry** (opt-in, precise) | RiNG hooks write `~/.config/ring/sessions/` on `Notification` / `UserPromptSubmit` / `Stop` / `SessionEnd` | precise (🔴 waiting / 🟢 working / 🟡 idle / ⚫ ended) |
 
-Zero-config needs no setup; for precise Claude Code "who's waiting for me", add the hooks.
+Zero-config needs no setup; for precise "who's waiting for me", feed provider hook events into
+RiNG's registry. RiNG ships a Claude Code installer; Codex and future tools can use the
+provider-neutral `ring hook` protocol directly.
 
 ## hook mode (precise "waiting for reply")
 
-Zero-config only has file mtimes, so it **can't tell "waiting for your reply" from "just finished"**.
-With hooks, RiNG receives Claude Code's events directly and the status becomes precise — 🔴 waiting
-plus the beep both rely on it.
+Zero-config only has file mtimes or local state snapshots, so it **can't reliably tell "waiting
+for your reply" from "just finished"**. With hooks, RiNG receives agent-CLI events directly and
+the status becomes precise — 🔴 waiting plus the beep both rely on it.
 
-1. **Install globally** so `ring` is on `PATH` (hooks run `ring hook`):
+### Claude Code: built-in installer
+
+1. **Install globally** so `ring` is on `PATH` (Claude hooks run `ring hook`):
 
    ```sh
    uv tool install '.[tui]'
@@ -102,12 +106,40 @@ plus the beep both rely on it.
    ls ~/.config/ring/sessions/   # a <session_id>.json means hooks are writing
    ```
 
+### Codex / Future Providers: Neutral Hook Protocol
+
+RiNG does not depend on agent-hooks. Any tool can feed JSON into `ring hook` when an event happens:
+
+```sh
+ring hook --provider codex
+# shorthand:
+ring hook codex
+```
+
+Payload field names are intentionally loose. At minimum, provide a session id, event, and cwd:
+
+```json
+{
+  "provider": "codex",
+  "session_id": "thread-123",
+  "event": "Stop",
+  "cwd": "/repo/app",
+  "tty": "/dev/ttys003",
+  "last_action": "finished responding"
+}
+```
+
+Event semantics match Claude Code: `SessionStart` / `UserPromptSubmit` → 🟢, `Stop` /
+`Notification` → 🔴, and `SessionEnd` removes the session from the board. Non-Claude session ids
+are provider-qualified automatically, for example `codex:thread-123`, to avoid collisions.
+
 **System notifications (🔔 click-to-focus):** when a session turns 🔴 waiting, RiNG sends a
 system notification (both headless `--watch` and TUI). If it stays waiting, RiNG reminds you
 again according to `notify_repeat_seconds` (30s / 120s / 300s by default). Clicking the
-notification jumps back to the RiNG TUI and selects that session. Install `terminal-notifier`
-for click-to-focus and notification sound; without it, notifications fall back to macOS alerts
-(sound works, no click action), and RiNG will show a one-time install hint the first time:
+notification jumps back to the RiNG TUI and selects that session; if no TUI is running, it jumps
+straight to the session terminal. Install `terminal-notifier` for click-to-focus and notification
+sound; without it, notifications fall back to macOS alerts (sound works, no click action), and
+RiNG will show a one-time install hint the first time:
 
 ```sh
 brew install terminal-notifier
@@ -174,9 +206,10 @@ and register it", with zero changes to the main flow.
 
 ### Another agent CLI (`SessionSource`)
 
-`ClaudeCodeSource` is built in (scans `~/.claude` + hook registry), as is `CodexSource`
-(reads `~/.codex/state_5.sqlite`). To watch another tool, write a source that emits `Session`
-objects and register it:
+`HookRegistrySource` is built in (reads `~/.config/ring/sessions/`), as are `ClaudeCodeSource`
+(scans `~/.claude`) and `CodexSource` (reads `~/.codex/state_5.sqlite`). Prefer feeding
+`ring hook` when the tool has hooks; if not, write a source that emits `Session` objects and
+register it:
 
 ```python
 from ring.registry import Session, Status

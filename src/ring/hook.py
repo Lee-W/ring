@@ -1,8 +1,8 @@
-"""RiNG 的 Claude Code hook handler——精準狀態的來源。
+"""RiNG 的 provider-neutral hook handler——精準狀態的來源。
 
-Claude Code 在各事件把一段 JSON 從 stdin 餵進來。我們據此 upsert 一份
+Agent CLI 在各事件把一段 JSON 從 stdin 餵進來。我們據此 upsert 一份
 ``~/.config/ring/sessions/<session_id>.json``，讓 registry 讀到精準狀態
-（zero-config 靠 mtime 猜不出「在等你」，這裡靠事件直接知道）。
+（zero-config 靠 mtime / state 猜不出「在等你」，這裡靠事件直接知道）。
 
 設計原則：hook 永遠 exit 0、不擋住 session；解析失敗就安靜放行。
 
@@ -21,8 +21,10 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from ring.config import get_config
+from ring.hook_protocol import HOOK_EVENTS, adapter_for, provider_from_payload
 from ring.i18n import gettext as _
 from ring.i18n import set_lang
 from ring.registry import (
@@ -34,15 +36,7 @@ from ring.registry import (
     _tail_records,
 )
 
-_EVENT_STATUS = {
-    "SessionStart": Status.WORKING,
-    "UserPromptSubmit": Status.WORKING,
-    "Notification": Status.WAITING,
-    "Stop": Status.WAITING,
-    "SessionEnd": Status.ENDED,
-}
-
-_HOOK_EVENTS = list(_EVENT_STATUS)
+_HOOK_EVENTS = list(HOOK_EVENTS)
 
 
 def _ps_row(pid: int) -> tuple[int, str] | None:
@@ -62,18 +56,20 @@ def _ps_row(pid: int) -> tuple[int, str] | None:
         return None
 
 
-def _session_tty() -> str:
-    """hook 是這個 session 的 claude 的後代——往上找到 claude，回它的控制終端 tty。
+def _session_tty(process_names: tuple[str, ...]) -> str:
+    """hook 是 agent CLI 的後代——往上找到 provider process，回它的控制終端 tty。
 
     這是「session → 哪個終端」最精準的對應（不必靠 cwd 猜），給 iTerm2 跳轉用。
     """
+    if not process_names:
+        return ""
     pid = os.getppid()
     for _attempt in range(12):
         row = _ps_row(pid)
         if row is None:
             return ""
         ppid, comm = row
-        if os.path.basename(comm.strip()) == "claude":
+        if os.path.basename(comm.strip()) in process_names:
             return _pid_tty(pid)
         if ppid <= 1:
             return ""
@@ -81,7 +77,7 @@ def _session_tty() -> str:
     return ""
 
 
-def run_hook() -> int:
+def run_hook(provider: str = "claude-code") -> int:
     try:
         data = json.load(sys.stdin)
     except (json.JSONDecodeError, ValueError, OSError):
@@ -89,18 +85,19 @@ def run_hook() -> int:
     if not isinstance(data, dict):
         return 0
 
-    sid = data.get("session_id")
-    status = _EVENT_STATUS.get(data.get("hook_event_name", ""))
-    if not sid or status is None:
+    selected_provider = provider_from_payload(data, fallback=provider)
+    adapter = adapter_for(selected_provider)
+    event = adapter.normalize(data)
+    if event is None:
         return 0
 
-    path = RING_REGISTRY / f"{sid}.json"
-    if status is Status.ENDED:
+    path = RING_REGISTRY / f"{quote(event.session_id, safe=':')}.json"
+    if event.status is Status.ENDED:
         path.unlink(missing_ok=True)  # 乾淨離場：直接消失
         return 0
 
-    last_action, todo = "—", None
-    tp = data.get("transcript_path")
+    last_action, todo = event.last_action or "—", None
+    tp = event.transcript_path
     if tp:
         records = _tail_records(Path(tp))
         if records:
@@ -108,15 +105,17 @@ def run_hook() -> int:
             todo = _extract_todo(records)
 
     payload: dict[str, Any] = {
-        "session_id": sid,
-        "cwd": data.get("cwd", ""),
-        "status": status.value,
+        "session_id": event.session_id,
+        "provider": event.provider,
+        "cwd": event.cwd,
+        "origin_cwd": event.cwd,
+        "status": event.status.value,
         "last_active": time.time(),
         "last_action": last_action,
     }
     if todo:
         payload["todo"] = list(todo)
-    tty = _session_tty()
+    tty = event.tty or _session_tty(adapter.process_names)
     if tty:
         payload["tty"] = tty
 
@@ -130,17 +129,17 @@ def run_hook() -> int:
 def _is_ring_hook_command(cmd: str) -> bool:
     """判斷一條 command 字串是否為 RiNG 自己安裝的 hook 條目。
 
-    判定規則（涵蓋新舊兩種形式）：
+    判定規則（涵蓋新舊兩種形式，也涵蓋帶 provider 參數的形式）：
     - 把 command 以空白切成 tokens；
-    - tokens 結尾是 ``hook`` 且倒數第二個 token 的 basename 為 ``ring``。
+    - 前兩個 tokens 是 ``ring hook``（第一個可為 full path）。
 
-    涵蓋：``"ring hook"``、``"/usr/local/bin/ring hook"``、``"~/.local/bin/ring hook"``。
+    涵蓋：``"ring hook"``、``"/usr/local/bin/ring hook"``、``"ring hook --provider codex"``。
     不命中：``"some-other-tool hook"``、``"ring"``、``""``、別人裝的任意 command。
     """
     tokens = cmd.split()
     if len(tokens) < 2:
         return False
-    return tokens[-1] == "hook" and os.path.basename(tokens[-2]) == "ring"
+    return os.path.basename(tokens[0]) == "ring" and tokens[1] == "hook"
 
 
 def _ring_command() -> str:
