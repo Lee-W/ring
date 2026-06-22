@@ -161,6 +161,18 @@ def test_payload_provider_overrides_default(monkeypatch: pytest.MonkeyPatch, tmp
     assert data["status"] == Status.WORKING.value
 
 
+def test_session_start_source_not_treated_as_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Claude SessionStart 帶 source='startup' → 不可被誤當 provider，session_id 不該有 startup: 前綴。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(monkeypatch, {"session_id": "s9", "hook_event_name": "SessionStart", "source": "startup", "cwd": "/x"})
+    assert hook.run_hook() == 0
+    assert not (tmp_path / "startup:s9.json").exists(), "不該生出 startup: 幽靈檔"
+    data = json.loads((tmp_path / "s9.json").read_text())
+    assert data["session_id"] == "s9"
+    assert data["provider"] == "claude-code"
+    assert data["status"] == Status.WORKING.value
+
+
 def test_session_end_deletes_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
     (tmp_path / "s2.json").write_text("{}")

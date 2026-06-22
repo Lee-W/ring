@@ -139,7 +139,10 @@ def adapter_for(provider: str) -> HookAdapter:
 
 
 def provider_from_payload(data: Mapping[str, Any], fallback: str = "claude-code") -> str:
-    return normalize_provider(_first_str(data, "provider", "source") or fallback)
+    # 只認明確的 "provider" 欄位。不要拿 "source"——Claude Code 的 SessionStart payload
+    # 帶 source="startup"/"resume"/"clear"/"compact"（觸發來源，不是 provider），
+    # 誤當 provider 會生出 "startup:<id>" 幽靈 session、且永遠不會被標離場。
+    return normalize_provider(_first_str(data, "provider") or fallback)
 
 
 def normalize_provider(provider: str) -> str:
