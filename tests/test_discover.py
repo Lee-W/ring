@@ -86,9 +86,7 @@ def test_scan_action_parsed_from_jsonl(monkeypatch: pytest.MonkeyPatch, tmp_path
 # ---------------------------------------------------------------------------
 
 
-def test_discover_synthetic_row_for_live_proc_without_jsonl(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_discover_synthetic_row_for_live_proc_without_jsonl(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """live proc 有 cwd 但 projects 目錄裡無對應近期 jsonl → 多一列 source="proc"。"""
     projects = tmp_path / "projects"
     projects.mkdir()  # 空目錄，無任何 jsonl
@@ -105,9 +103,7 @@ def test_discover_synthetic_row_for_live_proc_without_jsonl(
     assert ghost.tty == "/dev/ttys9"
 
 
-def test_discover_no_synthetic_row_when_scan_covers_cwd(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_discover_no_synthetic_row_when_scan_covers_cwd(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """同一個 cwd 既有近期 jsonl（scan 列）又有 live proc → 只有 scan 那列，無合成列。"""
     projects = tmp_path / "projects"
     now = time.time()

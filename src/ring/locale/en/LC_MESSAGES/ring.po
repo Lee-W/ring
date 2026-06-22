@@ -143,3 +143,20 @@ msgstr "ℹ️ No RiNG hook entries found; nothing to remove."
 
 msgid "✅ 已移除 RiNG hooks（{events}）從 {path}"
 msgstr "✅ Removed RiNG hooks ({events}) from {path}"
+
+# ── notify 文案明確化 ──
+msgid "RiNG · {project} 在等你回話"
+msgstr "RiNG · {project} is waiting for you"
+
+msgid "{project} · …/{tail}"
+msgstr "{project} · …/{tail}"
+
+msgid "💡 裝 terminal-notifier 可點擊通知直接跳回 session：brew install terminal-notifier"
+msgstr "💡 Install terminal-notifier for click-to-jump notifications: brew install terminal-notifier"
+
+# ── TUI IPC 回呼 ──
+msgid "→ 已跳到 {project}（來自通知）"
+msgstr "→ jumped to {project} (from notification)"
+
+msgid "那個 session 已不在場"
+msgstr "that session is no longer on stage"

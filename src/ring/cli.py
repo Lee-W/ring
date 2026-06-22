@@ -212,7 +212,9 @@ def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int
                 sessions = board(show_all)
                 new_waiting = watcher.feed(sessions)
                 try:
-                    notify_waiting(new_waiting)
+                    hint = notify_waiting(new_waiting)
+                    if hint:
+                        print(hint)
                 except Exception:
                     pass
                 print(_render_plain(sessions, show_legend))
@@ -233,7 +235,9 @@ def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int
                 sessions = board(show_all)
                 new_waiting = watcher.feed(sessions)
                 try:
-                    notify_waiting(new_waiting)
+                    hint = notify_waiting(new_waiting)
+                    if hint:
+                        print(hint)
                 except Exception:
                     pass
                 body = _rich_renderable(sessions, show_legend)
@@ -272,12 +276,19 @@ def main(argv: list[str] | None = None) -> int:
         return uninstall_hooks(dry_run="--dry-run" in raw)
     if raw and raw[0] == "focus" and len(raw) >= 2:
         from ring.focus import jump as focus_jump
+        from ring.ipc import read_tui_presence, write_focus_request
         from ring.sources import get_by_id
 
         session = get_by_id(raw[1])
         if session is None:
             return 0
-        focus_jump(session)
+        presence = read_tui_presence()
+        if presence is not None:
+            # TUI 在跑：寫 focus-request，讓 TUI 自己移游標並 activate 視窗。
+            write_focus_request(raw[1])
+        else:
+            # headless（沒有 TUI 在跑）：退化回現行行為——直接跳到 claude 所在終端。
+            focus_jump(session)
         return 0
 
     cfg = get_config()

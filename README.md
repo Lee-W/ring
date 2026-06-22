@@ -70,6 +70,15 @@ focuser**——core 不綁任何特定 vendor，加一個終端＝加一個 focu
 裝了 hook 後，有 session 從工作中轉成 🔴 待回覆時，RiNG 會**響鈴 + 跳通知**——
 名副其實，它真的 ring 你。（zero-config 測不到 WAITING，所以這個需要 hook 模式。）
 
+通知帶有點擊跳轉功能——點通知後直接跳回 RiNG TUI 並選中那個 session。
+需要安裝 [terminal-notifier](https://github.com/julienXX/terminal-notifier)（brew 外部 binary）：
+
+```sh
+brew install terminal-notifier
+```
+
+沒裝時退化為 macOS 原生純文字通知（不可點擊跳轉），RiNG 會在第一次走到這條路時提示一次。
+
 ```
 🎤 RiNG — 3 session 在場 · 2 claude process 跑著
 
@@ -238,4 +247,3 @@ iTerm2 / Terminal.app，各自一個模組（`ring/focus/tmux.py` …）。
 ## License
 
 MIT
-

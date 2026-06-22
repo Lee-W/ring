@@ -64,6 +64,8 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 [tool.codespell]
 skip = '.git*,*.lock'
 check-hidden = true
+# README 縮寫 **N**otification 被 markdown 粗體拆成 `otification`，codespell 會誤判為 notification 拼錯
+ignore-words-list = 'otification'
 
 [tool.poe.tasks]
 format.help = "Format the code"

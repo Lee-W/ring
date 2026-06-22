@@ -146,9 +146,7 @@ def test_install_hooks_already_installed(
     assert "已經裝過" in capsys.readouterr().out
 
 
-def test_install_hooks_preserves_other_hooks(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_install_hooks_preserves_other_hooks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """別人的 hook 條目原封不動。"""
     settings = tmp_path / ".claude" / "settings.json"
     settings.parent.mkdir(parents=True)
@@ -216,9 +214,7 @@ def test_uninstall_hooks_removes_new_form(
     assert "已移除" in capsys.readouterr().out
 
 
-def test_uninstall_hooks_removes_old_fullpath(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_uninstall_hooks_removes_old_fullpath(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """有舊 full-path ring hook → 也全部清掉。"""
     settings = tmp_path / ".claude" / "settings.json"
     settings.parent.mkdir(parents=True)
@@ -259,9 +255,7 @@ def test_uninstall_hooks_file_not_exist(
     assert "不存在" in out
 
 
-def test_uninstall_hooks_preserves_other_hooks(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_uninstall_hooks_preserves_other_hooks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """移除 ring hook 時，其他工具的 hook 保留不動。"""
     settings = tmp_path / ".claude" / "settings.json"
     settings.parent.mkdir(parents=True)
@@ -298,9 +292,7 @@ def test_uninstall_hooks_dry_run_no_write(
     assert "dry-run" in capsys.readouterr().out
 
 
-def test_uninstall_hooks_invalid_json(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_uninstall_hooks_invalid_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """settings.json 非法 JSON → 回 1。"""
     settings = tmp_path / ".claude" / "settings.json"
     settings.parent.mkdir(parents=True)

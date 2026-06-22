@@ -4,6 +4,9 @@
 ``ring focus <session_id>`` 讓使用者點擊後直接聚焦到對應終端。
 未裝 terminal-notifier 則退化為 osascript 純文字通知（點擊不可聚焦）。
 
+安裝 terminal-notifier（取得點擊跳轉能力）：
+    brew install terminal-notifier
+
 通知失敗一律安靜吞掉——通知是錦上添花，絕不打斷主流程。
 terminal-notifier 不進 pyproject dependencies（brew 外部 binary）。
 """
@@ -12,40 +15,57 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from pathlib import Path
 
 from ring.focus.base import osascript
+from ring.i18n import gettext as _
 from ring.registry import Session
 
+# 一次性安裝引導的 marker 檔路徑。
+_HINT_MARKER: Path = Path.home() / ".config" / "ring" / ".tn-hint-shown"
 
-def notify_waiting(sessions: list[Session]) -> None:
+
+def _cwd_tail(session: Session) -> str:
+    """取 cwd 最後一段（尾目錄），用於通知的區分資訊。"""
+    return Path(session.cwd).name or session.cwd
+
+
+def notify_waiting(sessions: list[Session]) -> str | None:
     """對一批「新轉為等你」的 session 發系統通知。
 
     - 有 terminal-notifier → 每筆各發一則，帶 ``-execute "ring focus <session_id>"``。
-    - 無 terminal-notifier → fallback osascript display notification（純文字）。
+    - 無 terminal-notifier → fallback osascript display notification（純文字，逐 session 各一則）。
+    - 首次走 osascript 路徑時，回傳安裝引導提示字串（由呼叫方決定怎麼呈現）；之後回傳 ``None``。
     - 失敗一律安靜吞掉，不拋例外。
 
     :param sessions: 新轉為 waiting 的 session 清單；空清單時直接回傳。
+    :returns: 安裝引導提示字串（首次走 osascript 路徑時）或 ``None``。
     """
     if not sessions:
-        return
+        return None
 
     if shutil.which("terminal-notifier"):
         _notify_with_terminal_notifier(sessions)
+        return None
     else:
+        hint = _maybe_show_install_hint()
         _notify_with_osascript(sessions)
+        return hint
 
 
 def _notify_with_terminal_notifier(sessions: list[Session]) -> None:
     """每個 session 各發一則 terminal-notifier 通知，帶點擊聚焦回呼。"""
     for s in sessions:
+        tail = _cwd_tail(s)
+        message = _("{project} · …/{tail}", project=s.project, tail=tail)
         try:
             subprocess.run(
                 [
                     "terminal-notifier",
                     "-title",
-                    "RiNG",
+                    _("RiNG · {project} 在等你回話", project=s.project),
                     "-message",
-                    f"{s.project} 在等你回話",
+                    message,
                     "-execute",
                     f"ring focus {s.session_id}",
                 ],
@@ -57,9 +77,28 @@ def _notify_with_terminal_notifier(sessions: list[Session]) -> None:
 
 
 def _notify_with_osascript(sessions: list[Session]) -> None:
-    """用 osascript 發一則純文字通知（fallback，點擊不可聚焦）。"""
-    names = ", ".join(s.project for s in sessions)
+    """用 osascript 逐 session 各發一則純文字通知（fallback，點擊不可聚焦）。"""
+    for s in sessions:
+        tail = _cwd_tail(s)
+        message = _("{project} · …/{tail}", project=s.project, tail=tail)
+        title = _("RiNG · {project} 在等你回話", project=s.project)
+        try:
+            osascript(f'display notification "{message}" with title "{title}"')
+        except Exception:
+            pass
+
+
+def _maybe_show_install_hint() -> str | None:
+    """首次走 osascript 路徑時，回傳 terminal-notifier 安裝建議字串（marker 檔防重複）。
+
+    :returns: hint 字串（首次）或 ``None``（已提示過或寫 marker 失敗時）。
+    """
+    if _HINT_MARKER.exists():
+        return None
     try:
-        osascript(f'display notification "{names} 在等你回話" with title "RiNG"')
+        hint = _("💡 裝 terminal-notifier 可點擊通知直接跳回 session：brew install terminal-notifier")
+        _HINT_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        _HINT_MARKER.touch()
+        return hint
     except Exception:
-        pass
+        return None

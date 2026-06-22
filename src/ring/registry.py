@@ -258,10 +258,7 @@ def _conversation_tail_kind(records: list[dict[str, Any]]) -> str:
             msg = record.get("message")
             stop_reason = msg.get("stop_reason") if isinstance(msg, dict) else None
             # assistant 帶 tool_use block → 工具呼叫進行中
-            if any(
-                isinstance(b, dict) and b.get("type") == "tool_use"
-                for b in _blocks(record)
-            ):
+            if any(isinstance(b, dict) and b.get("type") == "tool_use" for b in _blocks(record)):
                 return "interrupted"
             if stop_reason == "end_turn":
                 return "waiting"
@@ -271,10 +268,7 @@ def _conversation_tail_kind(records: list[dict[str, Any]]) -> str:
         # user 帶工具結果（toolUseResult 欄位，或 content 含 tool_result block）→ 中途
         if record.get("toolUseResult") is not None:
             return "interrupted"
-        if any(
-            isinstance(b, dict) and b.get("type") == "tool_result"
-            for b in _blocks(record)
-        ):
+        if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in _blocks(record)):
             return "interrupted"
         # command 噪音（slash-command stdout）→ 跳過，繼續往回走
         text_blocks = [b for b in _blocks(record) if isinstance(b, dict) and b.get("type") == "text"]

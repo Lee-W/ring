@@ -200,3 +200,27 @@ msgstr ""
 msgid "沒有 focuser 接得住（裝 hook，或一個專案只開一個 session 才測得到 tty）"
 msgstr ""
 
+# ── notify.py ──
+#: src/ring/notify.py
+#, python-brace-format
+msgid "RiNG · {project} 在等你回話"
+msgstr ""
+
+#: src/ring/notify.py
+#, python-brace-format
+msgid "{project} · …/{tail}"
+msgstr ""
+
+#: src/ring/notify.py
+msgid "💡 裝 terminal-notifier 可點擊通知直接跳回 session：brew install terminal-notifier"
+msgstr ""
+
+# ── TUI IPC 回呼 ──
+#: src/ring/tui.py
+#, python-brace-format
+msgid "→ 已跳到 {project}（來自通知）"
+msgstr ""
+
+#: src/ring/tui.py
+msgid "那個 session 已不在場"
+msgstr ""

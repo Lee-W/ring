@@ -271,13 +271,11 @@ def test_synthetic_sessions_skips_empty_cwd() -> None:
     [
         ([("/x", ""), ("/y", "/dev/ttys3")], 0, 2),  # 兩個不同 cwd，都不在 existing → 補兩列
         ([("/x", ""), ("/y", "/dev/ttys3")], 1, 1),  # 第一個 cwd 在 existing → 只補一列
-        ([("/x", ""), ("", "")], 0, 1),               # 空 cwd 跳過 → 只補 /x
+        ([("/x", ""), ("", "")], 0, 1),  # 空 cwd 跳過 → 只補 /x
     ],
     ids=["two_cwds_both_new", "two_cwds_one_existing", "one_valid_one_empty"],
 )
-def test_synthetic_sessions_count(
-    procs: list[tuple[str, str]], n_existing_cwds: int, expected_len: int
-) -> None:
+def test_synthetic_sessions_count(procs: list[tuple[str, str]], n_existing_cwds: int, expected_len: int) -> None:
     cwds = [cwd for cwd, _ in procs if cwd][:n_existing_cwds]
     existing = [_make_session(c) for c in cwds]
     result = _synthetic_sessions(procs, existing)

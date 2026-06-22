@@ -99,8 +99,10 @@ plus the beep both rely on it.
    ```
 
 **System notifications (🔔 click-to-focus):** when a session turns 🔴 waiting, RiNG sends a
-system notification (both headless `--watch` and TUI). Install `terminal-notifier` for
-click-to-focus; without it, notifications fall back to plain macOS alerts (no click action):
+system notification (both headless `--watch` and TUI). Clicking the notification jumps back to
+the RiNG TUI and selects that session. Install `terminal-notifier` for click-to-focus;
+without it, notifications fall back to plain macOS alerts (no click action), and RiNG will
+show a one-time install hint the first time:
 
 ```sh
 brew install terminal-notifier

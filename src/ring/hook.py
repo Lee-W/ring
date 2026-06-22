@@ -195,12 +195,7 @@ def install_hooks(dry_run: bool = False) -> int:
     events_need_change: list[str] = []
     for event in _HOOK_EVENTS:
         groups = list(hooks.get(event) or [])
-        already_exact = any(
-            h.get("command") == cmd
-            for g in groups
-            if isinstance(g, dict)
-            for h in g.get("hooks", [])
-        )
+        already_exact = any(h.get("command") == cmd for g in groups if isinstance(g, dict) for h in g.get("hooks", []))
         has_old_path = any(
             _is_ring_hook_command(h.get("command", "")) and h.get("command") != cmd
             for g in groups

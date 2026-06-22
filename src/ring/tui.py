@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import ClassVar
 
 from rich.text import Text
@@ -18,6 +19,7 @@ from ring.cli import _LOC_MAX, _STATUS_STYLE, _header, _middle_truncate, _rel, b
 from ring.focus import jump as focus_jump
 from ring.i18n import gettext as _
 from ring.i18n import set_lang
+from ring.ipc import clear_tui_presence, read_focus_request, write_tui_presence
 from ring.notify import notify_waiting
 from ring.registry import Session, Status, running_claude_pids
 from ring.watcher import WaitingWatcher
@@ -46,6 +48,27 @@ class RingApp(App[None]):
         self._sessions: list[Session] = []
         self._watcher = WaitingWatcher()
         self.title = "RiNG 🎤"
+        # 記下自己的 controlling tty，供 _poll_focus_request activate 視窗用。
+        self._own_tty: str = self._detect_own_tty()
+
+    @staticmethod
+    def _detect_own_tty() -> str:
+        """取得 controlling terminal 的 tty 路徑，取不到就回空字串。"""
+        import sys as _sys
+
+        try:
+            if _sys.stdout.isatty():
+                return os.ttyname(_sys.stdout.fileno())
+        except Exception:
+            pass
+        try:
+            fd = os.open("/dev/tty", os.O_RDONLY | os.O_NOCTTY)
+            try:
+                return os.ttyname(fd)
+            finally:
+                os.close(fd)
+        except Exception:
+            return ""
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -55,6 +78,8 @@ class RingApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        # 寫入 presence，讓 `ring focus` 知道 TUI 在跑。
+        write_tui_presence()
         table = self.query_one(DataTable)
         for label in (_("狀態"), _("專案"), _("進度"), _("閒置"), _("去哪"), _("動作")):
             table.add_column(label)
@@ -67,6 +92,10 @@ class RingApp(App[None]):
             self._set_status(_("💡 同專案開了多個 session，裝 hook 跳轉才精準：ring install-hooks"))
         else:
             self._set_status(_("↑/↓ 選一列，Enter 或 Space 跳到那個 session 的終端"))
+
+    def on_unmount(self) -> None:
+        # 清除 presence，TUI 離場後 `ring focus` 退回 headless 行為。
+        clear_tui_presence()
 
     def _set_status(self, text: str) -> None:
         self.query_one("#status", Static).update(text)
@@ -92,12 +121,65 @@ class RingApp(App[None]):
             names = ", ".join(sorted(s.project for s in newly))
             self.notify(_("🔔 {names} 在等你回話", names=names), timeout=8)
 
+    def _poll_focus_request(self) -> None:
+        """讀一次 focus-request 檔，有效的話把游標跳過去並 activate 自己視窗。
+
+        流程（對應 plan 設計 C.1–C.7）：
+        1. 讀 focus-request；無 / 過期 / 解析失敗 → 直接回傳（read_focus_request 已消費即焚）。
+        2. 在 _sessions 找 session_id → 取得 row index。
+        3. 移游標到對應 row。
+        4. 用 AppleScriptTTYFocuser activate 自己視窗（reuse 既有機制，餵自己的 tty）。
+        5. 設 status 提示 + notify。
+        6. 找不到 session_id → 走「已不在場」分支，仍 activate 視窗讓使用者看到全貌。
+        """
+        from ring.focus.base import AppleScriptTTYFocuser
+        from ring.focus.iterm2 import _SCRIPT as _iterm2_script
+        from ring.focus.terminal import _SCRIPT as _terminal_script
+
+        sid = read_focus_request()
+        if sid is None:
+            return
+
+        # 找到 session → 取得 row index
+        target_row: int | None = None
+        for idx, s in enumerate(self._sessions):
+            if s.session_id == sid:
+                target_row = idx
+                break
+
+        # activate 自己視窗（best-effort，失敗安靜吞）
+        tty = self._own_tty
+        if tty:
+            try:
+                _dummy = Session(sid, "/", Status.WORKING, 0.0, "", "ipc", tty=tty)
+                for script in (_iterm2_script, _terminal_script):
+                    focuser = AppleScriptTTYFocuser("self", script)
+                    result = focuser.try_focus(_dummy)
+                    if result is not None and result[0]:
+                        break
+            except Exception:
+                pass
+
+        if target_row is not None:
+            table = self.query_one(DataTable)
+            table.move_cursor(row=target_row)
+            found_session = self._sessions[target_row]
+            msg = _("→ 已跳到 {project}（來自通知）", project=found_session.project)
+            self._set_status(msg)
+            self.notify(msg, timeout=8)
+        else:
+            msg = _("那個 session 已不在場")
+            self._set_status(msg)
+            self.notify(msg, severity="warning", timeout=8)
+
     def _reload(self) -> None:
         self._sessions = board(self._show_all)
         newly = self._watcher.feed(self._sessions)
         self._ring_on_new_waiting(newly)
         try:
-            notify_waiting(newly)
+            hint = notify_waiting(newly)
+            if hint:
+                self.notify(hint, timeout=10)
         except Exception:
             pass
         self.sub_title = _header(len(self._sessions), len(running_claude_pids()))
@@ -111,6 +193,7 @@ class RingApp(App[None]):
             table.add_row(status_cell, s.project, progress, _rel(s.idle_for), loc_cell, s.last_action)
         if self._sessions:
             table.move_cursor(row=min(cursor, len(self._sessions) - 1))
+        self._poll_focus_request()
 
     def _selected(self) -> Session | None:
         row = self.query_one(DataTable).cursor_row
