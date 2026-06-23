@@ -23,6 +23,25 @@ def test_show_tool_column_only_when_providers_differ() -> None:
     assert show_tool_column(mixed) is True
 
 
+def test_tool_column_logic_is_provider_agnostic() -> None:
+    """泛用性：邏輯只看「有幾種不同 provider」，不寫死 claude/codex。
+
+    任意未知 provider 都該被 title-case 顯示；任意 ≥2 種組合都顯示工具欄，
+    任意 1 種（即使是未來新工具）都隱藏。
+    """
+    from ring.cli import provider_label
+
+    assert provider_label("gemini") == "Gemini"
+    assert provider_label("my-custom-tool") == "My-Custom-Tool"
+    assert provider_label("") == "—"
+
+    def S(prov: str) -> Session:
+        return Session(prov, "/x", Status.IDLE, 0.0, "-", "hook", provider=prov)
+
+    assert show_tool_column([S("gemini"), S("gemini")]) is False  # 全新工具、同種 → 隱藏
+    assert show_tool_column([S("claude-code"), S("codex"), S("gemini")]) is True  # 三種 → 顯示
+
+
 def test_plain_hides_tool_column_when_uniform() -> None:
     set_lang("zh-Hant")
     ss = [Session("a", "/x/maigo", Status.WORKING, 0.0, "→ Edit", "hook", provider="claude-code")]
