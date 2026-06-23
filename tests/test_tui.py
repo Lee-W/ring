@@ -8,6 +8,13 @@ import ring.tui as tui
 from ring.registry import Session, Status
 
 
+@pytest.fixture(autouse=True)
+def _silence_notifications(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TUI 測試經 on_mount / _reload 會呼叫真的 notify_waiting → 會在跑測試時噴真實系統
+    通知（例如 "RiNG · p is waiting for you"）。測試時一律擋掉，保持 hermetic。"""
+    monkeypatch.setattr(tui, "notify_waiting", lambda sessions: None)
+
+
 @pytest.mark.asyncio
 async def test_tui_mounts_and_lists_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
     sessions = [
