@@ -115,6 +115,13 @@ def status_label(status: Status) -> str:
     }[status]
 
 
+def provider_label(provider: str) -> str:
+    """把內部 provider 值轉成畫面上的工具名稱（品牌名不翻譯）。"""
+    return {"claude": "Claude", "claude-code": "Claude", "codex": "Codex"}.get(
+        provider, provider.title() if provider else "—"
+    )
+
+
 def _header(n: int, pids: int) -> str:
     sess = ngettext("{n} 個 session 在場", "{n} 個 session 在場", n, n=n)
     proc = ngettext("{n} 個 agent process 跑著", "{n} 個 agent process 跑著", pids, n=pids)
@@ -140,6 +147,7 @@ def _rich_renderable(sessions: list[Session], show_legend: bool) -> Group:
 
     table = Table(box=SIMPLE_HEAD, header_style="bold", pad_edge=False, expand=False)
     table.add_column(_("狀態"), no_wrap=True, min_width=9)
+    table.add_column(_("工具"), no_wrap=True)
     table.add_column(_("專案"), style=_COLORS["project"], no_wrap=True)
     table.add_column(_("進度"), justify="right", no_wrap=True)
     table.add_column(_("閒置"), justify="right", no_wrap=True)
@@ -151,7 +159,9 @@ def _rich_renderable(sessions: list[Session], show_legend: bool) -> Group:
         status_cell = Text(f"{s.status.marker} {status_label(s.status)}", style=_STATUS_STYLE[s.status])
         progress = f"{s.todo[0]}/{s.todo[1]}" if s.todo else "·"
         loc_cell = f"📍{_middle_truncate(s.location, _LOC_MAX)}"
-        table.add_row(status_cell, s.project, progress, _rel(s.idle_for), loc_cell, s.last_action)
+        table.add_row(
+            status_cell, provider_label(s.provider), s.project, progress, _rel(s.idle_for), loc_cell, s.last_action
+        )
 
     blocks.append(table)
     return Group(*blocks)
@@ -171,6 +181,7 @@ def _render_plain(sessions: list[Session], show_legend: bool) -> str:
     rows = [
         (
             s.status.marker,
+            provider_label(s.provider),
             s.project,
             f"{s.todo[0]}/{s.todo[1]}" if s.todo else "·",
             _rel(s.idle_for),
@@ -179,14 +190,22 @@ def _render_plain(sessions: list[Session], show_legend: bool) -> str:
         )
         for s in sessions
     ]
-    c_proj, c_prog, c_idle, c_loc, c_act = _("專案"), _("進度"), _("閒置"), _("去哪"), _("動作")
-    w_proj = max(len(c_proj), *(len(r[1]) for r in rows))
-    w_prog = max(len(c_prog), *(len(r[2]) for r in rows))
-    w_ago = max(len(c_idle), 3, *(len(r[3]) for r in rows))
-    w_loc = max(len(c_loc), *(len(r[4]) for r in rows))
-    lines += ["", f"     {c_proj:<{w_proj}}  {c_prog:>{w_prog}}  {c_idle:>{w_ago}}    {c_loc:<{w_loc}}  {c_act}"]
-    for marker, project, prog, ago, loc, action in rows:
-        lines.append(f"  {marker} {project:<{w_proj}}  {prog:>{w_prog}}  {ago:>{w_ago}}  📍{loc:<{w_loc}}  {action}")
+    c_tool, c_proj, c_prog, c_idle, c_loc, c_act = _("工具"), _("專案"), _("進度"), _("閒置"), _("去哪"), _("動作")
+    w_tool = max(len(c_tool), *(len(r[1]) for r in rows))
+    w_proj = max(len(c_proj), *(len(r[2]) for r in rows))
+    w_prog = max(len(c_prog), *(len(r[3]) for r in rows))
+    w_ago = max(len(c_idle), 3, *(len(r[4]) for r in rows))
+    w_loc = max(len(c_loc), *(len(r[5]) for r in rows))
+    header = (
+        f"     {c_tool:<{w_tool}}  {c_proj:<{w_proj}}  {c_prog:>{w_prog}}  "
+        f"{c_idle:>{w_ago}}    {c_loc:<{w_loc}}  {c_act}"
+    )
+    lines += ["", header]
+    for marker, tool, project, prog, ago, loc, action in rows:
+        lines.append(
+            f"  {marker} {tool:<{w_tool}}  {project:<{w_proj}}  {prog:>{w_prog}}  "
+            f"{ago:>{w_ago}}  📍{loc:<{w_loc}}  {action}"
+        )
     return "\n".join(lines)
 
 

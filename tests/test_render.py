@@ -24,7 +24,7 @@ def test_rich_renderable_keeps_all_columns_with_long_action() -> None:
     console = Console(width=130, record=True)
     console.print(_rich_renderable(_sessions(), show_legend=True))
     out = console.export_text()
-    for col in ("狀態", "專案", "進度", "閒置", "去哪", "動作"):
+    for col in ("狀態", "工具", "專案", "進度", "閒置", "去哪", "動作"):
         assert col in out, f"missing column header {col}"
 
 
@@ -95,6 +95,6 @@ def test_rich_renderable_keeps_all_columns_with_long_location() -> None:
     console = Console(width=130, record=True)
     console.print(_rich_renderable([long_loc_session], show_legend=True))
     out = console.export_text()
-    for col in ("狀態", "專案", "進度", "閒置", "去哪", "動作"):
+    for col in ("狀態", "工具", "專案", "進度", "閒置", "去哪", "動作"):
         assert col in out, f"missing column header {col}"
     assert short_action in out, "action column was squeezed out by long location"

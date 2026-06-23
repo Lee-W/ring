@@ -42,6 +42,9 @@ msgstr "(no one on stage right now)"
 msgid "狀態"
 msgstr "status"
 
+msgid "工具"
+msgstr "tool"
+
 msgid "專案"
 msgstr "project"
 

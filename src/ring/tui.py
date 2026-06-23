@@ -15,7 +15,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.widgets import DataTable, Footer, Header, Static
 
-from ring.cli import _LOC_MAX, _STATUS_STYLE, _header, _middle_truncate, _rel, board, status_label
+from ring.cli import _LOC_MAX, _STATUS_STYLE, _header, _middle_truncate, _rel, board, provider_label, status_label
 from ring.config import get_config
 from ring.focus import jump as focus_jump
 from ring.i18n import gettext as _
@@ -85,7 +85,7 @@ class RingApp(App[None]):
         # 寫入 presence，讓 `ring focus` 知道 TUI 在跑。
         write_tui_presence()
         table = self.query_one(DataTable)
-        for label in (_("狀態"), _("專案"), _("進度"), _("閒置"), _("去哪"), _("動作")):
+        for label in (_("狀態"), _("工具"), _("專案"), _("進度"), _("閒置"), _("去哪"), _("動作")):
             table.add_column(label)
         table.cursor_type = "row"
         table.focus()  # 讓 ↑/↓ 與 Enter 直接作用在表格上
@@ -202,7 +202,9 @@ class RingApp(App[None]):
             status_cell = Text(f"{marker}{s.status.marker} {status_label(s.status)}", style=style)
             progress = f"{s.todo[0]}/{s.todo[1]}" if s.todo else "·"
             loc_cell = f"📍{_middle_truncate(s.location, _LOC_MAX)}"
-            table.add_row(status_cell, s.project, progress, _rel(s.idle_for), loc_cell, s.last_action)
+            table.add_row(
+                status_cell, provider_label(s.provider), s.project, progress, _rel(s.idle_for), loc_cell, s.last_action
+            )
         if self._sessions:
             table.move_cursor(row=min(cursor, len(self._sessions) - 1))
         self._poll_focus_request()

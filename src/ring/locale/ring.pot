@@ -64,6 +64,10 @@ msgstr ""
 msgid "狀態"
 msgstr ""
 
+#: src/ring/cli.py:143 src/ring/tui.py:59
+msgid "工具"
+msgstr ""
+
 #: src/ring/cli.py:143 src/ring/cli.py:182 src/ring/tui.py:59
 msgid "專案"
 msgstr ""
