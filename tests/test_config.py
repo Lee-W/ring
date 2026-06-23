@@ -32,6 +32,18 @@ def test_parses_values(tmp_path: Path) -> None:
     assert cfg.focusers == ("Terminal", "iTerm2")
 
 
+def test_notify_backend_parses_valid(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('notify_backend = "osascript"\n')
+    assert load(p).notify_backend == "osascript"
+
+
+def test_notify_backend_invalid_falls_back_to_auto(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('notify_backend = "carrier-pigeon"\n')
+    assert load(p).notify_backend == "auto"
+
+
 def test_bad_types_fall_back_to_defaults(tmp_path: Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text('interval = "fast"\nfocusers = "nope"\n')

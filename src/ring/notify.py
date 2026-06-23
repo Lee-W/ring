@@ -64,13 +64,16 @@ def notify_waiting(sessions: list[Session]) -> str | None:
     if not sessions:
         return None
 
-    if shutil.which("terminal-notifier"):
+    backend = get_config().notify_backend
+    has_tn = bool(shutil.which("terminal-notifier"))
+    # terminal-notifier 支援點擊跳轉，但有些 macOS 會默默擋掉它的通知；那種機器把
+    # notify_backend 設成 "osascript" 就能改用看得到的純文字通知（代價：點擊不跳轉）。
+    if backend == "terminal-notifier" or (backend == "auto" and has_tn):
         _notify_with_terminal_notifier(sessions)
         return None
-    else:
-        hint = _maybe_show_install_hint()
-        _notify_with_osascript(sessions)
-        return hint
+    hint = _maybe_show_install_hint() if (backend == "auto" and not has_tn) else None
+    _notify_with_osascript(sessions)
+    return hint
 
 
 def _notify_with_terminal_notifier(sessions: list[Session]) -> None:

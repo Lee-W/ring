@@ -254,6 +254,48 @@ class TestInstallHint:
             notify_mod._HINT_MARKER = original
 
 
+class TestNotifyBackend:
+    def test_osascript_backend_forces_osascript_even_with_terminal_notifier(self) -> None:
+        """notify_backend="osascript" → 即使裝了 terminal-notifier 也走 osascript。"""
+        session = _s("uuid-1", "maigo")
+        with (
+            patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("ring.notify.get_config", return_value=Config(notify_backend="osascript")),
+            patch("ring.notify.osascript") as mock_osa,
+            patch("subprocess.run") as mock_run,
+            patch("ring.notify._HINT_MARKER") as mock_marker,
+        ):
+            mock_osa.return_value = (0, "", "")
+            mock_marker.exists.return_value = True
+            notify_waiting([session])
+        mock_osa.assert_called_once()  # 走 osascript
+        mock_run.assert_not_called()  # 不碰 terminal-notifier
+
+    def test_osascript_backend_returns_no_install_hint(self) -> None:
+        """明確選 osascript → 不回傳「裝 terminal-notifier」的提示。"""
+        session = _s("uuid-1", "maigo")
+        with (
+            patch("shutil.which", return_value=None),
+            patch("ring.notify.get_config", return_value=Config(notify_backend="osascript")),
+            patch("ring.notify.osascript", return_value=(0, "", "")),
+        ):
+            assert notify_waiting([session]) is None
+
+    def test_terminal_notifier_backend_forces_tn(self) -> None:
+        """notify_backend="terminal-notifier" → 走 terminal-notifier。"""
+        session = _s("uuid-1", "maigo")
+        with (
+            patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("ring.notify.get_config", return_value=Config(notify_backend="terminal-notifier")),
+            patch("subprocess.run") as mock_run,
+            patch("ring.notify.osascript") as mock_osa,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            notify_waiting([session])
+        mock_run.assert_called_once()
+        mock_osa.assert_not_called()
+
+
 class TestNotifyEmpty:
     def test_empty_sessions_does_nothing(self) -> None:
         """空清單直接回傳，不呼叫任何通知機制。"""

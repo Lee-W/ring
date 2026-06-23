@@ -11,6 +11,9 @@
     waiting_window_seconds = 1800     # IDLE 升 WAITING 的時間窗上限（預設 30 分）
     notify_sound = true               # 系統通知帶聲音
     notify_sound_name = "Glass"       # macOS / terminal-notifier sound name
+    notify_backend = "auto"           # auto / terminal-notifier / osascript
+                                      #   terminal-notifier 被 macOS 擋掉時設 "osascript"
+                                      #   （看得到通知，但點擊不跳轉）
     notify_repeat_seconds = [30, 120, 300]  # waiting 未解除時，多久後重複提醒
     notify_repeat_max = 3             # 重複提醒上限；0 = 不限
     focusers = ["tmux", "iTerm2", "Terminal"]   # 跳轉嘗試順序；省略＝內建預設
@@ -48,6 +51,9 @@ class Config:
     waiting_window_seconds: int = 1800  # IDLE 升 WAITING 的時間窗上限（預設 30 分）
     notify_sound: bool = True
     notify_sound_name: str = "Glass"
+    # 通知後端：auto = 有 terminal-notifier 就用它（可點擊跳轉），否則 osascript。
+    # 想強制純文字 osascript（terminal-notifier 被 macOS 權限擋掉時）→ 設 "osascript"。
+    notify_backend: str = "auto"  # "auto" | "terminal-notifier" | "osascript"
     notify_repeat_seconds: tuple[int, ...] = (30, 120, 300)
     notify_repeat_max: int = 3  # 0 = 不限
     focusers: tuple[str, ...] = ()  # 空＝用內建預設順序
@@ -96,6 +102,8 @@ def load(path: Path | None = None) -> Config:
         return Config()
     d = Config()
     lang = raw.get("lang")
+    nb = raw.get("notify_backend")
+    notify_backend = nb if nb in {"auto", "terminal-notifier", "osascript"} else d.notify_backend
     return Config(
         lang=lang if isinstance(lang, str) else None,
         interval=_as_float(raw.get("interval"), d.interval),
@@ -110,6 +118,7 @@ def load(path: Path | None = None) -> Config:
         ),
         notify_repeat_seconds=_as_positive_int_tuple(raw.get("notify_repeat_seconds"), d.notify_repeat_seconds),
         notify_repeat_max=max(0, _as_int(raw.get("notify_repeat_max"), d.notify_repeat_max)),
+        notify_backend=notify_backend,
         focusers=_as_str_tuple(raw.get("focusers")),
         colors=_parse_colors(raw.get("colors")),
     )
