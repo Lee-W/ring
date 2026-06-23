@@ -379,6 +379,23 @@ def test_hook_sessions_keeps_lone_live_session_with_wrong_tty(
     assert sessions[0].status is Status.WAITING, "唯一活著的 session 不該因 tty 對不上而消失"
 
 
+def test_hook_sessions_purges_session_start_source_phantom(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """provider 是 SessionStart source（startup 等）的腐壞檔 → 不顯示且自我刪除。"""
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(registry_dir, "startup:abc", "/work/app", "", provider="startup")
+    _write_hook_session(registry_dir, "real", "/work/app", "/dev/ttys001")
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+
+    sessions = _hook_sessions([("/work/app", "/dev/ttys001")])
+
+    ids = {s.session_id for s in sessions}
+    assert "startup:abc" not in ids, "幽靈列不該出現"
+    assert "real" in ids
+    assert not (registry_dir / "startup:abc.json").exists(), "腐壞檔應被刪除（自我修復）"
+
+
 def test_hook_sessions_cleanup_is_provider_specific(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """同 cwd 有 live Claude，不代表 Codex hook row 還活著。"""
     registry_dir = tmp_path / "sessions"
