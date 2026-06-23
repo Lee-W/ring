@@ -178,6 +178,19 @@ msgstr ""
 msgid "跳過去"
 msgstr ""
 
+#: src/ring/tui.py:35
+msgid "命名"
+msgstr ""
+
+#: src/ring/tui.py:33
+#, python-brace-format
+msgid "為 {project} 命名（Enter 存、Esc 取消、清空移除）"
+msgstr ""
+
+#: src/ring/tui.py:34
+msgid "這個 session 在做什麼…"
+msgstr ""
+
 #: src/ring/tui.py:67
 msgid "💡 同專案開了多個 session，裝 hook 跳轉才精準：ring install-hooks"
 msgstr ""

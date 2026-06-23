@@ -19,6 +19,7 @@ from ring import __version__
 from ring.config import get_config
 from ring.i18n import gettext as _
 from ring.i18n import ngettext, set_lang
+from ring.labels import load_labels
 from ring.registry import Session, Status, running_agent_pids
 from ring.sources import discover_sessions
 
@@ -122,6 +123,11 @@ def provider_label(provider: str) -> str:
     )
 
 
+def labeled_project(project: str, label: str) -> str:
+    """專案名後接使用者自訂標籤（有的話）：``maigo · 重構登入``。"""
+    return f"{project} · {label}" if label else project
+
+
 def _header(n: int, pids: int) -> str:
     sess = ngettext("{n} 個 session 在場", "{n} 個 session 在場", n, n=n)
     proc = ngettext("{n} 個 agent process 跑著", "{n} 個 agent process 跑著", pids, n=pids)
@@ -155,12 +161,14 @@ def _rich_renderable(sessions: list[Session], show_legend: bool) -> Group:
     # action 可能很長：給 max_width 上限，否則 no_wrap 會吃掉整列寬度、把其他欄壓成 0。
     table.add_column(_("動作"), no_wrap=True, overflow="ellipsis", max_width=50)
 
+    labels = load_labels()
     for s in sessions:
         status_cell = Text(f"{s.status.marker} {status_label(s.status)}", style=_STATUS_STYLE[s.status])
         progress = f"{s.todo[0]}/{s.todo[1]}" if s.todo else "·"
         loc_cell = f"📍{_middle_truncate(s.location, _LOC_MAX)}"
+        project_cell = labeled_project(s.project, labels.get(s.session_id, ""))
         table.add_row(
-            status_cell, provider_label(s.provider), s.project, progress, _rel(s.idle_for), loc_cell, s.last_action
+            status_cell, provider_label(s.provider), project_cell, progress, _rel(s.idle_for), loc_cell, s.last_action
         )
 
     blocks.append(table)
@@ -178,11 +186,12 @@ def _render_plain(sessions: list[Session], show_legend: bool) -> str:
         lines += ["", "  " + _("（場館目前沒人上台）")]
         return "\n".join(lines)
 
+    labels = load_labels()
     rows = [
         (
             s.status.marker,
             provider_label(s.provider),
-            s.project,
+            labeled_project(s.project, labels.get(s.session_id, "")),
             f"{s.todo[0]}/{s.todo[1]}" if s.todo else "·",
             _rel(s.idle_for),
             _middle_truncate(s.location, _LOC_MAX),

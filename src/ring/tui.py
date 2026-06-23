@@ -13,19 +13,71 @@ from typing import ClassVar
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
-from textual.widgets import DataTable, Footer, Header, Static
+from textual.containers import Vertical
+from textual.screen import ModalScreen
+from textual.widgets import DataTable, Footer, Header, Input, Static
 
-from ring.cli import _LOC_MAX, _STATUS_STYLE, _header, _middle_truncate, _rel, board, provider_label, status_label
+from ring.cli import (
+    _LOC_MAX,
+    _STATUS_STYLE,
+    _header,
+    _middle_truncate,
+    _rel,
+    board,
+    labeled_project,
+    provider_label,
+    status_label,
+)
 from ring.config import get_config
 from ring.focus import jump as focus_jump
 from ring.i18n import gettext as _
 from ring.i18n import set_lang
 from ring.ipc import clear_tui_presence, read_focus_request, write_tui_presence
+from ring.labels import get_label, load_labels, set_label
 from ring.notify import notify_waiting
 from ring.registry import Session, Status, running_agent_pids
 from ring.watcher import WaitingAlertScheduler
 
 _ORDER = (Status.WAITING, Status.WORKING, Status.IDLE, Status.ENDED)
+
+
+class _NameModal(ModalScreen[str | None]):
+    """為選中的 session 命名的小浮層。Enter 存、Esc 取消、清空移除。
+
+    dismiss 回傳：輸入字串（含空字串＝清除標籤）或 ``None``（取消，不動）。
+    """
+
+    DEFAULT_CSS = """
+    _NameModal {
+        align: center middle;
+    }
+    _NameModal #name-box {
+        width: 60;
+        height: auto;
+        padding: 1 2;
+        background: $panel;
+        border: round $accent;
+    }
+    """
+
+    def __init__(self, project: str, current: str) -> None:
+        super().__init__()
+        self._project = project
+        self._current = current
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="name-box"):
+            yield Static(_("為 {project} 命名（Enter 存、Esc 取消、清空移除）", project=self._project))
+            yield Input(value=self._current, placeholder=_("這個 session 在做什麼…"))
+
+    def on_mount(self) -> None:
+        self.query_one(Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.dismiss(event.value)
+
+    def key_escape(self) -> None:
+        self.dismiss(None)
 
 
 class RingApp(App[None]):
@@ -36,6 +88,7 @@ class RingApp(App[None]):
         Binding("q", "quit", _("離場")),
         Binding("r", "refresh_now", _("刷新")),
         Binding("a", "toggle_all", _("含已離場")),
+        Binding("n", "name_session", _("命名")),
         Binding("enter", "jump", _("跳過去")),
         Binding("space", "jump", _("跳過去"), show=False),
     ]
@@ -192,6 +245,7 @@ class RingApp(App[None]):
         except Exception:
             pass
         self.sub_title = _header(len(self._sessions), len(running_agent_pids()))
+        labels = load_labels()
         table = self.query_one(DataTable)
         cursor = table.cursor_row
         table.clear()
@@ -202,8 +256,15 @@ class RingApp(App[None]):
             status_cell = Text(f"{marker}{s.status.marker} {status_label(s.status)}", style=style)
             progress = f"{s.todo[0]}/{s.todo[1]}" if s.todo else "·"
             loc_cell = f"📍{_middle_truncate(s.location, _LOC_MAX)}"
+            project_cell = labeled_project(s.project, labels.get(s.session_id, ""))
             table.add_row(
-                status_cell, provider_label(s.provider), s.project, progress, _rel(s.idle_for), loc_cell, s.last_action
+                status_cell,
+                provider_label(s.provider),
+                project_cell,
+                progress,
+                _rel(s.idle_for),
+                loc_cell,
+                s.last_action,
             )
         if self._sessions:
             table.move_cursor(row=min(cursor, len(self._sessions) - 1))
@@ -218,6 +279,20 @@ class RingApp(App[None]):
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         # DataTable 被 focus 時會吃掉 Enter（變成 RowSelected），在這裡接、轉成跳轉。
         self.action_jump()
+
+    def action_name_session(self) -> None:
+        s = self._selected()
+        if s is None:
+            self._set_status(_("（沒有選到 session）"))
+            return
+
+        def _save(label: str | None) -> None:
+            if label is None:
+                return  # Esc 取消，不動
+            set_label(s.session_id, label)
+            self._reload()
+
+        self.push_screen(_NameModal(s.project, get_label(s.session_id)), _save)
 
     def action_refresh_now(self) -> None:
         self._reload()

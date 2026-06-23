@@ -98,6 +98,16 @@ msgstr "incl. ended"
 msgid "跳過去"
 msgstr "jump"
 
+msgid "命名"
+msgstr "name"
+
+# ── TUI 命名浮層 ──
+msgid "為 {project} 命名（Enter 存、Esc 取消、清空移除）"
+msgstr "Name {project} (Enter to save, Esc to cancel, empty to clear)"
+
+msgid "這個 session 在做什麼…"
+msgstr "what is this session doing…"
+
 # ── TUI 狀態列 / 通知 ──
 msgid "💡 同專案開了多個 session，裝 hook 跳轉才精準：ring install-hooks"
 msgstr "💡 sessions share a project; install hooks for precise jump: ring install-hooks"

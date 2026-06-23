@@ -213,6 +213,69 @@ async def test_poll_focus_request_session_not_found_does_not_crash(
 
 
 @pytest.mark.asyncio
+async def test_label_shown_in_project_cell(monkeypatch: pytest.MonkeyPatch) -> None:
+    """有自訂標籤的 session → 專案欄顯示「專案 · 標籤」。"""
+    sessions = [Session("sess-1", "/x/maigo", Status.WAITING, 0.0, "→ Edit", "hook")]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+    monkeypatch.setattr(tui, "load_labels", lambda **kw: {"sess-1": "重構登入"})
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test():
+        table = app.query_one(DataTable)
+        row = table.get_row_at(0)
+        project_cell = str(row[2])  # 狀態 / 工具 / 專案
+        assert "重構登入" in project_cell
+        assert "maigo" in project_cell
+
+
+@pytest.mark.asyncio
+async def test_name_session_saves_label(monkeypatch: pytest.MonkeyPatch) -> None:
+    """按 n → 輸入 → Enter，會以 (session_id, 輸入值) 呼叫 set_label。"""
+    sessions = [Session("sess-1", "/x/maigo", Status.WAITING, 0.0, "→ Edit", "hook")]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+    monkeypatch.setattr(tui, "load_labels", lambda **kw: {})
+    monkeypatch.setattr(tui, "get_label", lambda sid, **kw: "")
+
+    saved: list[tuple[str, str]] = []
+    monkeypatch.setattr(tui, "set_label", lambda sid, label, **kw: saved.append((sid, label)))
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("n")  # 開命名浮層
+        await pilot.pause()
+        for ch in "task1":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert saved == [("sess-1", "task1")]
+
+
+@pytest.mark.asyncio
+async def test_name_session_escape_does_not_save(monkeypatch: pytest.MonkeyPatch) -> None:
+    """按 n → Esc 取消，不呼叫 set_label。"""
+    sessions = [Session("sess-1", "/x/maigo", Status.WAITING, 0.0, "→ Edit", "hook")]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+    monkeypatch.setattr(tui, "load_labels", lambda **kw: {})
+    monkeypatch.setattr(tui, "get_label", lambda sid, **kw: "")
+
+    saved: list[tuple[str, str]] = []
+    monkeypatch.setattr(tui, "set_label", lambda sid, label, **kw: saved.append((sid, label)))
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("n")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+
+    assert saved == []
+
+
+@pytest.mark.asyncio
 async def test_focused_highlight_clears_when_no_longer_waiting(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
