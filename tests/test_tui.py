@@ -223,10 +223,32 @@ async def test_label_shown_in_project_cell(monkeypatch: pytest.MonkeyPatch) -> N
     app = tui.RingApp(lang="en")
     async with app.run_test():
         table = app.query_one(DataTable)
-        row = table.get_row_at(0)
-        project_cell = str(row[2])  # 狀態 / 工具 / 專案
-        assert "重構登入" in project_cell
-        assert "maigo" in project_cell
+        row_text = " ".join(str(c) for c in table.get_row_at(0))
+        assert "重構登入" in row_text
+        assert "maigo" in row_text
+
+
+@pytest.mark.asyncio
+async def test_tui_hides_tool_column_when_uniform(monkeypatch: pytest.MonkeyPatch) -> None:
+    """全同一個 provider → 啟動時不加工具欄（6 欄）；混用 → 加（7 欄）。"""
+    uniform = [
+        Session("a", "/x/maigo", Status.WAITING, 0.0, "-", "hook", provider="claude-code"),
+        Session("b", "/y/ring", Status.WORKING, 0.0, "-", "hook", provider="claude-code"),
+    ]
+    monkeypatch.setattr(tui, "board", lambda show_all: uniform)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+    app = tui.RingApp(lang="en")
+    async with app.run_test():
+        assert len(app.query_one(DataTable).columns) == 6  # 無工具欄
+
+    mixed = [
+        Session("a", "/x/maigo", Status.WAITING, 0.0, "-", "hook", provider="claude-code"),
+        Session("b", "/y/ring", Status.WORKING, 0.0, "-", "codex", provider="codex"),
+    ]
+    monkeypatch.setattr(tui, "board", lambda show_all: mixed)
+    app2 = tui.RingApp(lang="en")
+    async with app2.run_test():
+        assert len(app2.query_one(DataTable).columns) == 7  # 有工具欄
 
 
 @pytest.mark.asyncio

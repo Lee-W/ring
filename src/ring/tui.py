@@ -26,6 +26,7 @@ from ring.cli import (
     board,
     labeled_project,
     provider_label,
+    show_tool_column,
     status_label,
 )
 from ring.config import get_config
@@ -100,6 +101,8 @@ class RingApp(App[None]):
         self._interval = interval
         self._show_all = show_all
         self._sessions: list[Session] = []
+        # 工具欄是否顯示（啟動時依首批 session 決定：全同一個 provider 就省掉）。
+        self._show_tool: bool = True
         # 通知點過來時指向的 session：那一列要持續醒目標記，直到它離開 WAITING（你回應了）或不在場。
         self._focused_sid: str | None = None
         cfg = get_config()
@@ -137,8 +140,15 @@ class RingApp(App[None]):
     def on_mount(self) -> None:
         # 寫入 presence，讓 `ring focus` 知道 TUI 在跑。
         write_tui_presence()
+        # 啟動時依首批 session 決定要不要顯示工具欄（columns 在 mount 後固定）。
+        self._sessions = board(self._show_all)
+        self._show_tool = show_tool_column(self._sessions)
         table = self.query_one(DataTable)
-        for label in (_("狀態"), _("工具"), _("專案"), _("進度"), _("閒置"), _("去哪"), _("動作")):
+        cols = [_("狀態")]
+        if self._show_tool:
+            cols.append(_("工具"))
+        cols += [_("專案"), _("進度"), _("閒置"), _("去哪"), _("動作")]
+        for label in cols:
             table.add_column(label)
         table.cursor_type = "row"
         table.focus()  # 讓 ↑/↓ 與 Enter 直接作用在表格上
@@ -257,15 +267,11 @@ class RingApp(App[None]):
             progress = f"{s.todo[0]}/{s.todo[1]}" if s.todo else "·"
             loc_cell = f"📍{_middle_truncate(s.location, _LOC_MAX)}"
             project_cell = labeled_project(s.project, labels.get(s.session_id, ""))
-            table.add_row(
-                status_cell,
-                provider_label(s.provider),
-                project_cell,
-                progress,
-                _rel(s.idle_for),
-                loc_cell,
-                s.last_action,
-            )
+            cells: list[object] = [status_cell]
+            if self._show_tool:
+                cells.append(provider_label(s.provider))
+            cells += [project_cell, progress, _rel(s.idle_for), loc_cell, s.last_action]
+            table.add_row(*cells)
         if self._sessions:
             table.move_cursor(row=min(cursor, len(self._sessions) - 1))
         self._poll_focus_request()

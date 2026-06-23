@@ -5,9 +5,29 @@ from collections.abc import Callable
 import pytest
 from rich.console import Console
 
-from ring.cli import _LOC_MAX, _middle_truncate, _render_plain, _rich_renderable
+from ring.cli import _LOC_MAX, _middle_truncate, _render_plain, _rich_renderable, show_tool_column
 from ring.i18n import set_lang
 from ring.registry import Session, Status
+
+
+def test_show_tool_column_only_when_providers_differ() -> None:
+    same = [
+        Session("a", "/x", Status.WORKING, 0.0, "-", "hook", provider="claude-code"),
+        Session("b", "/y", Status.IDLE, 0.0, "-", "hook", provider="claude-code"),
+    ]
+    mixed = [
+        Session("a", "/x", Status.WORKING, 0.0, "-", "hook", provider="claude-code"),
+        Session("b", "/y", Status.IDLE, 0.0, "-", "codex", provider="codex"),
+    ]
+    assert show_tool_column(same) is False
+    assert show_tool_column(mixed) is True
+
+
+def test_plain_hides_tool_column_when_uniform() -> None:
+    set_lang("zh-Hant")
+    ss = [Session("a", "/x/maigo", Status.WORKING, 0.0, "→ Edit", "hook", provider="claude-code")]
+    assert "工具" not in _render_plain(ss, show_legend=False, show_tool=False)
+    assert "工具" in _render_plain(ss, show_legend=False, show_tool=True)
 
 
 def _sessions() -> list[Session]:

@@ -128,6 +128,11 @@ def labeled_project(project: str, label: str) -> str:
     return f"{project} · {label}" if label else project
 
 
+def show_tool_column(sessions: list[Session]) -> bool:
+    """有混用工具（>1 種 provider）時才需要工具欄；全是同一種就省掉。"""
+    return len({s.provider for s in sessions}) > 1
+
+
 def _header(n: int, pids: int) -> str:
     sess = ngettext("{n} 個 session 在場", "{n} 個 session 在場", n, n=n)
     proc = ngettext("{n} 個 agent process 跑著", "{n} 個 agent process 跑著", pids, n=pids)
@@ -142,7 +147,7 @@ def _rich_legend() -> Text:
     return Text.assemble(*[(p.plain, p.style) for p in parts])
 
 
-def _rich_renderable(sessions: list[Session], show_legend: bool) -> Group:
+def _rich_renderable(sessions: list[Session], show_legend: bool, show_tool: bool = True) -> Group:
     pids = running_agent_pids()
     blocks: list[Any] = [Text(_header(len(sessions), len(pids)), style="bold")]
     if show_legend:
@@ -153,7 +158,8 @@ def _rich_renderable(sessions: list[Session], show_legend: bool) -> Group:
 
     table = Table(box=SIMPLE_HEAD, header_style="bold", pad_edge=False, expand=False)
     table.add_column(_("狀態"), no_wrap=True, min_width=9)
-    table.add_column(_("工具"), no_wrap=True)
+    if show_tool:
+        table.add_column(_("工具"), no_wrap=True)
     table.add_column(_("專案"), style=_COLORS["project"], no_wrap=True)
     table.add_column(_("進度"), justify="right", no_wrap=True)
     table.add_column(_("閒置"), justify="right", no_wrap=True)
@@ -167,16 +173,18 @@ def _rich_renderable(sessions: list[Session], show_legend: bool) -> Group:
         progress = f"{s.todo[0]}/{s.todo[1]}" if s.todo else "·"
         loc_cell = f"📍{_middle_truncate(s.location, _LOC_MAX)}"
         project_cell = labeled_project(s.project, labels.get(s.session_id, ""))
-        table.add_row(
-            status_cell, provider_label(s.provider), project_cell, progress, _rel(s.idle_for), loc_cell, s.last_action
-        )
+        cells: list[Any] = [status_cell]
+        if show_tool:
+            cells.append(provider_label(s.provider))
+        cells += [project_cell, progress, _rel(s.idle_for), loc_cell, s.last_action]
+        table.add_row(*cells)
 
     blocks.append(table)
     return Group(*blocks)
 
 
 # ----------------------------------------------------------------------------- plain fallback
-def _render_plain(sessions: list[Session], show_legend: bool) -> str:
+def _render_plain(sessions: list[Session], show_legend: bool, show_tool: bool = True) -> str:
     pids = running_agent_pids()
     lines = [_header(len(sessions), len(pids))]
     if show_legend:
@@ -205,14 +213,16 @@ def _render_plain(sessions: list[Session], show_legend: bool) -> str:
     w_prog = max(len(c_prog), *(len(r[3]) for r in rows))
     w_ago = max(len(c_idle), 3, *(len(r[4]) for r in rows))
     w_loc = max(len(c_loc), *(len(r[5]) for r in rows))
+    tool_h = f"{c_tool:<{w_tool}}  " if show_tool else ""
     header = (
-        f"     {c_tool:<{w_tool}}  {c_proj:<{w_proj}}  {c_prog:>{w_prog}}  "
+        f"     {tool_h}{c_proj:<{w_proj}}  {c_prog:>{w_prog}}  "
         f"{c_idle:>{w_ago}}    {c_loc:<{w_loc}}  {c_act}"
     )
     lines += ["", header]
     for marker, tool, project, prog, ago, loc, action in rows:
+        tool_c = f"{tool:<{w_tool}}  " if show_tool else ""
         lines.append(
-            f"  {marker} {tool:<{w_tool}}  {project:<{w_proj}}  {prog:>{w_prog}}  "
+            f"  {marker} {tool_c}{project:<{w_proj}}  {prog:>{w_prog}}  "
             f"{ago:>{w_ago}}  📍{loc:<{w_loc}}  {action}"
         )
     return "\n".join(lines)
@@ -220,10 +230,11 @@ def _render_plain(sessions: list[Session], show_legend: bool) -> str:
 
 # ----------------------------------------------------------------------------- entry
 def print_snapshot(sessions: list[Session], show_legend: bool) -> None:
+    show_tool = show_tool_column(sessions)
     if HAVE_RICH:
-        Console().print(_rich_renderable(sessions, show_legend))
+        Console().print(_rich_renderable(sessions, show_legend, show_tool))
     else:
-        print(_render_plain(sessions, show_legend))
+        print(_render_plain(sessions, show_legend, show_tool))
 
 
 def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int:
@@ -246,7 +257,7 @@ def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int
                         print(hint)
                 except Exception:
                     pass
-                print(_render_plain(sessions, show_legend))
+                print(_render_plain(sessions, show_legend, show_tool_column(sessions)))
                 print("\n" + footer_text)
                 sys.stdout.flush()
                 frames += 1
@@ -269,7 +280,7 @@ def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int
                         print(hint)
                 except Exception:
                     pass
-                body = _rich_renderable(sessions, show_legend)
+                body = _rich_renderable(sessions, show_legend, show_tool_column(sessions))
                 live.update(Group(body, Text("\n" + footer_text, style=_MUTED)), refresh=True)
                 frames += 1
                 if count and frames >= count:
