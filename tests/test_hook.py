@@ -6,8 +6,15 @@ from typing import Any
 import pytest
 
 import ring.hook as hook
+from ring.config import Config
 from ring.hook import _is_ring_hook_command, install_hooks, uninstall_hooks
 from ring.registry import Status
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """讓 hook 測試不受機器 config 影響（預設 backend=auto → 不委派 agent-hooks）。"""
+    monkeypatch.setattr("ring.hook.get_config", lambda: Config())
 
 
 def _feed(monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any]) -> None:
@@ -202,6 +209,56 @@ def test_post_tool_use_writes_working(monkeypatch: pytest.MonkeyPatch, tmp_path:
     _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PostToolUse", "tool_name": "Bash", "cwd": "/x"})
     assert hook.run_hook() == 0
     assert json.loads((tmp_path / "s1.json").read_text())["status"] == Status.WORKING.value
+
+
+def test_delegates_to_agent_hooks_when_backend_set(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """notify_backend="agent-hooks" + binary 在 → 透傳 payload 給 agent-hooks，且狀態照樣寫。"""
+    import types
+
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    monkeypatch.setattr("ring.hook.get_config", lambda: Config(notify_backend="agent-hooks"))
+    monkeypatch.setattr("ring.hook.shutil.which", lambda name: "/bin/agent-hooks" if name == "agent-hooks" else None)
+    calls: list[tuple[list[str], str | None]] = []
+
+    def fake_run(cmd: list[str], **kw: object) -> object:
+        calls.append((cmd, kw.get("input")))  # type: ignore[arg-type]
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr("ring.hook.subprocess.run", fake_run)
+    # payload 帶 tty，避免 _session_tty 去呼叫 ps（那也是 subprocess.run）
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/x", "tty": "/dev/ttys1"})
+
+    assert hook.run_hook() == 0
+    assert len(calls) == 1
+    assert calls[0][0][:2] == ["agent-hooks", "callback"]
+    assert "--provider" in calls[0][0]
+    assert calls[0][1] is not None and "PermissionRequest" in calls[0][1]  # 原始 payload 被透傳
+    assert json.loads((tmp_path / "s1.json").read_text())["status"] == Status.WAITING.value  # 狀態照寫
+
+
+def test_no_delegation_when_backend_not_agent_hooks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    monkeypatch.setattr("ring.hook.get_config", lambda: Config(notify_backend="auto"))
+    calls: list[object] = []
+    monkeypatch.setattr("ring.hook.subprocess.run", lambda *a, **k: calls.append((a, k)))
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/x", "tty": "/dev/ttys1"})
+
+    assert hook.run_hook() == 0
+    assert calls == []  # auto → 不委派
+    assert (tmp_path / "s1.json").exists()  # 但狀態照樣寫
+
+
+def test_no_delegation_when_agent_hooks_absent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    monkeypatch.setattr("ring.hook.get_config", lambda: Config(notify_backend="agent-hooks"))
+    monkeypatch.setattr("ring.hook.shutil.which", lambda name: None)  # agent-hooks 沒裝
+    calls: list[object] = []
+    monkeypatch.setattr("ring.hook.subprocess.run", lambda *a, **k: calls.append((a, k)))
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/x", "tty": "/dev/ttys1"})
+
+    assert hook.run_hook() == 0
+    assert calls == []  # binary 不在 → 不委派
+    assert (tmp_path / "s1.json").exists()  # 狀態照樣寫（看板仍可見），你回終端答
 
 
 def test_malformed_stdin_never_raises(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -135,12 +135,19 @@ def _select_notifier(backend: str) -> Notifier | None:
     """依 config 的 notify_backend 選一個可用 notifier。
 
     - ``"none"`` → ``None``，明確關閉通知（RiNG 當純看板用，不發任何 toast）。
+    - ``"agent-hooks"`` → 決策與提醒交給 agent-hooks（由 ``ring hook`` 同步出 modal）。
+      agent-hooks 在 PATH 上時回 ``None``（watch 不重複發 toast）；不在時退回 auto，
+      讓 RiNG 自己通知——所以「沒裝 agent-hooks 也不會兩頭落空」是自動保證的。
     - 指定名稱且該 notifier 可用 → 用它。
     - ``"auto"``（或指定的後端不存在/不可用）→ 取第一個可用的，優先支援點擊跳轉的。
     - 都不可用 → ``None``（不發、不崩）。
     """
     if backend == "none":
         return None
+    if backend == "agent-hooks":
+        if shutil.which("agent-hooks") is not None:
+            return None  # agent-hooks 從 ring hook 那邊出 modal，watch 不重複發
+        backend = "auto"  # 沒裝 → 退回 auto，RiNG 自己通知，不會瞎
     available = [n for n in _NOTIFIERS if n.available()]
     if backend != "auto":
         for n in available:

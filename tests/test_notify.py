@@ -377,6 +377,24 @@ class TestNotifierAbstraction:
         assert notify_waiting([_s("x")]) is None
         assert not clicky.sent and not plain.sent
 
+    def test_agent_hooks_backend_present_sends_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """notify_backend="agent-hooks" 且 agent-hooks 在 → watch 不發（agent-hooks 出 modal）。"""
+        real = _FakeNotifier("real", click=True)
+        monkeypatch.setattr("ring.notify._NOTIFIERS", [real])
+        monkeypatch.setattr("ring.notify.get_config", lambda: Config(notify_backend="agent-hooks"))
+        monkeypatch.setattr("shutil.which", _which_only("agent-hooks"))
+        assert notify_waiting([_s("x")]) is None
+        assert not real.sent
+
+    def test_agent_hooks_backend_absent_falls_back_to_real_notifier(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """notify_backend="agent-hooks" 但 agent-hooks 沒裝 → 退回 auto，RiNG 自己通知（不會瞎）。"""
+        real = _FakeNotifier("real", click=True)
+        monkeypatch.setattr("ring.notify._NOTIFIERS", [real])
+        monkeypatch.setattr("ring.notify.get_config", lambda: Config(notify_backend="agent-hooks"))
+        monkeypatch.setattr("shutil.which", _which_only("real"))  # agent-hooks 不在
+        notify_waiting([_s("x")])
+        assert real.sent  # 退回 auto → 唯一可用的真 notifier
+
     def test_no_available_notifier_sends_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         dead = _FakeNotifier("dead", available=False)
         monkeypatch.setattr("ring.notify._NOTIFIERS", [dead])

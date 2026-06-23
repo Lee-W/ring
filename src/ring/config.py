@@ -11,10 +11,12 @@
     waiting_window_seconds = 1800     # IDLE 升 WAITING 的時間窗上限（預設 30 分）
     notify_sound = true               # 系統通知帶聲音
     notify_sound_name = "Glass"       # macOS / terminal-notifier sound name
-    notify_backend = "auto"           # auto / terminal-notifier / osascript / notify-send / none
+    notify_backend = "auto"           # auto / terminal-notifier / osascript / notify-send / agent-hooks / none
                                       #   terminal-notifier 被 macOS 擋掉時設 "osascript"
                                       #   （看得到通知，但點擊不跳轉）；
-                                      #   "none" = 完全不發通知（RiNG 當純看板，例如搭配 agent-hooks）
+                                      #   "agent-hooks" = 決策+提醒交給 agent-hooks（ring hook 同步出 modal，
+                                      #     沒裝時自動退回 auto 通知）；
+                                      #   "none" = 完全不發通知（RiNG 當純看板）
     notify_repeat_seconds = [30, 120, 300]  # waiting 未解除時，多久後重複提醒
     notify_repeat_max = 3             # 重複提醒上限；0 = 不限
     focusers = ["tmux", "iTerm2", "Terminal"]   # 跳轉嘗試順序；省略＝內建預設

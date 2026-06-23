@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -80,23 +81,39 @@ def _session_tty(process_names: tuple[str, ...]) -> str:
 
 
 def run_hook(provider: str = "claude-code") -> int:
+    """讀一次 stdin → 寫 RiNG registry 狀態（看板）→（可選）把決策委派給 agent-hooks。
+
+    委派只在 ``notify_backend == "agent-hooks"`` 且 PATH 上有 ``agent-hooks`` 時發生：
+    把原始 payload 透傳給 ``agent-hooks callback``，由它同步出 modal、收按鈕、把決策
+    寫到 stdout 回給 Claude。其餘情況 RiNG 只記狀態、exit 0（你在終端自己回答）。
+    """
     try:
-        data = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError, OSError):
+        raw = sys.stdin.read()
+    except OSError:
+        return 0
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
         return 0
     if not isinstance(data, dict):
         return 0
 
     selected_provider = provider_from_payload(data, fallback=provider)
+    _record_session_state(data, selected_provider)
+    return _delegate_to_agent_hooks(raw, selected_provider)
+
+
+def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
+    """把事件正規化後 upsert / 刪除 RiNG registry 檔（看板狀態）。失敗安靜吞，不回傳。"""
     adapter = adapter_for(selected_provider)
     event = adapter.normalize(data)
     if event is None:
-        return 0
+        return
 
     path = RING_REGISTRY / f"{quote(event.session_id, safe=':')}.json"
     if event.status is Status.ENDED:
         path.unlink(missing_ok=True)  # 乾淨離場：直接消失
-        return 0
+        return
 
     last_action, todo = event.last_action or "—", None
     tp = event.transcript_path
@@ -127,7 +144,27 @@ def run_hook(provider: str = "claude-code") -> int:
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload))
     tmp.replace(path)  # atomic
-    return 0
+
+
+def _delegate_to_agent_hooks(raw: str, selected_provider: str) -> int:
+    """notify_backend=="agent-hooks" 且 agent-hooks 在 PATH → 透傳 payload 給它出決策。
+
+    把原始 stdin 餵給 ``agent-hooks callback``，stdout 直接繼承（agent-hooks 把 hook
+    response 寫給 Claude）。回傳 agent-hooks 的 exit code。沒設 / 沒裝 / 失敗 → 回 0，
+    不影響 session。不設內部 timeout：權限對話框會 block 到使用者作答（外層由 Claude
+    的 hook timeout 控）。
+    """
+    if get_config().notify_backend != "agent-hooks":
+        return 0
+    if shutil.which("agent-hooks") is None:
+        return 0
+    cmd = ["agent-hooks", "callback"]
+    if selected_provider in {"claude-code", "codex"}:
+        cmd += ["--provider", selected_provider]
+    try:
+        return subprocess.run(cmd, input=raw, text=True).returncode
+    except Exception:
+        return 0
 
 
 def _is_ring_hook_command(cmd: str) -> bool:
@@ -246,7 +283,8 @@ def install_hooks(dry_run: bool = False) -> int:
         for event in _HOOK_EVENTS:
             groups = list(hooks.get(event) or [])
             cleaned, _changed = _remove_ring_hooks_from_groups(groups)
-            cleaned.append({"hooks": [{"type": "command", "command": cmd, "timeout": 10}]})
+            # timeout 給足：notify_backend="agent-hooks" 時權限 modal 會 block 到使用者作答。
+            cleaned.append({"hooks": [{"type": "command", "command": cmd, "timeout": 600}]})
             hooks[event] = cleaned
         print(f"# dry-run → {settings}\n")
         print(json.dumps({"hooks": {e: hooks[e] for e in _HOOK_EVENTS}}, indent=2, ensure_ascii=False))
@@ -261,7 +299,8 @@ def install_hooks(dry_run: bool = False) -> int:
     for event in events_need_change:
         groups = list(hooks.get(event) or [])
         cleaned, _changed = _remove_ring_hooks_from_groups(groups)
-        cleaned.append({"hooks": [{"type": "command", "command": cmd, "timeout": 10}]})
+        # timeout 給足：notify_backend="agent-hooks" 時權限 modal 會 block 到使用者作答。
+        cleaned.append({"hooks": [{"type": "command", "command": cmd, "timeout": 600}]})
         hooks[event] = cleaned
 
     settings.parent.mkdir(parents=True, exist_ok=True)
