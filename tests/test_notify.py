@@ -2,12 +2,34 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from ring.config import Config
 from ring.notify import notify_waiting
 from ring.registry import Session, Status
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """讓 notify 測試不受機器上 ~/.config/ring/config.toml 影響（預設 backend=auto）。
+
+    需要特定 config 的測試仍可在內部用 ``with patch("ring.notify.get_config", ...)`` 覆寫。
+    """
+    monkeypatch.setattr("ring.notify.get_config", lambda: Config())
+
+
+def _which_only(*available: str) -> Callable[[str], str | None]:
+    """模擬 shutil.which：只有指定的 binary「裝了」，其餘回 None。"""
+    avail = set(available)
+
+    def _w(cmd: str) -> str | None:
+        return f"/usr/bin/{cmd}" if cmd in avail else None
+
+    return _w
 
 
 def _s(sid: str, project_name: str = "proj", cwd: str | None = None) -> Session:
@@ -153,7 +175,7 @@ class TestNotifyWithOsascript:
         """無 terminal-notifier → fallback osascript 路徑。"""
         session = _s("uuid-1", "maigo")
         with (
-            patch("shutil.which", return_value=None),
+            patch("shutil.which", side_effect=_which_only("osascript")),
             patch("ring.notify.osascript") as mock_osa,
             patch("ring.notify._HINT_MARKER") as mock_marker,
         ):
@@ -168,7 +190,7 @@ class TestNotifyWithOsascript:
         """無 terminal-notifier 時，多 session 各自發一則 osascript（不再合併）。"""
         sessions = [_s("uuid-1", "proj1"), _s("uuid-2", "proj2")]
         with (
-            patch("shutil.which", return_value=None),
+            patch("shutil.which", side_effect=_which_only("osascript")),
             patch("ring.notify.osascript") as mock_osa,
             patch("ring.notify._HINT_MARKER") as mock_marker,
         ):
@@ -181,7 +203,7 @@ class TestNotifyWithOsascript:
         """osascript 的 script 包含 project + cwd 末段。"""
         session = _s("uuid-1", "myproject", cwd="/home/user/repos/myproject")
         with (
-            patch("shutil.which", return_value=None),
+            patch("shutil.which", side_effect=_which_only("osascript")),
             patch("ring.notify.osascript") as mock_osa,
             patch("ring.notify._HINT_MARKER") as mock_marker,
         ):
@@ -194,7 +216,7 @@ class TestNotifyWithOsascript:
     def test_osascript_uses_sound_when_enabled(self) -> None:
         session = _s("uuid-1", "maigo")
         with (
-            patch("shutil.which", return_value=None),
+            patch("shutil.which", side_effect=_which_only("osascript")),
             patch("ring.notify.get_config", return_value=Config(notify_sound=True, notify_sound_name="Glass")),
             patch("ring.notify.osascript") as mock_osa,
             patch("ring.notify._HINT_MARKER") as mock_marker,
@@ -210,7 +232,7 @@ class TestNotifyWithOsascript:
         """osascript 拋例外 → 被吞、無例外外漏。"""
         session = _s("uuid-1")
         with (
-            patch("shutil.which", return_value=None),
+            patch("shutil.which", side_effect=_which_only("osascript")),
             patch("ring.notify.osascript", side_effect=Exception("osa error")),
             patch("ring.notify._HINT_MARKER") as mock_marker,
         ):
@@ -275,7 +297,7 @@ class TestNotifyBackend:
         """明確選 osascript → 不回傳「裝 terminal-notifier」的提示。"""
         session = _s("uuid-1", "maigo")
         with (
-            patch("shutil.which", return_value=None),
+            patch("shutil.which", side_effect=_which_only("osascript")),
             patch("ring.notify.get_config", return_value=Config(notify_backend="osascript")),
             patch("ring.notify.osascript", return_value=(0, "", "")),
         ):
@@ -294,6 +316,75 @@ class TestNotifyBackend:
             notify_waiting([session])
         mock_run.assert_called_once()
         mock_osa.assert_not_called()
+
+
+class _FakeNotifier:
+    def __init__(self, name: str, *, available: bool = True, click: bool = False) -> None:
+        self.name = name
+        self._available = available
+        self._click = click
+        self.sent: list[list[Session]] = []
+
+    def available(self) -> bool:
+        return self._available
+
+    def supports_click(self) -> bool:
+        return self._click
+
+    def send(self, sessions: list[Session]) -> None:
+        self.sent.append(list(sessions))
+
+
+class TestNotifierAbstraction:
+    """可插拔 Notifier registry——泛用、不綁特定平台。"""
+
+    def test_auto_prefers_clickable_available(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        plain = _FakeNotifier("plain", click=False)
+        clicky = _FakeNotifier("clicky", click=True)
+        monkeypatch.setattr("ring.notify._NOTIFIERS", [plain, clicky])
+        monkeypatch.setattr("ring.notify.get_config", lambda: Config(notify_backend="auto"))
+        notify_waiting([_s("x")])
+        assert clicky.sent and not plain.sent
+
+    def test_auto_falls_to_non_clickable_when_no_clickable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        plain = _FakeNotifier("plain", click=False)
+        monkeypatch.setattr("ring.notify._NOTIFIERS", [plain])
+        monkeypatch.setattr("ring.notify.get_config", lambda: Config(notify_backend="auto"))
+        notify_waiting([_s("x")])
+        assert plain.sent
+
+    def test_explicit_backend_used(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        plain = _FakeNotifier("plain")
+        clicky = _FakeNotifier("clicky", click=True)
+        monkeypatch.setattr("ring.notify._NOTIFIERS", [plain, clicky])
+        monkeypatch.setattr("ring.notify.get_config", lambda: Config(notify_backend="plain"))
+        notify_waiting([_s("x")])
+        assert plain.sent and not clicky.sent
+
+    def test_unknown_backend_falls_back_to_auto(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        only = _FakeNotifier("only", click=True)
+        monkeypatch.setattr("ring.notify._NOTIFIERS", [only])
+        monkeypatch.setattr("ring.notify.get_config", lambda: Config(notify_backend="does-not-exist"))
+        notify_waiting([_s("x")])
+        assert only.sent  # 認不得的後端 → 退回 auto → 唯一可用
+
+    def test_no_available_notifier_sends_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        dead = _FakeNotifier("dead", available=False)
+        monkeypatch.setattr("ring.notify._NOTIFIERS", [dead])
+        monkeypatch.setattr("ring.notify.get_config", lambda: Config())
+        assert notify_waiting([_s("x")]) is None
+        assert not dead.sent
+
+    def test_register_notifier_extends_registry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from ring.notify import notifiers, register_notifier
+
+        monkeypatch.setattr("ring.notify._NOTIFIERS", [])
+        custom = _FakeNotifier("custom")
+        register_notifier(custom)
+        assert notifiers()[-1] is custom
+        first = _FakeNotifier("first")
+        register_notifier(first, first=True)
+        assert notifiers()[0] is first
 
 
 class TestNotifyEmpty:

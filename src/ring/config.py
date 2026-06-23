@@ -102,8 +102,10 @@ def load(path: Path | None = None) -> Config:
         return Config()
     d = Config()
     lang = raw.get("lang")
+    # 任意非空字串都接受（後端名稱由 notify 層的可插拔 registry 決定）；認不得的名稱
+    # 會在送通知時退回 auto 選法。非字串 / 空字串 → 預設 "auto"。
     nb = raw.get("notify_backend")
-    notify_backend = nb if nb in {"auto", "terminal-notifier", "osascript"} else d.notify_backend
+    notify_backend = nb if isinstance(nb, str) and nb else d.notify_backend
     return Config(
         lang=lang if isinstance(lang, str) else None,
         interval=_as_float(raw.get("interval"), d.interval),

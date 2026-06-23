@@ -38,9 +38,16 @@ def test_notify_backend_parses_valid(tmp_path: Path) -> None:
     assert load(p).notify_backend == "osascript"
 
 
-def test_notify_backend_invalid_falls_back_to_auto(tmp_path: Path) -> None:
+def test_notify_backend_accepts_any_name(tmp_path: Path) -> None:
+    """後端名稱由 notify registry 決定，config 不寫死——任意名稱原樣保留（執行期才退回 auto）。"""
     p = tmp_path / "config.toml"
-    p.write_text('notify_backend = "carrier-pigeon"\n')
+    p.write_text('notify_backend = "notify-send"\n')
+    assert load(p).notify_backend == "notify-send"
+
+
+def test_notify_backend_non_string_falls_back_to_auto(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("notify_backend = 123\n")
     assert load(p).notify_backend == "auto"
 
 
