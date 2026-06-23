@@ -31,9 +31,12 @@ from ring.registry import Session
 _HINT_MARKER: Path = Path.home() / ".config" / "ring" / ".tn-hint-shown"
 
 
-def _cwd_tail(session: Session) -> str:
-    """取 cwd 最後一段（尾目錄），用於通知的區分資訊。"""
-    return Path(session.cwd).name or session.cwd
+def _notify_message(session: Session) -> str:
+    """通知內文——只給重要訊息：去哪（完整路徑或 tmux 座標）。
+
+    標題已經說了「哪個專案在等你」，內文就補「位置」讓你（尤其不能點擊跳轉時）知道去哪。
+    """
+    return f"📍 {session.location}"
 
 
 def _ring_executable() -> str:
@@ -188,8 +191,7 @@ def _notify_with_terminal_notifier(sessions: list[Session]) -> None:
     """每個 session 各發一則 terminal-notifier 通知，帶點擊聚焦回呼。"""
     cfg = get_config()
     for s in sessions:
-        tail = _cwd_tail(s)
-        message = _("{project} · …/{tail}", project=s.project, tail=tail)
+        message = _notify_message(s)
         cmd = [
             "terminal-notifier",
             "-title",
@@ -215,8 +217,7 @@ def _notify_with_osascript(sessions: list[Session]) -> None:
     """用 osascript 逐 session 各發一則純文字通知（fallback，點擊不可聚焦）。"""
     cfg = get_config()
     for s in sessions:
-        tail = _cwd_tail(s)
-        message = _("{project} · …/{tail}", project=s.project, tail=tail)
+        message = _notify_message(s)
         title = _("RiNG · {project} 在等你回話", project=s.project)
         sound = f' sound name "{cfg.notify_sound_name}"' if cfg.notify_sound else ""
         try:
@@ -228,9 +229,8 @@ def _notify_with_osascript(sessions: list[Session]) -> None:
 def _notify_with_notify_send(sessions: list[Session]) -> None:
     """用 libnotify 的 ``notify-send`` 逐 session 各發一則純文字通知（Linux，點擊不可聚焦）。"""
     for s in sessions:
-        tail = _cwd_tail(s)
         title = _("RiNG · {project} 在等你回話", project=s.project)
-        message = _("{project} · …/{tail}", project=s.project, tail=tail)
+        message = _notify_message(s)
         try:
             subprocess.run(["notify-send", title, message], capture_output=True, timeout=10)
         except Exception:

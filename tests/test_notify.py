@@ -127,9 +127,8 @@ class TestNotifyWithTerminalNotifier:
         title_val = args[title_idx + 1]
         assert "myproject" in title_val
 
-    def test_message_contains_project_and_tail(self) -> None:
-        """terminal-notifier 的 -message 包含 project + cwd 末段（兩者各自驗）。"""
-        # cwd 末段（checkout-123）刻意與 project name（myproject）不同，確保兩個 assert 各自獨立。
+    def test_message_shows_location(self) -> None:
+        """terminal-notifier 的 -message 是「去哪」——完整路徑（重要訊息，不再冗長重複專案名）。"""
         session = _s("uuid-1", "myproject", cwd="/home/user/work/checkout-123")
         with (
             patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
@@ -138,10 +137,8 @@ class TestNotifyWithTerminalNotifier:
             mock_run.return_value = MagicMock(returncode=0)
             notify_waiting([session])
         args = mock_run.call_args[0][0]
-        message_idx = args.index("-message")
-        message_val = args[message_idx + 1]
-        assert "myproject" in message_val  # project name
-        assert "checkout-123" in message_val  # tail = cwd 末段
+        message_val = args[args.index("-message") + 1]
+        assert "/home/user/work/checkout-123" in message_val  # 位置：完整路徑
 
     def test_terminal_notifier_uses_sound_when_enabled(self) -> None:
         session = _s("uuid-1", "maigo")
