@@ -368,6 +368,15 @@ class TestNotifierAbstraction:
         notify_waiting([_s("x")])
         assert only.sent  # 認不得的後端 → 退回 auto → 唯一可用
 
+    def test_backend_none_disables_all_notifications(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """notify_backend="none" → 完全不發，即使有可用後端（RiNG 當純看板）。"""
+        clicky = _FakeNotifier("clicky", click=True)
+        plain = _FakeNotifier("plain")
+        monkeypatch.setattr("ring.notify._NOTIFIERS", [clicky, plain])
+        monkeypatch.setattr("ring.notify.get_config", lambda: Config(notify_backend="none"))
+        assert notify_waiting([_s("x")]) is None
+        assert not clicky.sent and not plain.sent
+
     def test_no_available_notifier_sends_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
         dead = _FakeNotifier("dead", available=False)
         monkeypatch.setattr("ring.notify._NOTIFIERS", [dead])

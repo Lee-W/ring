@@ -134,10 +134,13 @@ def notifiers() -> list[Notifier]:
 def _select_notifier(backend: str) -> Notifier | None:
     """依 config 的 notify_backend 選一個可用 notifier。
 
+    - ``"none"`` → ``None``，明確關閉通知（RiNG 當純看板用，不發任何 toast）。
     - 指定名稱且該 notifier 可用 → 用它。
     - ``"auto"``（或指定的後端不存在/不可用）→ 取第一個可用的，優先支援點擊跳轉的。
     - 都不可用 → ``None``（不發、不崩）。
     """
+    if backend == "none":
+        return None
     available = [n for n in _NOTIFIERS if n.available()]
     if backend != "auto":
         for n in available:
