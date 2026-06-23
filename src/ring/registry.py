@@ -24,6 +24,7 @@ import os
 import sqlite3
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -44,6 +45,31 @@ _SUBPROCESS_CACHE_TTL = 1.0  # ps / tmux 結果的短快取，省掉同一次刷
 # Claude Code SessionStart payload 的 source 值（不是 provider）。舊版 bug 曾把它誤當
 # provider 寫進 registry，留下接不住的幽靈列；載入時據此辨識並清掉這種腐壞檔。
 _SESSION_START_SOURCES = {"startup", "resume", "clear", "compact"}
+
+# Provider → 「當下 live process 的 (cwd, tty) 清單」偵測器。core 不認識任何具體工具：
+# 要支援新工具的存活偵測＝註冊一個偵測器，_hook_sessions / sources 零改動。
+# 同義 provider 名先正規化（例如 "claude" → "claude-code"）。
+_PROVIDER_ALIASES: dict[str, str] = {"claude": "claude-code"}
+_PROVIDER_PROCS: dict[str, Callable[[], list[tuple[str, str]]]] = {}
+
+
+def _canonical_provider(provider: str) -> str:
+    """把同義 provider 名收斂成偵測器註冊用的標準鍵。"""
+    return _PROVIDER_ALIASES.get(provider, provider)
+
+
+def register_provider_procs(provider: str, detector: Callable[[], list[tuple[str, str]]]) -> None:
+    """註冊某 provider 的 live-process 偵測器（回傳 ``[(cwd, tty), …]``）。
+
+    有偵測器的 provider 才會在 ``_hook_sessions`` 走 process-based 存活清理；沒註冊的
+    provider 一律 fail-open（不靠 process 判離場，交給該工具自己的 SessionEnd hook）。
+    """
+    _PROVIDER_PROCS[_canonical_provider(provider)] = detector
+
+
+def collect_provider_procs() -> dict[str, list[tuple[str, str]]]:
+    """所有已註冊 provider 的當下 live procs，鍵為標準 provider 名。"""
+    return {provider: detector() for provider, detector in _PROVIDER_PROCS.items()}
 
 
 class Status(StrEnum):
@@ -462,6 +488,11 @@ def _codex_procs() -> list[tuple[str, str]]:
     return procs
 
 
+# 內建 provider 的 live-process 偵測器。外部工具用 register_provider_procs() 加自己的。
+register_provider_procs("claude-code", _claude_procs)
+register_provider_procs("codex", _codex_procs)
+
+
 def _codex_tail_kind(records: list[dict[str, Any]]) -> str:
     """判定 Codex rollout 尾端狀態。
 
@@ -768,20 +799,17 @@ def _hook_sessions(
     #      ——因為 hook 寫進來的 tty 不一定可靠（終端 tty 會被作業系統重配，甚至跨 session
     #      錯置），拿它隱藏唯一活著的 session 會讓整列憑空消失。
     if out:
-
-        def _proc_key(provider: str) -> str:
-            return "claude-code" if provider in {"claude", "claude-code"} else provider
-
         rows_at: dict[tuple[str, str], int] = {}
         for s in out:
-            if s.provider in {"claude", "claude-code", "codex"}:
-                k = (_proc_key(s.provider), _real(s.cwd))
+            pk = _canonical_provider(s.provider)
+            if pk in _PROVIDER_PROCS:
+                k = (pk, _real(s.cwd))
                 rows_at[k] = rows_at.get(k, 0) + 1
 
         for s in out:
-            if s.provider not in {"claude", "claude-code", "codex"}:
-                continue
-            pk = _proc_key(s.provider)
+            pk = _canonical_provider(s.provider)
+            if pk not in _PROVIDER_PROCS:
+                continue  # 沒有 proc 偵測器 → 無法驗活性 → fail-open，交給 SessionEnd
             provider_procs = procs_by_provider.get(pk, []) if procs_by_provider is not None else (procs or [])
             counts: dict[str, int] = {}
             live_ttys: dict[str, set[str]] = {}

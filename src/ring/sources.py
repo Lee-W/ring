@@ -28,12 +28,7 @@ class HookRegistrySource:
     name = "hook"
 
     def discover(self) -> list[Session]:
-        return registry._hook_sessions(
-            procs_by_provider={
-                "claude-code": registry._claude_procs(),
-                "codex": registry._codex_procs(),
-            }
-        )
+        return registry._hook_sessions(procs_by_provider=registry.collect_provider_procs())
 
 
 class ClaudeCodeSource:

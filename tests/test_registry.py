@@ -396,6 +396,33 @@ def test_hook_sessions_purges_session_start_source_phantom(
     assert not (registry_dir / "startup:abc.json").exists(), "腐壞檔應被刪除（自我修復）"
 
 
+def test_hook_sessions_liveness_works_for_any_registered_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """泛用：註冊一個全新 provider 的偵測器後，它的 session 也走 process-based 存活清理。"""
+    import ring.registry as registry
+
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(registry_dir, "g1", "/work/app", "", provider="gemini")
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+    monkeypatch.setitem(registry._PROVIDER_PROCS, "gemini", list)  # 有偵測器、但回空（沒 live proc）
+
+    sessions = _hook_sessions(procs_by_provider={"gemini": []})
+
+    assert sessions[0].status is Status.ENDED, "已註冊 provider 無 live proc → 標離場"
+
+
+def test_hook_sessions_unregistered_provider_fails_open(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """泛用：沒註冊偵測器的 provider → 不靠 process 判離場（fail-open），保留原狀態。"""
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(registry_dir, "x1", "/work/app", "", provider="brand-new-tool")
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+
+    sessions = _hook_sessions(procs_by_provider={"claude-code": [], "codex": []})
+
+    assert sessions[0].status is Status.WAITING, "無偵測器的新 provider 不該被 process 判離場"
+
+
 def test_hook_sessions_cleanup_is_provider_specific(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """同 cwd 有 live Claude，不代表 Codex hook row 還活著。"""
     registry_dir = tmp_path / "sessions"
