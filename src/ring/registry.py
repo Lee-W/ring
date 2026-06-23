@@ -752,18 +752,28 @@ def _hook_sessions(
             )
         except (KeyError, ValueError):
             continue
-    # SessionEnd 沒觸發（crash）會留下幽靈檔。
-    # 先用 tty 精準判斷：同一 cwd 可能還有另一個 live claude，但舊 session 的 tty
-    # 已不存在，不能只因 cwd 還活著就保留舊 hook row。沒有 tty 資訊時才退回 cwd 判斷。
+    # SessionEnd 沒觸發（crash）會留下幽靈檔。判定離場：
+    #   1. 該 cwd 完全沒有 live proc → 一定離場。
+    #   2. 該 cwd 的 hook row 數「多於」live proc 數（真的有多餘列要修剪）時，才用 tty
+    #      挑出 tty 對不上的那幾筆標離場。row 數 <= proc 數時每筆都可能還活著，不靠 tty 殺
+    #      ——因為 hook 寫進來的 tty 不一定可靠（終端 tty 會被作業系統重配，甚至跨 session
+    #      錯置），拿它隱藏唯一活著的 session 會讓整列憑空消失。
     if out:
+
+        def _proc_key(provider: str) -> str:
+            return "claude-code" if provider in {"claude", "claude-code"} else provider
+
+        rows_at: dict[tuple[str, str], int] = {}
+        for s in out:
+            if s.provider in {"claude", "claude-code", "codex"}:
+                k = (_proc_key(s.provider), _real(s.cwd))
+                rows_at[k] = rows_at.get(k, 0) + 1
+
         for s in out:
             if s.provider not in {"claude", "claude-code", "codex"}:
                 continue
-            provider_procs = procs_by_provider.get(s.provider, []) if procs_by_provider is not None else (procs or [])
-            if s.provider == "claude":
-                provider_procs = (
-                    procs_by_provider.get("claude-code", []) if procs_by_provider is not None else provider_procs
-                )
+            pk = _proc_key(s.provider)
+            provider_procs = procs_by_provider.get(pk, []) if procs_by_provider is not None else (procs or [])
             counts: dict[str, int] = {}
             live_ttys: dict[str, set[str]] = {}
             for cwd, tty in provider_procs:
@@ -772,8 +782,14 @@ def _hook_sessions(
                 if tty:
                     live_ttys.setdefault(key, set()).add(tty)
             skey = _real(s.cwd)
-            if counts.get(skey, 0) == 0:
+            live_n = counts.get(skey, 0)
+            if live_n == 0:
                 s.status = Status.ENDED
-            elif s.tty and live_ttys.get(skey) and s.tty not in live_ttys[skey]:
+            elif (
+                rows_at.get((pk, skey), 0) > live_n
+                and s.tty
+                and live_ttys.get(skey)
+                and s.tty not in live_ttys[skey]
+            ):
                 s.status = Status.ENDED
     return out

@@ -362,6 +362,23 @@ def test_hook_sessions_keeps_cwd_fallback_when_live_tty_unknown(
     assert sessions[0].status is Status.WAITING
 
 
+def test_hook_sessions_keeps_lone_live_session_with_wrong_tty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """單一 live session 但 hook 記的 tty 不對（被重配 / 錯置）→ 仍要顯示，不可憑空消失。
+
+    cwd 只有一個 live proc、只有一筆 hook row 時，就算 tty 對不上也不該標離場——
+    hook 的 tty 不可靠，拿它隱藏唯一活著的 session 是這次「session 不見了」的元兇。
+    """
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(registry_dir, "alive", "/work/app", "/dev/ttys003")  # 記了錯的 tty
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+
+    sessions = _hook_sessions([("/work/app", "/dev/ttys006")])  # 實際 live tty 不同
+
+    assert sessions[0].status is Status.WAITING, "唯一活著的 session 不該因 tty 對不上而消失"
+
+
 def test_hook_sessions_cleanup_is_provider_specific(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """同 cwd 有 live Claude，不代表 Codex hook row 還活著。"""
     registry_dir = tmp_path / "sessions"
