@@ -90,8 +90,11 @@ ci.env = { SKIP = "no-commit-to-branch" }
 setup-pre-commit.help = "Install pre-commit hooks"
 setup-pre-commit.cmd = "prek install"
 
-i18n-extract.help = "從原始碼抽出可翻譯字串到 .pot（改字串後重抽，再 merge 進各 .po）"
+i18n-extract.help = "從原始碼抽出可翻譯字串到 .pot（改字串後重抽。不要用 pybabel update：會塞空 msgstr 進 .po，弄壞 i18n 測試。新字串請手動把已翻譯條目加進各 .po）"
 i18n-extract.cmd = "pybabel extract -F babel.cfg -o src/ring/locale/ring.pot src/ring"
+
+i18n-check.help = "列出原始碼有、但某語言 .po 還沒翻譯的字串（純資訊，不失敗）。先跑 i18n-extract"
+i18n-check.cmd = "python scripts/i18n_check.py"
 
 i18n-compile.help = "把各語言的 .po 編成 .mo（改 .po 後要重編並 commit）"
 i18n-compile.cmd = "pybabel compile -d src/ring/locale -D ring"

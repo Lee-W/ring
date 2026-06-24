@@ -138,8 +138,8 @@ msgstr "no focuser handled it (install hooks, or keep one session per project so
 msgid "⚠️ {path} 不是合法 JSON，先處理它再來。"
 msgstr "⚠️ {path} is not valid JSON; fix it first."
 
-msgid "✅ RiNG hooks 已經裝過了，沒有變更。"
-msgstr "✅ RiNG hooks already installed; no change."
+msgid "✅ RiNG hooks 已經裝過了，沒有變更。（{path}）"
+msgstr "✅ RiNG hooks already installed; no change. ({path})"
 
 msgid "✅ 已註冊 RiNG hooks（{events}）到 {path}"
 msgstr "✅ Registered RiNG hooks ({events}) into {path}"
@@ -158,8 +158,8 @@ msgstr "They fire alongside RiNG's notifications; to switch fully to RiNG, remov
 msgid "ℹ️ {path} 不存在，沒有可移除的 hook。"
 msgstr "ℹ️ {path} does not exist; nothing to remove."
 
-msgid "ℹ️ 沒有找到 RiNG hook 條目，無需移除。"
-msgstr "ℹ️ No RiNG hook entries found; nothing to remove."
+msgid "ℹ️ 沒有找到 RiNG hook 條目，無需移除。（{path}）"
+msgstr "ℹ️ No RiNG hook entries found; nothing to remove. ({path})"
 
 msgid "✅ 已移除 RiNG hooks（{events}）從 {path}"
 msgstr "✅ Removed RiNG hooks ({events}) from {path}"
