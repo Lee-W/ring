@@ -47,6 +47,10 @@ _HOOK_EVENTS = list(HOOK_EVENTS)
 # Stop（→ 🟡 回合結束、清掉 waiting）。多裝 Codex 不認的事件有風險，故不照搬 Claude 全套。
 _CODEX_HOOK_EVENTS = ["PreToolUse", "PermissionRequest", "Stop"]
 
+# hook command 的 timeout（秒）。給足，因為 notify_backend="agent-hooks" 時權限 modal 會
+# block 到使用者作答。install 用它判斷「既有條目要不要更新」——舊版裝的 timeout=10 會被升上來。
+_HOOK_TIMEOUT = 600
+
 
 @dataclass(frozen=True)
 class _HookTarget:
@@ -75,7 +79,10 @@ def _hook_targets() -> list[_HookTarget]:
                 home / ".codex" / "hooks.json",
                 _CODEX_HOOK_EVENTS,
                 "ring hook --provider codex",
-                _("重開 Codex session 後，🔴 待回覆狀態就會精準起來。"),
+                _(
+                    "重開 Codex session、並在它詢問時「信任」這個 hook，🔴 待回覆狀態才會精準起來"
+                    "（Codex 不會執行未信任的 hook）。"
+                ),
             )
         )
     return targets
@@ -309,7 +316,14 @@ def _install_target(target: _HookTarget, dry_run: bool) -> int:
     events_need_change: list[str] = []
     for event in target.events:
         groups = list(hooks.get(event) or [])
-        already_exact = any(h.get("command") == cmd for g in groups if isinstance(g, dict) for h in g.get("hooks", []))
+        # 「已正確」＝有條目 cmd 完全相符且 timeout 已是現值。timeout 不同（例如舊版裝的 10）
+        # 也算需要更新，這樣 install-hooks 能自我修復過時的 timeout。
+        already_exact = any(
+            h.get("command") == cmd and h.get("timeout") == _HOOK_TIMEOUT
+            for g in groups
+            if isinstance(g, dict)
+            for h in g.get("hooks", [])
+        )
         has_old_path = any(
             _is_ring_hook_command(h.get("command", "")) and h.get("command") != cmd
             for g in groups
@@ -324,7 +338,7 @@ def _install_target(target: _HookTarget, dry_run: bool) -> int:
             groups = list(hooks.get(event) or [])
             cleaned, _changed = _remove_ring_hooks_from_groups(groups)
             # timeout 給足：notify_backend="agent-hooks" 時權限 modal 會 block 到使用者作答。
-            cleaned.append({"hooks": [{"type": "command", "command": cmd, "timeout": 600}]})
+            cleaned.append({"hooks": [{"type": "command", "command": cmd, "timeout": _HOOK_TIMEOUT}]})
             hooks[event] = cleaned
         print(f"# dry-run → {settings}\n")
         print(json.dumps({"hooks": {e: hooks[e] for e in target.events}}, indent=2, ensure_ascii=False))
@@ -339,7 +353,7 @@ def _install_target(target: _HookTarget, dry_run: bool) -> int:
         groups = list(hooks.get(event) or [])
         cleaned, _changed = _remove_ring_hooks_from_groups(groups)
         # timeout 給足：notify_backend="agent-hooks" 時權限 modal 會 block 到使用者作答。
-        cleaned.append({"hooks": [{"type": "command", "command": cmd, "timeout": 600}]})
+        cleaned.append({"hooks": [{"type": "command", "command": cmd, "timeout": _HOOK_TIMEOUT}]})
         hooks[event] = cleaned
 
     settings.parent.mkdir(parents=True, exist_ok=True)

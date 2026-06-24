@@ -21,9 +21,11 @@ def _feed(monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any]) -> None:
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
 
 
-def _settings_with_ring_hook(settings: Path, cmd: str = "ring hook") -> None:
+def _settings_with_ring_hook(settings: Path, cmd: str = "ring hook", timeout: int = hook._HOOK_TIMEOUT) -> None:
     """寫一個已有 ring hook 的 settings.json 到 settings 路徑。"""
-    data = {"hooks": {e: [{"hooks": [{"type": "command", "command": cmd, "timeout": 10}]}] for e in hook._HOOK_EVENTS}}
+    data = {
+        "hooks": {e: [{"hooks": [{"type": "command", "command": cmd, "timeout": timeout}]}] for e in hook._HOOK_EVENTS}
+    }
     settings.write_text(json.dumps(data, indent=2))
 
 
@@ -356,6 +358,24 @@ def test_install_hooks_already_installed(
     assert rc == 0
     assert settings.stat().st_mtime == mtime_before, "不應寫檔"
     assert "已經裝過" in capsys.readouterr().out
+
+
+def test_install_hooks_upgrades_stale_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """舊版裝的 timeout=10 條目 → 再裝會自我修復成現值（command 相同也要更新）。"""
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    _settings_with_ring_hook(settings, timeout=10)
+    monkeypatch.setattr("ring.hook.Path.home", lambda: tmp_path)
+
+    rc = install_hooks()
+    assert rc == 0
+    data = json.loads(settings.read_text())
+    for event in hook._HOOK_EVENTS:
+        timeouts = [h.get("timeout") for g in data["hooks"][event] for h in g.get("hooks", [])]
+        assert timeouts == [hook._HOOK_TIMEOUT], f"event {event} 的 timeout 應升到 {hook._HOOK_TIMEOUT}"
+    assert "已註冊" in capsys.readouterr().out
 
 
 def test_install_hooks_warns_on_coresident_handler(
