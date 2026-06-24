@@ -22,6 +22,7 @@ from ring.registry import (
     _synthetic_sessions,
     _tail_records,
     _tool_summary,
+    running_claude_pids,
 )
 
 
@@ -93,6 +94,32 @@ def test_tail_records_reads_last_valid_json(tmp_path: Path) -> None:
     records = _tail_records(p)
     assert records[-1] == {"b": 2}
     assert {"a": 1} in records
+
+
+def test_running_claude_pids_ignores_daemon_and_bg_pty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Claude daemon / bg-pty host 不該算成 RiNG 可聚焦的 live session。"""
+
+    class Result:
+        stdout = "\n".join(
+            [
+                "  PID COMM ARGS",
+                (
+                    " 101 /Users/me/.local/bin/claude "
+                    "/Users/me/.local/bin/claude daemon run --origin transient"
+                ),
+                (
+                    " 102 claude "
+                    "claude --bg-pty-host /tmp/cc-daemon/pty/s.sock 72 35 -- "
+                    "/Users/me/.local/share/claude/versions/2.1.187 --session-id abc"
+                ),
+                " 103 claude claude --plugin-dir /work/app",
+            ]
+        )
+
+    monkeypatch.setattr("ring.registry._pids_cache", (-1.0, []))
+    monkeypatch.setattr("ring.registry.subprocess.run", lambda *args, **kwargs: Result())
+
+    assert running_claude_pids() == [103]
 
 
 # ---------------------------------------------------------------------------

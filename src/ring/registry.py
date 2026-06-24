@@ -377,19 +377,30 @@ def running_claude_pids() -> list[int]:
     if 0.0 <= now - _pids_cache[0] <= _SUBPROCESS_CACHE_TTL:
         return _pids_cache[1]
     try:
-        out = subprocess.run(["ps", "-Ao", "pid,comm"], capture_output=True, text=True, timeout=3).stdout
+        out = subprocess.run(["ps", "-Ao", "pid,comm,args"], capture_output=True, text=True, timeout=3).stdout
     except (OSError, subprocess.SubprocessError):
         out = ""
     pids: list[int] = []
     for line in out.splitlines()[1:]:
-        parts = line.split(None, 1)
-        if len(parts) == 2 and os.path.basename(parts[1].strip()) == "claude":
+        parts = line.split(None, 2)
+        if len(parts) >= 2 and os.path.basename(parts[1].strip()) == "claude":
+            args = parts[2] if len(parts) == 3 else ""
+            if _is_claude_background_process(args):
+                continue
             try:
                 pids.append(int(parts[0]))
             except ValueError:
                 pass
     _pids_cache = (now, pids)
     return pids
+
+
+def _is_claude_background_process(args: str) -> bool:
+    """Claude daemon / bg pty host 不是使用者可聚焦的 CLI session。"""
+    tokens = args.split()
+    if len(tokens) >= 3 and tokens[1:3] == ["daemon", "run"]:
+        return True
+    return "--bg-pty-host" in tokens
 
 
 def running_codex_pids() -> list[int]:
