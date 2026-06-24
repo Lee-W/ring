@@ -440,6 +440,69 @@ def test_install_hooks_invalid_json(
 
 
 # ---------------------------------------------------------------------------
+# install_hooks — Codex target
+# ---------------------------------------------------------------------------
+
+
+def test_install_hooks_includes_codex_when_codex_dir_exists(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """~/.codex 存在 → 也把 `ring hook --provider codex` 裝進 ~/.codex/hooks.json。"""
+    (tmp_path / ".codex").mkdir()
+    monkeypatch.setattr("ring.hook.Path.home", lambda: tmp_path)
+
+    assert install_hooks() == 0
+    codex = json.loads((tmp_path / ".codex" / "hooks.json").read_text())
+    for event in hook._CODEX_HOOK_EVENTS:
+        cmds = [h["command"] for g in codex["hooks"][event] for h in g.get("hooks", [])]
+        assert "ring hook --provider codex" in cmds, f"codex event {event} 應有 ring hook --provider codex"
+    # Claude 也照裝（同一次 install）
+    claude = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    claude_cmds = [h["command"] for g in claude["hooks"]["PermissionRequest"] for h in g.get("hooks", [])]
+    assert "ring hook" in claude_cmds
+
+
+def test_install_hooks_skips_codex_when_no_codex_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """沒有 ~/.codex（沒在用 Codex）→ 不建立 ~/.codex/hooks.json。"""
+    monkeypatch.setattr("ring.hook.Path.home", lambda: tmp_path)
+    install_hooks()
+    assert not (tmp_path / ".codex" / "hooks.json").exists()
+
+
+def test_install_hooks_codex_preserves_other_hooks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Codex hooks.json 裡別人的條目（agent-hooks）保留，ring 條目合併進去。"""
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir()
+    existing = {
+        "hooks": {
+            "PermissionRequest": [{"hooks": [{"type": "command", "command": "agent-hooks callback --provider codex"}]}]
+        }
+    }
+    (codex_dir / "hooks.json").write_text(json.dumps(existing))
+    monkeypatch.setattr("ring.hook.Path.home", lambda: tmp_path)
+
+    install_hooks()
+    codex = json.loads((codex_dir / "hooks.json").read_text())
+    cmds = [h["command"] for g in codex["hooks"]["PermissionRequest"] for h in g.get("hooks", [])]
+    assert "agent-hooks callback --provider codex" in cmds  # 他人保留
+    assert "ring hook --provider codex" in cmds  # ring 加入
+
+
+def test_uninstall_hooks_removes_from_codex(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """uninstall 也清掉 Codex 的 ring hook 條目。"""
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir()
+    entry = [{"hooks": [{"type": "command", "command": "ring hook --provider codex"}]}]
+    data = {"hooks": {e: entry for e in hook._CODEX_HOOK_EVENTS}}
+    (codex_dir / "hooks.json").write_text(json.dumps(data))
+    monkeypatch.setattr("ring.hook.Path.home", lambda: tmp_path)
+
+    uninstall_hooks()
+    codex = json.loads((codex_dir / "hooks.json").read_text())
+    for event in hook._CODEX_HOOK_EVENTS:
+        cmds = [h.get("command") for g in codex["hooks"].get(event, []) for h in g.get("hooks", [])]
+        assert "ring hook --provider codex" not in cmds
+
+
+# ---------------------------------------------------------------------------
 # uninstall_hooks
 # ---------------------------------------------------------------------------
 

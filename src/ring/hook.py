@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -40,6 +41,44 @@ from ring.registry import (
 )
 
 _HOOK_EVENTS = list(HOOK_EVENTS)
+
+# Codex 的 hooks.json 用跟 Claude 同樣的 PascalCase 事件名，但只支援其中一小撮。
+# 保守取有實證可用的：PermissionRequest（→ 🔴 等核可）、PreToolUse（→ 動作/清除）、
+# Stop（→ 🟡 回合結束、清掉 waiting）。多裝 Codex 不認的事件有風險，故不照搬 Claude 全套。
+_CODEX_HOOK_EVENTS = ["PreToolUse", "PermissionRequest", "Stop"]
+
+
+@dataclass(frozen=True)
+class _HookTarget:
+    """一個 hook 安裝目標：settings 檔、要裝的事件、command、重啟提示。"""
+
+    path: Path
+    events: list[str]
+    command: str
+    restart_hint: str
+
+
+def _hook_targets() -> list[_HookTarget]:
+    """目前適用的安裝目標。Claude 一律裝；Codex 只在 ``~/.codex`` 存在（有在用）時才裝。"""
+    home = Path.home()
+    targets = [
+        _HookTarget(
+            home / ".claude" / "settings.json",
+            _HOOK_EVENTS,
+            "ring hook",
+            _("重開 Claude Code session 後，🔴 待回覆狀態就會精準起來。"),
+        )
+    ]
+    if (home / ".codex").is_dir():
+        targets.append(
+            _HookTarget(
+                home / ".codex" / "hooks.json",
+                _CODEX_HOOK_EVENTS,
+                "ring hook --provider codex",
+                _("重開 Codex session 後，🔴 待回覆狀態就會精準起來。"),
+            )
+        )
+    return targets
 
 
 def _ps_row(pid: int) -> tuple[int, str] | None:
@@ -183,10 +222,6 @@ def _is_ring_hook_command(cmd: str) -> bool:
     return os.path.basename(tokens[0]) == "ring" and tokens[1] == "hook"
 
 
-def _ring_command() -> str:
-    return "ring hook"
-
-
 # install-hooks 會就「使用者互動」事件警告：別的工具若也掛在這上面（彈自己的對話框 /
 # 通知），會跟 RiNG 的通知重複觸發。其餘事件（PostToolUse 掛 formatter 之類）是正常
 # 共存，不警告。
@@ -247,9 +282,19 @@ def _remove_ring_hooks_from_groups(groups: list[Any]) -> tuple[list[Any], bool]:
 
 
 def install_hooks(dry_run: bool = False) -> int:
-    """把 RiNG 的 hook 註冊進 ~/.claude/settings.json（合併，不覆蓋既有 hooks）。"""
+    """把 RiNG 的 hook 註冊進 Claude（~/.claude/settings.json）與 Codex（~/.codex/hooks.json，
+    僅在 ~/.codex 存在時）。合併，不覆蓋既有 hooks。任一目標失敗回非 0。"""
     set_lang(get_config().lang)
-    settings = Path.home() / ".claude" / "settings.json"
+    rc = 0
+    for target in _hook_targets():
+        rc |= _install_target(target, dry_run)
+    return rc
+
+
+def _install_target(target: _HookTarget, dry_run: bool) -> int:
+    """把 RiNG hook 合併進單一 target 的 settings 檔。"""
+    settings = target.path
+    cmd = target.command
     data: dict[str, Any] = {}
     if settings.exists():
         try:
@@ -258,15 +303,11 @@ def install_hooks(dry_run: bool = False) -> int:
             print(_("⚠️ {path} 不是合法 JSON，先處理它再來。", path=settings))
             return 1
 
-    cmd = _ring_command()
     hooks = data.setdefault("hooks", {})
 
-    # 第一輪：掃描各 event，判斷是否有任何 event 需要變更
-    # - already_exact：該 event 下已有完全正確的 "ring hook"（無需動）
-    # - has_old：該 event 下有舊 full-path 形式的 ring hook（需替換）
-    # - has_none：該 event 下沒有任何 ring hook（需新增）
+    # 第一輪：掃描各 event，判斷是否需要變更（已有完全正確 cmd 且無舊 full-path 形式 → 不動）。
     events_need_change: list[str] = []
-    for event in _HOOK_EVENTS:
+    for event in target.events:
         groups = list(hooks.get(event) or [])
         already_exact = any(h.get("command") == cmd for g in groups if isinstance(g, dict) for h in g.get("hooks", []))
         has_old_path = any(
@@ -279,23 +320,21 @@ def install_hooks(dry_run: bool = False) -> int:
             events_need_change.append(event)
 
     if dry_run:
-        # dry_run：先套用變更到 hooks（不寫檔）再顯示
-        for event in _HOOK_EVENTS:
+        for event in target.events:
             groups = list(hooks.get(event) or [])
             cleaned, _changed = _remove_ring_hooks_from_groups(groups)
             # timeout 給足：notify_backend="agent-hooks" 時權限 modal 會 block 到使用者作答。
             cleaned.append({"hooks": [{"type": "command", "command": cmd, "timeout": 600}]})
             hooks[event] = cleaned
         print(f"# dry-run → {settings}\n")
-        print(json.dumps({"hooks": {e: hooks[e] for e in _HOOK_EVENTS}}, indent=2, ensure_ascii=False))
+        print(json.dumps({"hooks": {e: hooks[e] for e in target.events}}, indent=2, ensure_ascii=False))
         return 0
 
     if not events_need_change:
-        print(_("✅ RiNG hooks 已經裝過了，沒有變更。"))
+        print(_("✅ RiNG hooks 已經裝過了，沒有變更。（{path}）", path=settings))
         _print_conflict_warning(hooks)
         return 0
 
-    # 第二輪：只對需要變更的 event 操作
     for event in events_need_change:
         groups = list(hooks.get(event) or [])
         cleaned, _changed = _remove_ring_hooks_from_groups(groups)
@@ -306,15 +345,23 @@ def install_hooks(dry_run: bool = False) -> int:
     settings.parent.mkdir(parents=True, exist_ok=True)
     settings.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
     print(_("✅ 已註冊 RiNG hooks（{events}）到 {path}", events=", ".join(events_need_change), path=settings))
-    print("   " + _("重開 Claude Code session 後，🔴 待回覆狀態就會精準起來。"))
+    print("   " + target.restart_hint)
     _print_conflict_warning(hooks)
     return 0
 
 
 def uninstall_hooks(dry_run: bool = False) -> int:
-    """從 ~/.claude/settings.json 移除所有 RiNG hook 條目（對稱於 install_hooks）。"""
+    """從 Claude 與 Codex（若有）的 settings 移除所有 RiNG hook 條目（對稱於 install_hooks）。"""
     set_lang(get_config().lang)
-    settings = Path.home() / ".claude" / "settings.json"
+    rc = 0
+    for target in _hook_targets():
+        rc |= _uninstall_target(target, dry_run)
+    return rc
+
+
+def _uninstall_target(target: _HookTarget, dry_run: bool) -> int:
+    """從單一 target 的 settings 檔移除 RiNG hook 條目。"""
+    settings = target.path
     if not settings.exists():
         print(_("ℹ️ {path} 不存在，沒有可移除的 hook。", path=settings))
         return 0
@@ -327,7 +374,7 @@ def uninstall_hooks(dry_run: bool = False) -> int:
 
     hooks = data.get("hooks", {})
     removed: list[str] = []
-    for event in _HOOK_EVENTS:
+    for event in target.events:
         groups = hooks.get(event)
         if not isinstance(groups, list):
             continue
@@ -338,12 +385,12 @@ def uninstall_hooks(dry_run: bool = False) -> int:
 
     if dry_run:
         print(f"# dry-run → {settings}\n")
-        preview_hooks = {e: hooks.get(e, []) for e in _HOOK_EVENTS}
+        preview_hooks = {e: hooks.get(e, []) for e in target.events}
         print(json.dumps({"hooks": preview_hooks}, indent=2, ensure_ascii=False))
         return 0
 
     if not removed:
-        print(_("ℹ️ 沒有找到 RiNG hook 條目，無需移除。"))
+        print(_("ℹ️ 沒有找到 RiNG hook 條目，無需移除。（{path}）", path=settings))
         return 0
 
     settings.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
