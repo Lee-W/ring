@@ -54,9 +54,12 @@ class Config:
     waiting_window_seconds: int = 1800  # IDLE 升 WAITING 的時間窗上限（預設 30 分）
     notify_sound: bool = True
     notify_sound_name: str = "Glass"
-    # 通知後端：auto = 有 terminal-notifier 就用它（可點擊跳轉），否則 osascript。
-    # 想強制純文字 osascript（terminal-notifier 被 macOS 權限擋掉時）→ 設 "osascript"。
-    notify_backend: str = "auto"  # "auto" | "terminal-notifier" | "osascript"
+    # 通知後端（完整說明見模組 docstring）：
+    #   auto = 第一個可用後端（優先支援點擊跳轉的 terminal-notifier）；
+    #   terminal-notifier / osascript / notify-send = 強制指定該後端；
+    #   agent-hooks = 決策+提醒交給 agent-hooks（沒裝時自動退回 auto）；
+    #   none = 完全不發通知（RiNG 當純看板）。
+    notify_backend: str = "auto"
     notify_repeat_seconds: tuple[int, ...] = (30, 120, 300)
     notify_repeat_max: int = 3  # 0 = 不限
     focusers: tuple[str, ...] = ()  # 空＝用內建預設順序
