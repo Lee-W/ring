@@ -2,7 +2,8 @@
 
 需要 textual（``pip install 'ring[tui]'``）。沒裝時 CLI 會自動退回 Rich poll。
 
-鍵：↑/↓ 選 session、Enter/Space 跳到它所在的終端、a 切換是否顯示已離場、r 刷新、q 離場。
+鍵：↑/↓（或 vim 的 j/k、g/G 跳頭尾）選 session、Enter/Space 跳到它所在的終端、
+a 切換是否顯示已離場、r 刷新、q 離場。
 """
 
 from __future__ import annotations
@@ -40,6 +41,22 @@ from ring.registry import Session, Status, running_agent_pids
 from ring.watcher import WaitingAlertScheduler
 
 _ORDER = (Status.WAITING, Status.WORKING, Status.IDLE, Status.ENDED)
+
+
+class _Grid(DataTable[Text]):
+    """看板表格。在 DataTable 既有的方向鍵之外，加上 vim 風的 j/k/g/G 導覽。
+
+    全部 ``show=False``——footer 保持乾淨，這些只是給手習慣 vim 的人的隱藏快捷。
+    對應 DataTable 既有 action：j/k=cursor_down/up、g/G=scroll_top/bottom（cursor_type
+    為 row 時，這兩個會把游標移到第一／最後一列，正是 vim 的語意）。
+    """
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("j", "cursor_down", show=False),
+        Binding("k", "cursor_up", show=False),
+        Binding("g", "scroll_top", show=False),
+        Binding("G", "scroll_bottom", show=False),
+    ]
 
 
 class _NameModal(ModalScreen[str | None]):
@@ -133,7 +150,7 @@ class RingApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield Static(id="legend")
-        yield DataTable(id="grid", zebra_stripes=True)
+        yield _Grid(id="grid", zebra_stripes=True)
         yield Static(id="status")
         yield Footer()
 

@@ -33,6 +33,30 @@ async def test_tui_mounts_and_lists_sessions(monkeypatch: pytest.MonkeyPatch) ->
 
 
 @pytest.mark.asyncio
+async def test_vim_keys_move_row_cursor(monkeypatch: pytest.MonkeyPatch) -> None:
+    sessions = [
+        Session("a", "/x/maigo", Status.WAITING, 0.0, "→ Edit", "scan"),
+        Session("b", "/y/blog", Status.WORKING, 0.0, "hi", "scan"),
+        Session("c", "/z/ring", Status.IDLE, 0.0, "hi", "scan"),
+    ]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1, 2, 3])
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        table = app.query_one(DataTable)
+        assert table.cursor_row == 0
+        await pilot.press("j")  # 下移
+        assert table.cursor_row == 1
+        await pilot.press("k")  # 上移
+        assert table.cursor_row == 0
+        await pilot.press("G")  # 跳到最後一列
+        assert table.cursor_row == 2
+        await pilot.press("g")  # 跳回第一列
+        assert table.cursor_row == 0
+
+
+@pytest.mark.asyncio
 async def test_tui_jump_without_tmux_target_does_not_crash(monkeypatch: pytest.MonkeyPatch) -> None:
     sessions = [Session("a", "/x/maigo", Status.WAITING, 0.0, "→ Edit", "scan")]  # tmux_target=None
     monkeypatch.setattr(tui, "board", lambda show_all: sessions)
