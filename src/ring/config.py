@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -136,3 +137,136 @@ def load(path: Path | None = None) -> Config:
 def get_config() -> Config:
     """整個 process 共用的設定（讀一次）。要繞過快取自訂就直接呼叫 load(path)。"""
     return load()
+
+
+# --------------------------------------------------------------------------- 寫入（ring config set）
+
+
+class ConfigError(ValueError):
+    """``ring config set/get`` 的使用者層級錯誤（未知鍵 / 值轉型失敗）。訊息直接給使用者看。"""
+
+
+def _coerce_bool(s: str) -> bool:
+    low = s.strip().lower()
+    if low in {"true", "1", "yes", "on"}:
+        return True
+    if low in {"false", "0", "no", "off"}:
+        return False
+    raise ConfigError(f"'{s}' 不是布林值（用 true / false）")
+
+
+def _coerce_int(s: str) -> int:
+    try:
+        return int(s.strip())
+    except ValueError:
+        raise ConfigError(f"'{s}' 不是整數") from None
+
+
+def _coerce_float(s: str) -> float:
+    try:
+        return float(s.strip())
+    except ValueError:
+        raise ConfigError(f"'{s}' 不是數字") from None
+
+
+def _coerce_int_list(s: str) -> list[int]:
+    return [_coerce_int(part) for part in s.split(",") if part.strip()]
+
+
+def _coerce_str_list(s: str) -> list[str]:
+    return [part.strip() for part in s.split(",") if part.strip()]
+
+
+# 可由 ``ring config set`` 寫入的純量 / 清單鍵 → 把 CLI 傳來的字串轉成對應型別。
+# colors 是巢狀 table，用 ``colors.<name>`` 點記法另外處理（見 set_value）。
+_SETTERS: dict[str, Callable[[str], object]] = {
+    "lang": str,
+    "interval": _coerce_float,
+    "show_all": _coerce_bool,
+    "legend": _coerce_bool,
+    "active_window_seconds": _coerce_int,
+    "working_threshold_seconds": _coerce_int,
+    "waiting_window_seconds": _coerce_int,
+    "notify_sound": _coerce_bool,
+    "notify_sound_name": str,
+    "notify_backend": str,
+    "notify_repeat_seconds": _coerce_int_list,
+    "notify_repeat_max": _coerce_int,
+    "focusers": _coerce_str_list,
+}
+
+
+def settable_keys() -> list[str]:
+    """``ring config set`` 接受的鍵（colors 子鍵用 colors.<name>，不在此列）。"""
+    return list(_SETTERS)
+
+
+def _toml_repr(value: object) -> str:
+    """把一個 Python 值序列化成 TOML 字面值（只涵蓋本設定會用到的型別）。"""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, str):
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+        return f'"{escaped}"'
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_toml_repr(v) for v in value) + "]"
+    raise ConfigError(f"無法序列化 {type(value).__name__} 值")
+
+
+def dump_toml(data: dict[str, object]) -> str:
+    """把設定 dict 寫成 TOML 文字。純量 / 清單在前，巢狀 table（如 [colors]）殿後。
+
+    刻意樸素：不保留註解（``ring config set`` 重寫整檔），但所有鍵值都會保留。
+    """
+    lines = [f"{k} = {_toml_repr(v)}" for k, v in data.items() if not isinstance(v, dict)]
+    for k, v in data.items():
+        if isinstance(v, dict):
+            lines.append(f"\n[{k}]")
+            lines += [f"{sub} = {_toml_repr(val)}" for sub, val in v.items()]
+    return "\n".join(lines) + "\n"
+
+
+def _read_raw(path: Path) -> dict[str, object]:
+    try:
+        return dict(tomllib.loads(path.read_text()))
+    except FileNotFoundError:
+        return {}
+    except OSError as e:
+        raise ConfigError(f"讀不到 {path}：{e}") from None
+    except tomllib.TOMLDecodeError as e:
+        raise ConfigError(f"{path} 不是合法 TOML：{e}") from None
+
+
+def set_value(key: str, raw_value: str, path: Path | None = None) -> object:
+    """把 ``key = raw_value`` 寫進設定檔，回傳轉型後的值。
+
+    ``colors.<name>`` 點記法寫進 [colors] table（字串值）。其餘鍵須在 ``_SETTERS`` 內，
+    依型別轉換。未知鍵 / 轉型失敗丟 ``ConfigError``（訊息給使用者）。重寫整檔（不保留註解）。
+    """
+    p = path or CONFIG_PATH
+    data = _read_raw(p)
+
+    if "." in key:
+        table, sub = key.split(".", 1)
+        if table != "colors" or not sub:
+            raise ConfigError(f"未知的鍵：{key}")
+        colors = data.get("colors")
+        colors = dict(colors) if isinstance(colors, dict) else {}
+        colors[sub] = raw_value
+        data["colors"] = colors
+        coerced: object = raw_value
+    else:
+        setter = _SETTERS.get(key)
+        if setter is None:
+            raise ConfigError(f"未知的鍵：{key}（可設：{', '.join(_SETTERS)}）")
+        coerced = setter(raw_value)
+        data[key] = coerced
+
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(dump_toml(data))
+    get_config.cache_clear()  # 同 process 內讓下次 get_config() 讀到新值
+    return coerced

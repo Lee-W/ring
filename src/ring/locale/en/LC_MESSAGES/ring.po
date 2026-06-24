@@ -180,3 +180,43 @@ msgstr "→ jumped to {project} (from notification)"
 
 msgid "那個 session 已不在場"
 msgstr "that session is no longer on stage"
+
+# ── config subcommand ──
+msgid "RiNG 設定檔"
+msgstr "RiNG config file"
+
+msgid "路徑"
+msgstr "path"
+
+msgid "已存在"
+msgstr "exists"
+
+msgid "不存在（全部用內建預設）"
+msgstr "missing (using built-in defaults)"
+
+msgid "目前生效的設定（← = 你覆寫過的）"
+msgstr "Effective settings (← = overridden by you)"
+
+msgid "（內建預設）"
+msgstr "(built-in default)"
+
+msgid "用 `ring config set KEY VALUE` 改，或直接編輯上面那個檔；完整選項見 src/ring/config.py 的 docstring。"
+msgstr "Change with `ring config set KEY VALUE`, or edit the file above; see the docstring in src/ring/config.py for all options."
+
+msgid "未知的鍵：{key}"
+msgstr "unknown key: {key}"
+
+msgid "用法：ring config get KEY"
+msgstr "usage: ring config get KEY"
+
+msgid "用法：ring config set KEY VALUE"
+msgstr "usage: ring config set KEY VALUE"
+
+msgid "✅ 已設定 {key} = {value}（{path}）"
+msgstr "✅ Set {key} = {value} ({path})"
+
+msgid "註：set 會重寫整個設定檔，原有註解不會保留。"
+msgstr "Note: set rewrites the whole config file; existing comments are not preserved."
+
+msgid "未知的 config 動作：{action}（用 get / set，或不帶參數看目前設定）"
+msgstr "unknown config action: {action} (use get / set, or no args to view current settings)"

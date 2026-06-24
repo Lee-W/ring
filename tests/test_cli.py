@@ -55,8 +55,69 @@ def test_help_lists_hidden_commands(capsys: pytest.CaptureFixture[str]) -> None:
     out = capsys.readouterr().out
     assert "install-hooks" in out
     assert "remove-hooks" in out
+    assert "config" in out
     assert "hook --provider" in out
     assert "focus SESSION_ID" in out
+
+
+def test_config_shows_path_and_settings(capsys: pytest.CaptureFixture[str]) -> None:
+    """ring config 印出設定檔路徑與目前生效的設定欄位。"""
+    rc = cli.main(["config", "--lang", "en"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert str(cli.CONFIG_PATH) in out
+    assert "notify_backend" in out  # dataclass 欄位都列出來
+    assert "Effective settings" in out
+
+
+def test_config_marks_overridden_values(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """跟內建預設不同的值要標 ←，預設值不標。"""
+    monkeypatch.setattr(cli, "get_config", lambda: cli.Config(notify_backend="agent-hooks"))
+    cli.main(["config", "--lang", "en"])
+    lines = capsys.readouterr().out.splitlines()
+    backend_line = next(line for line in lines if "notify_backend" in line)
+    interval_line = next(line for line in lines if "interval" in line)
+    assert "←" in backend_line  # 覆寫過
+    assert "←" not in interval_line  # 維持預設
+
+
+def test_config_help_does_not_run(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch.object(cli, "print_config") as mock_cfg:
+        rc = cli.main(["config", "--help"])
+    assert rc == 0
+    mock_cfg.assert_not_called()
+    assert "usage: ring config" in capsys.readouterr().out
+
+
+def test_config_get_prints_value(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr(cli, "get_config", lambda: cli.Config(notify_backend="agent-hooks"))
+    rc = cli.main(["config", "get", "notify_backend"])
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == "agent-hooks"
+
+
+def test_config_get_unknown_key_errors(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = cli.main(["config", "get", "bogus"])
+    assert rc == 1
+    assert "bogus" in capsys.readouterr().err
+
+
+def test_config_set_routes_to_set_value(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch.object(cli, "set_value", return_value="agent-hooks") as mock_set:
+        rc = cli.main(["config", "set", "notify_backend", "agent-hooks"])
+    assert rc == 0
+    mock_set.assert_called_once_with("notify_backend", "agent-hooks")
+    assert "notify_backend" in capsys.readouterr().out
+
+
+def test_config_set_wrong_arity_errors() -> None:
+    assert cli.main(["config", "set", "notify_backend"]) == 2
+
+
+def test_config_unknown_action_errors() -> None:
+    assert cli.main(["config", "frobnicate"]) == 2
 
 
 def test_install_hooks_help_does_not_install(capsys: pytest.CaptureFixture[str]) -> None:

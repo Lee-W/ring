@@ -16,7 +16,7 @@ from importlib.util import find_spec
 from typing import Any
 
 from ring import __version__
-from ring.config import get_config
+from ring.config import CONFIG_PATH, Config, ConfigError, get_config, set_value
 from ring.i18n import gettext as _
 from ring.i18n import ngettext, set_lang
 from ring.labels import load_labels
@@ -237,6 +237,114 @@ def print_snapshot(sessions: list[Session], show_legend: bool) -> None:
         print(_render_plain(sessions, show_legend, show_tool))
 
 
+def _format_config_value(value: object) -> str:
+    """把一個設定值轉成單行可讀字串（None → —、空 tuple → 內建預設、dict → k=v 串）。"""
+    if value is None:
+        return "—"
+    if isinstance(value, tuple):
+        return "[" + ", ".join(str(v) for v in value) + "]" if value else _("（內建預設）")
+    if isinstance(value, dict):
+        return ", ".join(f"{k}={v}" for k, v in value.items())
+    return str(value)
+
+
+def print_config() -> None:
+    """印出設定檔位置與目前生效的所有設定（覆寫過的標 ←）。
+
+    欄位直接從 ``Config`` dataclass 列舉，所以新增設定不必再動這裡。值跟內建預設
+    不同的會標一個箭頭，讓你一眼看出「我改過哪些」。
+    """
+    from dataclasses import fields
+
+    cfg = get_config()
+    defaults = Config()
+    exists = CONFIG_PATH.exists()
+
+    print(_("RiNG 設定檔"))
+    print(f"  {_('路徑')}：{CONFIG_PATH}")
+    print(f"  {_('狀態')}：{_('已存在') if exists else _('不存在（全部用內建預設）')}")
+    print()
+    print(_("目前生效的設定（← = 你覆寫過的）"))
+    width = max(len(f.name) for f in fields(cfg))
+    for f in fields(cfg):
+        value = getattr(cfg, f.name)
+        overridden = value != getattr(defaults, f.name)
+        mark = "  ←" if overridden else ""
+        print(f"  {f.name:<{width}}  {_format_config_value(value)}{mark}")
+    print()
+    hint = _("用 `ring config set KEY VALUE` 改，或直接編輯上面那個檔；完整選項見 src/ring/config.py 的 docstring。")
+    print("  " + hint)
+
+
+def _config_get_value(key: str) -> object:
+    """讀單一設定的目前生效值（支援 colors.<name> 點記法）。未知鍵丟 ConfigError。"""
+    from dataclasses import fields
+
+    cfg = get_config()
+    if "." in key:
+        table, sub = key.split(".", 1)
+        if table == "colors" and sub in cfg.colors:
+            return cfg.colors[sub]
+        raise ConfigError(_("未知的鍵：{key}", key=key))
+    if key in {f.name for f in fields(cfg)}:
+        return getattr(cfg, key)
+    raise ConfigError(_("未知的鍵：{key}", key=key))
+
+
+def _strip_lang(args: list[str]) -> list[str]:
+    """濾掉全域 ``--lang`` 旗標（已在 main 先 peek 過），只留 config 自己的位置參數。"""
+    out: list[str] = []
+    skip = False
+    for i, a in enumerate(args):
+        if skip:
+            skip = False
+            continue
+        if a == "--lang":
+            skip = i + 1 < len(args)  # 連同它的值一起跳過
+            continue
+        if a.startswith("--lang="):
+            continue
+        out.append(a)
+    return out
+
+
+def run_config(args: list[str]) -> int:
+    """``ring config`` 進入點：無參數→列表；``get KEY``→讀；``set KEY VALUE``→寫。"""
+    args = _strip_lang(args)
+    if not args:
+        print_config()
+        return 0
+
+    action, rest = args[0], args[1:]
+    if action == "get":
+        if len(rest) != 1:
+            print(_("用法：ring config get KEY"), file=sys.stderr)
+            return 2
+        try:
+            print(_format_config_value(_config_get_value(rest[0])))
+        except ConfigError as e:
+            print(f"⚠️ {e}", file=sys.stderr)
+            return 1
+        return 0
+
+    if action == "set":
+        if len(rest) != 2:
+            print(_("用法：ring config set KEY VALUE"), file=sys.stderr)
+            return 2
+        key, value = rest
+        try:
+            coerced = set_value(key, value)
+        except ConfigError as e:
+            print(f"⚠️ {e}", file=sys.stderr)
+            return 1
+        print(_("✅ 已設定 {key} = {value}（{path}）", key=key, value=_format_config_value(coerced), path=CONFIG_PATH))
+        print("   " + _("註：set 會重寫整個設定檔，原有註解不會保留。"))
+        return 0
+
+    print(_("未知的 config 動作：{action}（用 get / set，或不帶參數看目前設定）", action=action), file=sys.stderr)
+    return 2
+
+
 def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int:
     from ring.notify import notify_waiting
     from ring.watcher import WaitingAlertScheduler
@@ -308,6 +416,9 @@ commands:
   hook --provider PROVIDER     同上，明確指定 provider（例如 codex）
   install-hooks [--dry-run]    安裝 Claude Code hooks
   remove-hooks [--dry-run]     移除 Claude Code hooks
+  config                       顯示設定檔位置與目前生效的設定
+  config get KEY               讀單一設定的目前值
+  config set KEY VALUE         寫入單一設定（會重寫設定檔，不保留註解）
   focus SESSION_ID             聚焦指定 session；TUI 在跑時會回到 RiNG 並選中該列
 """
     )
@@ -333,6 +444,14 @@ def _subcommand_help(name: str) -> str:
 從 ~/.claude/settings.json 移除 RiNG 安裝的 Claude Code hooks。
 """
         ),
+        "config": _(
+            """usage: ring config [get KEY | set KEY VALUE]
+
+不帶參數：顯示設定檔位置（~/.config/ring/config.toml）與目前生效的所有設定。
+  get KEY        印出單一設定的目前值（colors 子鍵用 colors.<name>）。
+  set KEY VALUE  寫入單一設定。注意：會重寫整個設定檔，原有註解不會保留。
+"""
+        ),
         "focus": _(
             """usage: ring focus SESSION_ID
 
@@ -348,7 +467,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg = get_config()
     set_lang(_peek_lang(raw) or cfg.lang)  # 在 import ring.tui 前設好，Footer 按鍵說明也跟著語言
 
-    if raw and raw[0] in {"hook", "install-hooks", "remove-hooks", "focus"} and any(
+    if raw and raw[0] in {"hook", "install-hooks", "remove-hooks", "config", "focus"} and any(
         arg in {"-h", "--help"} for arg in raw[1:]
     ):
         print(_subcommand_help(raw[0]), end="")
@@ -375,6 +494,8 @@ def main(argv: list[str] | None = None) -> int:
         from ring.hook import uninstall_hooks
 
         return uninstall_hooks(dry_run="--dry-run" in raw)
+    if raw and raw[0] == "config":
+        return run_config(raw[1:])
     if raw and raw[0] == "focus" and len(raw) >= 2:
         from ring.focus import jump as focus_jump
         from ring.ipc import read_tui_presence, write_focus_request
