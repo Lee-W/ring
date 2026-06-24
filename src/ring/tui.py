@@ -154,12 +154,11 @@ class RingApp(App[None]):
         yield Static(id="status")
         yield Footer()
 
-    def on_mount(self) -> None:
-        # 寫入 presence，讓 `ring focus` 知道 TUI 在跑。
-        write_tui_presence()
-        # 啟動時依首批 session 決定要不要顯示工具欄（columns 在 mount 後固定）。
-        self._sessions = board(self._show_all)
-        self._show_tool = show_tool_column(self._sessions)
+    def _setup_columns(self) -> None:
+        """依 self._show_tool 重建 DataTable 欄位。
+
+        呼叫前須先完成 clear(columns=True)（或首次 mount 還沒有欄位）。
+        """
         table = self.query_one(DataTable)
         cols = [_("狀態")]
         if self._show_tool:
@@ -167,6 +166,15 @@ class RingApp(App[None]):
         cols += [_("專案"), _("進度"), _("閒置"), _("去哪"), _("動作")]
         for label in cols:
             table.add_column(label)
+
+    def on_mount(self) -> None:
+        # 寫入 presence，讓 `ring focus` 知道 TUI 在跑。
+        write_tui_presence()
+        # 啟動時依首批 session 決定要不要顯示工具欄。
+        self._sessions = board(self._show_all)
+        self._show_tool = show_tool_column(self._sessions)
+        table = self.query_one(DataTable)
+        self._setup_columns()
         table.cursor_type = "row"
         table.focus()  # 讓 ↑/↓ 與 Enter 直接作用在表格上
         self._render_legend()
@@ -258,6 +266,15 @@ class RingApp(App[None]):
         # 退回去跳 session 自己的終端（scan 模式常沒 tty → 跳轉失敗）。
         write_tui_presence()
         self._sessions = board(self._show_all)
+        table = self.query_one(DataTable)
+        # cursor 快照要在「任何」clear 之前取：clear(columns=True) 會把 cursor_row reset 成 0。
+        cursor = table.cursor_row
+        # 動態更新工具欄：名單變了（混用 ↔ 全同一種），重建欄位；沒變就省掉欄位重建。
+        new_show_tool = show_tool_column(self._sessions)
+        if new_show_tool != self._show_tool:
+            self._show_tool = new_show_tool
+            table.clear(columns=True)  # columns=True 同時清欄位與資料列
+            self._setup_columns()
         # 通知指向的 session 一旦離開 WAITING（你回應了）或不在場，就解除醒目標記。
         if self._focused_sid is not None:
             cur = next((s for s in self._sessions if s.session_id == self._focused_sid), None)
@@ -273,8 +290,6 @@ class RingApp(App[None]):
             pass
         self.sub_title = _header(len(self._sessions), len(running_agent_pids()))
         labels = load_labels()
-        table = self.query_one(DataTable)
-        cursor = table.cursor_row
         table.clear()
         for s in self._sessions:
             focused = s.session_id == self._focused_sid

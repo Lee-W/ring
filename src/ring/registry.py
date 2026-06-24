@@ -799,34 +799,41 @@ def _hook_sessions(
     #      ——因為 hook 寫進來的 tty 不一定可靠（終端 tty 會被作業系統重配，甚至跨 session
     #      錯置），拿它隱藏唯一活著的 session 會讓整列憑空消失。
     if out:
-        rows_at: dict[tuple[str, str], int] = {}
-        for s in out:
-            pk = _canonical_provider(s.provider)
-            if pk in _PROVIDER_PROCS:
-                k = (pk, _real(s.cwd))
-                rows_at[k] = rows_at.get(k, 0) + 1
+        proc_counts: dict[tuple[str, str], int] = {}
+        proc_ttys: dict[tuple[str, str], set[str]] = {}
+        for pk in _PROVIDER_PROCS:
+            provider_procs = procs_by_provider.get(pk, []) if procs_by_provider is not None else (procs or [])
+            for cwd, tty in provider_procs:
+                key = (pk, _real(cwd))
+                proc_counts[key] = proc_counts.get(key, 0) + 1
+                if tty:
+                    proc_ttys.setdefault(key, set()).add(tty)
 
+        rows_by_key: dict[tuple[str, str], list[Session]] = {}
         for s in out:
             pk = _canonical_provider(s.provider)
             if pk not in _PROVIDER_PROCS:
                 continue  # 沒有 proc 偵測器 → 無法驗活性 → fail-open，交給 SessionEnd
-            provider_procs = procs_by_provider.get(pk, []) if procs_by_provider is not None else (procs or [])
-            counts: dict[str, int] = {}
-            live_ttys: dict[str, set[str]] = {}
-            for cwd, tty in provider_procs:
-                key = _real(cwd)
-                counts[key] = counts.get(key, 0) + 1
-                if tty:
-                    live_ttys.setdefault(key, set()).add(tty)
-            skey = _real(s.cwd)
-            live_n = counts.get(skey, 0)
+            rows_by_key.setdefault((pk, _real(s.cwd)), []).append(s)
+
+        for key, rows in rows_by_key.items():
+            live_n = proc_counts.get(key, 0)
             if live_n == 0:
-                s.status = Status.ENDED
-            elif (
-                rows_at.get((pk, skey), 0) > live_n
-                and s.tty
-                and live_ttys.get(skey)
-                and s.tty not in live_ttys[skey]
-            ):
-                s.status = Status.ENDED
+                for s in rows:
+                    s.status = Status.ENDED
+                continue
+            if len(rows) <= live_n:
+                continue
+
+            live_ttys = proc_ttys.get(key, set())
+            if live_ttys:
+                for s in rows:
+                    if s.tty and s.tty not in live_ttys:
+                        s.status = Status.ENDED
+
+            remaining = [s for s in rows if s.status is not Status.ENDED]
+            if len(remaining) > live_n:
+                remaining.sort(key=lambda s: s.last_active, reverse=True)
+                for s in remaining[live_n:]:
+                    s.status = Status.ENDED
     return out

@@ -283,6 +283,86 @@ async def test_tui_hides_tool_column_when_uniform(monkeypatch: pytest.MonkeyPatc
 
 
 @pytest.mark.asyncio
+async def test_tool_column_disappears_after_reload_to_uniform(monkeypatch: pytest.MonkeyPatch) -> None:
+    """刷新後 provider 從混用（7 欄）變單一（6 欄），工具欄動態消失。"""
+    state: dict[str, list[Session]] = {
+        "sessions": [
+            Session("a", "/x/maigo", Status.WAITING, 0.0, "-", "hook", provider="claude-code"),
+            Session("b", "/y/ring", Status.WORKING, 0.0, "-", "codex", provider="codex"),
+        ]
+    }
+    monkeypatch.setattr(tui, "board", lambda show_all: state["sessions"])
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test():
+        table = app.query_one(DataTable)
+        assert len(table.columns) == 7  # 混用 → 工具欄存在
+
+        # 模擬刷新後全改成同一個 provider
+        state["sessions"] = [
+            Session("a", "/x/maigo", Status.WAITING, 0.0, "-", "hook", provider="claude-code"),
+            Session("b", "/y/ring", Status.WORKING, 0.0, "-", "hook", provider="claude-code"),
+        ]
+        app._reload()
+        assert len(table.columns) == 6  # 工具欄消失
+
+
+@pytest.mark.asyncio
+async def test_tool_column_appears_after_reload_to_mixed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """刷新後 provider 從單一（6 欄）變混用（7 欄），工具欄動態出現。"""
+    state: dict[str, list[Session]] = {
+        "sessions": [
+            Session("a", "/x/maigo", Status.WAITING, 0.0, "-", "hook", provider="claude-code"),
+            Session("b", "/y/ring", Status.WORKING, 0.0, "-", "hook", provider="claude-code"),
+        ]
+    }
+    monkeypatch.setattr(tui, "board", lambda show_all: state["sessions"])
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test():
+        table = app.query_one(DataTable)
+        assert len(table.columns) == 6  # 全同一種 → 無工具欄
+
+        # 模擬刷新後混入第二種 provider
+        state["sessions"] = [
+            Session("a", "/x/maigo", Status.WAITING, 0.0, "-", "hook", provider="claude-code"),
+            Session("b", "/y/ring", Status.WORKING, 0.0, "-", "codex", provider="codex"),
+        ]
+        app._reload()
+        assert len(table.columns) == 7  # 工具欄出現
+
+
+@pytest.mark.asyncio
+async def test_cursor_preserved_across_column_switch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """欄位切換（混用→單一）時，游標停在原本選的列，不被 clear(columns=True) reset 成 0。"""
+    state: dict[str, list[Session]] = {
+        "sessions": [
+            Session("a", "/x/maigo", Status.WAITING, 0.0, "-", "hook", provider="claude-code"),
+            Session("b", "/y/ring", Status.WORKING, 0.0, "-", "codex", provider="codex"),
+            Session("c", "/z/app", Status.IDLE, 0.0, "-", "codex", provider="codex"),
+        ]
+    }
+    monkeypatch.setattr(tui, "board", lambda show_all: state["sessions"])
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test():
+        table = app.query_one(DataTable)
+        table.move_cursor(row=2)  # 使用者選到第 3 列
+
+        # 刷新後全改成同一個 provider → 觸發欄位切換（7→6 欄）
+        state["sessions"] = [
+            Session("a", "/x/maigo", Status.WAITING, 0.0, "-", "hook", provider="claude-code"),
+            Session("b", "/y/ring", Status.WORKING, 0.0, "-", "hook", provider="claude-code"),
+            Session("c", "/z/app", Status.IDLE, 0.0, "-", "hook", provider="claude-code"),
+        ]
+        app._reload()
+        assert table.cursor_row == 2  # 游標還在第 3 列，沒被 reset
+
+
+@pytest.mark.asyncio
 async def test_name_session_saves_label(monkeypatch: pytest.MonkeyPatch) -> None:
     """按 n → 輸入 → Enter，會以 (session_id, 輸入值) 呼叫 set_label。"""
     sessions = [Session("sess-1", "/x/maigo", Status.WAITING, 0.0, "→ Edit", "hook")]

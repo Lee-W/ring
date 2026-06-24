@@ -292,7 +292,14 @@ def test_synthetic_sessions_count(procs: list[tuple[str, str]], n_existing_cwds:
 # ---------------------------------------------------------------------------
 
 
-def _write_hook_session(registry_dir: Path, sid: str, cwd: str, tty: str, provider: str = "claude-code") -> None:
+def _write_hook_session(
+    registry_dir: Path,
+    sid: str,
+    cwd: str,
+    tty: str,
+    provider: str = "claude-code",
+    last_active: float = 123.0,
+) -> None:
     registry_dir.mkdir(parents=True, exist_ok=True)
     (registry_dir / f"{sid}.json").write_text(
         json.dumps(
@@ -301,7 +308,7 @@ def _write_hook_session(registry_dir: Path, sid: str, cwd: str, tty: str, provid
                 "provider": provider,
                 "cwd": cwd,
                 "status": "waiting",
-                "last_active": 123.0,
+                "last_active": last_active,
                 "last_action": "—",
                 "tty": tty,
             }
@@ -377,6 +384,43 @@ def test_hook_sessions_keeps_lone_live_session_with_wrong_tty(
     sessions = _hook_sessions([("/work/app", "/dev/ttys006")])  # 實際 live tty 不同
 
     assert sessions[0].status is Status.WAITING, "唯一活著的 session 不該因 tty 對不上而消失"
+
+
+def test_hook_sessions_caps_same_cwd_same_tty_rows_to_live_process_count(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """同一終端分頁連開多個 Codex session 時，舊 row 會共用 tty；只保留最新 live_n 筆。"""
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(
+        registry_dir,
+        "codex:old",
+        "/work/app",
+        "/dev/ttys004",
+        provider="codex",
+        last_active=100.0,
+    )
+    _write_hook_session(
+        registry_dir,
+        "codex:new",
+        "/work/app",
+        "/dev/ttys004",
+        provider="codex",
+        last_active=200.0,
+    )
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+
+    by_id = {
+        s.session_id: s
+        for s in _hook_sessions(
+            procs_by_provider={
+                "claude-code": [],
+                "codex": [("/work/app", "/dev/ttys004")],
+            }
+        )
+    }
+
+    assert by_id["codex:old"].status is Status.ENDED
+    assert by_id["codex:new"].status is Status.WAITING
 
 
 def test_hook_sessions_purges_session_start_source_phantom(
