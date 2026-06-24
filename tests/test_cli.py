@@ -58,6 +58,7 @@ def test_help_lists_hidden_commands(capsys: pytest.CaptureFixture[str]) -> None:
     assert "config" in out
     assert "hook --provider" in out
     assert "focus SESSION_ID" in out
+    assert "doctor" in out
 
 
 def test_config_shows_path_and_settings(capsys: pytest.CaptureFixture[str]) -> None:
@@ -273,3 +274,327 @@ def test_focus_silent_when_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
         rc = cli.main(["focus", "nonexistent-uuid"])
     assert rc == 0
     assert jump_called == [], "查不到時不應呼叫 jump"
+
+
+# ---------------------------------------------------------------------------
+# doctor 子命令
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_source(name: str, sessions: list[Session] | Exception) -> object:
+    """製作 fake SessionSource（discover 回固定 list 或拋例外）。"""
+
+    class FakeSource:
+        def __init__(self, n: str, result: list[Session] | Exception) -> None:
+            self.name = n
+            self._result = result
+
+        def discover(self) -> list[Session]:
+            if isinstance(self._result, Exception):
+                raise self._result
+            return self._result
+
+    return FakeSource(name, sessions)
+
+
+def _make_fake_notifier(name: str, available: bool, supports_click: bool = False) -> object:
+    """製作 fake Notifier（available 固定值）。"""
+    import types
+
+    nt = types.SimpleNamespace(
+        name=name,
+        available=lambda: available,
+        supports_click=lambda: supports_click,
+        send=lambda sessions: None,
+    )
+    return nt
+
+
+def _make_fake_focuser(name: str) -> object:
+    """製作 fake Focuser（name 固定值，try_focus 返回 None）。"""
+    import types
+
+    return types.SimpleNamespace(
+        name=name,
+        try_focus=lambda session: None,
+    )
+
+
+def _make_fake_hook_status(
+    claude_installed: bool = True, codex_applicable: bool = False, codex_installed: bool = False
+) -> list[object]:
+    from ring.hook import HookStatus
+
+    home = Path.home()
+    return [
+        HookStatus(
+            provider="claude-code",
+            path=home / ".claude" / "settings.json",
+            applicable=True,
+            installed=claude_installed,
+            exists=claude_installed,
+        ),
+        HookStatus(
+            provider="codex",
+            path=home / ".codex" / "hooks.json",
+            applicable=codex_applicable,
+            installed=codex_installed,
+            exists=codex_installed,
+        ),
+    ]
+
+
+def test_doctor_returns_zero_and_shows_sections(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ring doctor 回 0；五節標題都在輸出。"""
+    fake_src = _make_fake_source("hook", [])
+    monkeypatch.setattr("ring.sources._SOURCES", [fake_src])
+
+    fake_nt = _make_fake_notifier("terminal-notifier", True, True)
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [fake_nt])
+
+    fake_focuser = _make_fake_focuser("tmux")
+    monkeypatch.setattr("ring.focus._FOCUSERS", [fake_focuser])
+
+    monkeypatch.setattr("ring.hook.hook_status", lambda: _make_fake_hook_status(), raising=False)
+
+    with monkeypatch.context() as m:
+        m.setattr("shutil.which", lambda name: "/usr/bin/tmux" if name == "tmux" else None)
+        rc = cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    # 五節標題（繁體中文 msgid）
+    assert "RiNG 環境診斷" in out
+    assert "Session 來源" in out
+    assert "Hook 安裝" in out
+    assert "通知後端" in out
+    assert "聚焦終端" in out
+    assert "設定檔" in out
+
+
+def test_doctor_counts_sessions_per_source(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """fake source discover 回 3 個 Session → output 含 3。"""
+    fake_sessions = [Session(f"s{i}", "/x", Status.IDLE, 0.0, "—", "hook") for i in range(3)]
+    fake_src = _make_fake_source("hook", fake_sessions)
+    monkeypatch.setattr("ring.sources._SOURCES", [fake_src])
+
+    fake_nt = _make_fake_notifier("terminal-notifier", True, True)
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [fake_nt])
+
+    fake_focuser = _make_fake_focuser("tmux")
+    monkeypatch.setattr("ring.focus._FOCUSERS", [fake_focuser])
+
+    monkeypatch.setattr("ring.hook.hook_status", lambda: _make_fake_hook_status(), raising=False)
+
+    with monkeypatch.context() as m:
+        m.setattr("shutil.which", lambda name: None)
+        rc = cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "3" in out
+
+
+def test_doctor_source_failure_is_isolated(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """一個 source discover 拋例外 → rc 仍 0、該 source 標偵測失敗、其他 source 照常。"""
+    ok_src = _make_fake_source("claude-code", [Session("s1", "/x", Status.IDLE, 0.0, "—", "hook")])
+    bad_src = _make_fake_source("codex", RuntimeError("sqlite gone"))
+    monkeypatch.setattr("ring.sources._SOURCES", [ok_src, bad_src])
+
+    fake_nt = _make_fake_notifier("terminal-notifier", True, True)
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [fake_nt])
+
+    fake_focuser = _make_fake_focuser("tmux")
+    monkeypatch.setattr("ring.focus._FOCUSERS", [fake_focuser])
+
+    monkeypatch.setattr("ring.hook.hook_status", lambda: _make_fake_hook_status(), raising=False)
+
+    with monkeypatch.context() as m:
+        m.setattr("shutil.which", lambda name: None)
+        rc = cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "codex" in out
+    assert "偵測失敗" in out
+    assert "claude-code" in out
+    assert "1" in out  # claude-code 有 1 個 session
+
+
+def test_doctor_reports_hook_status(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """hook_status 回三種狀態 → output 正確對應三種文案。"""
+    fake_src = _make_fake_source("hook", [])
+    monkeypatch.setattr("ring.sources._SOURCES", [fake_src])
+
+    fake_nt = _make_fake_notifier("terminal-notifier", True, True)
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [fake_nt])
+
+    fake_focuser = _make_fake_focuser("tmux")
+    monkeypatch.setattr("ring.focus._FOCUSERS", [fake_focuser])
+
+    # 狀態：claude 已安裝、codex 未用
+    monkeypatch.setattr(
+        "ring.hook.hook_status",
+        lambda: _make_fake_hook_status(claude_installed=True, codex_applicable=False),
+        raising=False,
+    )
+
+    with monkeypatch.context() as m:
+        m.setattr("shutil.which", lambda name: None)
+        rc = cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "已安裝" in out
+    assert "未使用 Codex" in out
+
+    # 狀態：claude 未安裝、codex 有用但未裝 hook
+    monkeypatch.setattr(
+        "ring.hook.hook_status",
+        lambda: _make_fake_hook_status(claude_installed=False, codex_applicable=True, codex_installed=False),
+        raising=False,
+    )
+
+    with monkeypatch.context() as m:
+        m.setattr("shutil.which", lambda name: None)
+        rc2 = cli.main(["doctor"])
+
+    out2 = capsys.readouterr().out
+    assert rc2 == 0
+    assert "未安裝" in out2
+    assert "ring install-hooks" in out2
+
+
+def test_doctor_selected_notify_backend(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """auto 模式：有可用 notifier → output 含 auto 實際選中；backend=none → 不發通知。"""
+    fake_src = _make_fake_source("hook", [])
+    monkeypatch.setattr("ring.sources._SOURCES", [fake_src])
+
+    fake_focuser = _make_fake_focuser("tmux")
+    monkeypatch.setattr("ring.focus._FOCUSERS", [fake_focuser])
+
+    monkeypatch.setattr("ring.hook.hook_status", lambda: _make_fake_hook_status(), raising=False)
+
+    # backend=auto，terminal-notifier 可用 → 選中 terminal-notifier
+    tn = _make_fake_notifier("terminal-notifier", True, True)
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [tn])
+    monkeypatch.setattr(cli, "get_config", lambda: cli.Config(notify_backend="auto"))
+
+    with monkeypatch.context() as m:
+        m.setattr("shutil.which", lambda name: None)
+        cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    # 同一行確認選中正確後端
+    assert "auto 實際選中：terminal-notifier" in out
+
+    # backend=none → 不發通知（附原因 backend=none）
+    monkeypatch.setattr(cli, "get_config", lambda: cli.Config(notify_backend="none"))
+    with monkeypatch.context() as m:
+        m.setattr("shutil.which", lambda name: None)
+        cli.main(["doctor"])
+
+    out2 = capsys.readouterr().out
+    assert "auto 實際選中：不發通知（backend=none）" in out2
+
+
+def test_doctor_focuser_availability(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """tmux/iTerm2/Terminal 各自可用/不可用狀態正確反映。"""
+    fake_src = _make_fake_source("hook", [])
+    monkeypatch.setattr("ring.sources._SOURCES", [fake_src])
+
+    fake_nt = _make_fake_notifier("terminal-notifier", True, True)
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [fake_nt])
+
+    monkeypatch.setattr("ring.hook.hook_status", lambda: _make_fake_hook_status(), raising=False)
+
+    tmux_f = _make_fake_focuser("tmux")
+    iterm_f = _make_fake_focuser("iTerm2")
+    terminal_f = _make_fake_focuser("Terminal")
+    monkeypatch.setattr("ring.focus._FOCUSERS", [tmux_f, iterm_f, terminal_f])
+
+    # tmux 在、osascript 在、iTerm2 跑著、Terminal 沒跑
+    def fake_which(name: str) -> str | None:
+        return "/usr/bin/tmux" if name == "tmux" else ("/usr/bin/osascript" if name == "osascript" else None)
+
+    def fake_osascript(script: str) -> tuple[int, str, str]:
+        if "iTerm2" in script:
+            return 0, "true", ""
+        return 0, "false", ""
+
+    with (
+        patch("ring.focus.base.osascript", fake_osascript),
+        patch("shutil.which", fake_which),
+    ):
+        rc = cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert rc == 0
+
+    # 逐行精確斷言：tmux 可用、iTerm2 可用、Terminal 不可用
+    lines = out.splitlines()
+    tmux_line = next(line for line in lines if "tmux" in line and "iTerm2" not in line)
+    iterm_line = next(line for line in lines if "iTerm2" in line)
+    terminal_line = next(line for line in lines if "Terminal" in line and "iTerm2" not in line)
+    assert "可用" in tmux_line and "不可用" not in tmux_line
+    assert "可用" in iterm_line and "不可用" not in iterm_line
+    assert "不可用" in terminal_line
+
+
+def test_doctor_help_does_not_run(capsys: pytest.CaptureFixture[str]) -> None:
+    """ring doctor --help → rc=0，印 usage，不呼叫診斷主體。"""
+    with patch.object(cli, "run_doctor") as mock_doctor:
+        rc = cli.main(["doctor", "--help"])
+    assert rc == 0
+    mock_doctor.assert_not_called()
+    out = capsys.readouterr().out
+    assert "usage: ring doctor" in out
+
+
+def test_doctor_is_read_only(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """doctor 全程不呼叫任何寫入入口（install_hooks / notify_waiting / focus.jump）。"""
+    fake_src = _make_fake_source("hook", [])
+    monkeypatch.setattr("ring.sources._SOURCES", [fake_src])
+
+    fake_nt = _make_fake_notifier("terminal-notifier", True, True)
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [fake_nt])
+
+    fake_focuser = _make_fake_focuser("tmux")
+    monkeypatch.setattr("ring.focus._FOCUSERS", [fake_focuser])
+
+    monkeypatch.setattr("ring.hook.hook_status", lambda: _make_fake_hook_status(), raising=False)
+
+    with (
+        patch("ring.hook.install_hooks") as mock_install,
+        patch("ring.hook.uninstall_hooks") as mock_uninstall,
+        patch("ring.notify.notify_waiting") as mock_notify,
+        patch("ring.focus.jump") as mock_jump,
+        patch("shutil.which", return_value=None),
+    ):
+        rc = cli.main(["doctor"])
+
+    assert rc == 0
+    mock_install.assert_not_called()
+    mock_uninstall.assert_not_called()
+    mock_notify.assert_not_called()
+    mock_jump.assert_not_called()
+
+
+def test_doctor_unknown_arg_returns_two(capsys: pytest.CaptureFixture[str]) -> None:
+    """ring doctor --unknown-flag → rc=2（args 錯誤）。"""
+    rc = cli.main(["doctor", "--unknown"])
+    assert rc == 2

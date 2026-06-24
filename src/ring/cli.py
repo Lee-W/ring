@@ -10,18 +10,23 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 import time
 from importlib.util import find_spec
 from typing import Any
 
 from ring import __version__
-from ring.config import CONFIG_PATH, Config, ConfigError, get_config, set_value
+from ring.config import CONFIG_PATH as CONFIG_PATH
+from ring.config import Config as Config
+from ring.config import ConfigError as ConfigError
+from ring.config import get_config as get_config
+from ring.config import set_value as set_value
 from ring.i18n import gettext as _
 from ring.i18n import ngettext, set_lang
 from ring.labels import load_labels
 from ring.registry import Session, Status, running_agent_pids
-from ring.sources import discover_sessions
+from ring.sources import discover_sessions, sources
 
 try:
     from rich.box import SIMPLE_HEAD
@@ -345,6 +350,122 @@ def run_config(args: list[str]) -> int:
     return 2
 
 
+def run_doctor(args: list[str]) -> int:
+    """``ring doctor`` 進入點：唯讀環境診斷，印出五節報告，固定回 0。args 非空回 2。"""
+    args = _strip_lang(args)
+    if args:
+        print(_("用法：ring doctor"), file=sys.stderr)
+        return 2
+
+    from ring.focus import focusers
+    from ring.focus.base import osascript
+    from ring.hook import hook_status
+    from ring.notify import _select_notifier, notifiers
+
+    cfg = get_config()
+
+    print(_("RiNG 環境診斷"))
+    print(f"  {_('狀態')}：{_('唯讀檢查，不會改動任何設定')}")
+    print()
+
+    # ── (a) Session 來源 ────────────────────────────────────────────────────
+    print(_("Session 來源"))
+    src_list = sources()
+    if src_list:
+        width_src = max(len(s.name) for s in src_list)
+    else:
+        width_src = 10
+    for src in src_list:
+        try:
+            found = src.discover()
+            n = len(found)
+            status_str = _("活著")
+            count_str = _("偵測到 {n} 個 session", n=n)
+            print(f"  {src.name:<{width_src}}  {status_str}    {count_str}")
+        except Exception:
+            print(f"  {src.name:<{width_src}}  {_('偵測失敗')}")
+    print()
+
+    # ── (b) Hook 安裝 ────────────────────────────────────────────────────────
+    print(_("Hook 安裝"))
+    statuses = hook_status()
+    provider_labels = {"claude-code": "Claude Code", "codex": "Codex"}
+    if statuses:
+        width_hook = max(len(provider_labels.get(s.provider, s.provider)) for s in statuses)
+    else:
+        width_hook = 10
+    for hs in statuses:
+        label = provider_labels.get(hs.provider, hs.provider)
+        if not hs.applicable:
+            msg = _("未使用 Codex（zero-config）")
+        elif hs.installed:
+            msg = _("已安裝")
+        else:
+            msg = _("未安裝（執行 ring install-hooks）")
+        print(f"  {label:<{width_hook}}  {msg}")
+    print()
+
+    # ── (c) 通知後端 ─────────────────────────────────────────────────────────
+    print(_("通知後端"))
+    print(f"  {_('目前設定')}：{cfg.notify_backend}")
+    notifier_list = notifiers()
+    if notifier_list:
+        width_n = max(len(nt.name) for nt in notifier_list)
+    else:
+        width_n = 10
+    for nt in notifier_list:
+        avail_str = _("可用") if nt.available() else _("不可用")
+        print(f"  {nt.name:<{width_n}}  {avail_str}")
+    selected = _select_notifier(cfg.notify_backend)
+    if selected is not None:
+        print(f"  {_('auto 實際選中')}：{selected.name}")
+    else:
+        # 附原因
+        if cfg.notify_backend == "none":
+            reason = _("backend=none")
+        elif cfg.notify_backend == "agent-hooks" and shutil.which("agent-hooks") is not None:
+            reason = _("agent-hooks 已接手")
+        else:
+            reason = _("全部不可用")
+        print(f"  {_('auto 實際選中')}：{_('不發通知')}（{reason}）")
+    print()
+
+    # ── (d) 聚焦終端（focuser）───────────────────────────────────────────────
+    print(_("聚焦終端（focuser）"))
+    focuser_list = focusers()
+    if focuser_list:
+        width_f = max(len(f.name) for f in focuser_list)
+    else:
+        width_f = 10
+    for f in focuser_list:
+        name_lower = f.name.lower()
+        if name_lower == "tmux":
+            avail = shutil.which("tmux") is not None
+            avail_str = _("可用") if avail else _("不可用（tmux 不在 PATH）")
+        else:
+            # iTerm2 / Terminal：先確認 osascript 在，再問 app 是否跑著
+            if shutil.which("osascript") is None:
+                avail_str = _("不可用（osascript 不在 PATH）")
+            else:
+                app_name = f.name  # "iTerm2" or "Terminal"
+                try:
+                    rc, out, _err = osascript(f'application "{app_name}" is running')
+                    avail_str = _("可用") if (rc == 0 and out == "true") else _("不可用（app 沒在跑）")
+                except Exception:
+                    avail_str = _("不可用（app 沒在跑）")
+        print(f"  {f.name:<{width_f}}  {avail_str}")
+    print()
+
+    # ── (e) 設定檔 ───────────────────────────────────────────────────────────
+    print(_("設定檔"))
+    exists = CONFIG_PATH.exists()
+    print(f"  {_('路徑')}：{CONFIG_PATH}")
+    print(f"  {_('狀態')}：{_('已存在') if exists else _('不存在（全部用內建預設）')}")
+    print(f"  {_('完整生效值請看 `ring config`。')}")
+
+    return 0
+
+
 def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int:
     from ring.notify import notify_waiting
     from ring.watcher import WaitingAlertScheduler
@@ -420,6 +541,7 @@ commands:
   config get KEY               讀單一設定的目前值
   config set KEY VALUE         寫入單一設定（會重寫設定檔，不保留註解）
   focus SESSION_ID             聚焦指定 session；TUI 在跑時會回到 RiNG 並選中該列
+  doctor                       顯示環境診斷（唯讀）——hook 安裝狀態、通知後端、focuser 可用性
 """
     )
 
@@ -458,6 +580,13 @@ def _subcommand_help(name: str) -> str:
 聚焦指定 session；若 RiNG TUI 正在執行，會回到 TUI 並選中該列。
 """
         ),
+        "doctor": _(
+            """usage: ring doctor
+
+唯讀環境診斷：逐節報告 hook 安裝狀態、通知後端可用性、focuser 可用性與設定檔位置。
+不寫任何檔案、不安裝、不發通知；固定回傳 0。
+"""
+        ),
     }
     return helps.get(name, "")
 
@@ -467,7 +596,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg = get_config()
     set_lang(_peek_lang(raw) or cfg.lang)  # 在 import ring.tui 前設好，Footer 按鍵說明也跟著語言
 
-    if raw and raw[0] in {"hook", "install-hooks", "remove-hooks", "config", "focus"} and any(
+    if raw and raw[0] in {"hook", "install-hooks", "remove-hooks", "config", "focus", "doctor"} and any(
         arg in {"-h", "--help"} for arg in raw[1:]
     ):
         print(_subcommand_help(raw[0]), end="")
@@ -496,6 +625,8 @@ def main(argv: list[str] | None = None) -> int:
         return uninstall_hooks(dry_run="--dry-run" in raw)
     if raw and raw[0] == "config":
         return run_config(raw[1:])
+    if raw and raw[0] == "doctor":
+        return run_doctor(raw[1:])
     if raw and raw[0] == "focus" and len(raw) >= 2:
         from ring.focus import jump as focus_jump
         from ring.ipc import read_tui_presence, write_focus_request

@@ -213,6 +213,76 @@ def _delegate_to_agent_hooks(raw: str, selected_provider: str) -> int:
         return 0
 
 
+@dataclass(frozen=True)
+class HookStatus:
+    """某個 hook provider 的安裝狀態快照（唯讀，不拋例外）。"""
+
+    provider: str  # "claude-code" | "codex"
+    path: Path  # target settings 檔
+    applicable: bool  # 這個 target 目前適用嗎（Codex：~/.codex 是否存在）
+    installed: bool  # 檔內是否已有 RiNG hook 條目
+    exists: bool  # 設定檔本身是否存在
+
+
+def _has_ring_entry(groups: list[Any]) -> bool:
+    """掃 hook groups，回傳是否有任何 _is_ring_hook_command 命中的條目。"""
+    for g in groups:
+        if not isinstance(g, dict):
+            continue
+        for h in g.get("hooks", []):
+            if _is_ring_hook_command(h.get("command", "")):
+                return True
+    return False
+
+
+def hook_status() -> list[HookStatus]:
+    """逐一檢視 claude-code / codex 兩個 provider，回報每個的安裝狀態（唯讀，不寫檔）。
+
+    無條件回報兩個 provider（claude-code 永遠 applicable=True，codex 視 ~/.codex 而定）；
+    讀檔失敗（檔不存在 / 非合法 JSON）一律當 installed=False，exists 照實填，不拋例外。
+    """
+    home = Path.home()
+    providers = [
+        {
+            "provider": "claude-code",
+            "path": home / ".claude" / "settings.json",
+            "applicable": True,
+            "events": _HOOK_EVENTS,
+        },
+        {
+            "provider": "codex",
+            "path": home / ".codex" / "hooks.json",
+            "applicable": (home / ".codex").is_dir(),
+            "events": _CODEX_HOOK_EVENTS,
+        },
+    ]
+    result: list[HookStatus] = []
+    for p in providers:
+        path = p["path"]
+        assert isinstance(path, Path)
+        exists = path.exists()
+        installed = False
+        if exists:
+            try:
+                data: dict[str, Any] = json.loads(path.read_text() or "{}")
+                hooks = data.get("hooks", {})
+                events = p["events"]
+                assert isinstance(events, list)
+                installed = any(_has_ring_entry(list(hooks.get(event) or [])) for event in events)
+            except Exception:
+                installed = False
+        result.append(
+            HookStatus(
+                provider=str(p["provider"]),
+                path=path,
+                applicable=bool(p["applicable"]),
+                installed=installed,
+                exists=exists,
+            )
+        )
+    return result
+
+
 def _is_ring_hook_command(cmd: str) -> bool:
     """判斷一條 command 字串是否為 RiNG 自己安裝的 hook 條目。
 

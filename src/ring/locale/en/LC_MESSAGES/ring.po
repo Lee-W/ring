@@ -223,3 +223,170 @@ msgstr "Note: set rewrites the whole config file; existing comments are not pres
 
 msgid "未知的 config 動作：{action}（用 get / set，或不帶參數看目前設定）"
 msgstr "unknown config action: {action} (use get / set, or no args to view current settings)"
+
+# ── _commands_help ──
+msgid ""
+"\n"
+"commands:\n"
+"  hook [PROVIDER]              從 stdin 讀 provider hook payload，寫入 RiNG registry\n"
+"  hook --provider PROVIDER     同上，明確指定 provider（例如 codex）\n"
+"  install-hooks [--dry-run]    安裝 Claude Code hooks\n"
+"  remove-hooks [--dry-run]     移除 Claude Code hooks\n"
+"  config                       顯示設定檔位置與目前生效的設定\n"
+"  config get KEY               讀單一設定的目前值\n"
+"  config set KEY VALUE         寫入單一設定（會重寫設定檔，不保留註解）\n"
+"  focus SESSION_ID             聚焦指定 session；TUI 在跑時會回到 RiNG 並選中該列\n"
+"  doctor                       顯示環境診斷（唯讀）——hook 安裝狀態、通知後端、focuser 可用性\n"
+msgstr ""
+"\n"
+"commands:\n"
+"  hook [PROVIDER]              read provider hook payload from stdin, write to RiNG registry\n"
+"  hook --provider PROVIDER     same, with explicit provider (e.g. codex)\n"
+"  install-hooks [--dry-run]    install Claude Code hooks\n"
+"  remove-hooks [--dry-run]     remove Claude Code hooks\n"
+"  config                       show config file path and current settings\n"
+"  config get KEY               read one setting's current value\n"
+"  config set KEY VALUE         write one setting (rewrites config file, comments lost)\n"
+"  focus SESSION_ID             focus a session; if TUI is running, returns to RiNG and selects the row\n"
+"  doctor                       show environment diagnosis (read-only) — hook status, notify backend, focuser availability\n"
+
+# ── subcommand help ──
+msgid ""
+"usage: ring hook [PROVIDER] [--provider PROVIDER]\n"
+"\n"
+"從 stdin 讀 hook JSON，依 provider 正規化後寫入 RiNG registry。\n"
+msgstr ""
+"usage: ring hook [PROVIDER] [--provider PROVIDER]\n"
+"\n"
+"Read hook JSON from stdin, normalise by provider, and write to RiNG registry.\n"
+
+msgid ""
+"usage: ring install-hooks [--dry-run]\n"
+"\n"
+"安裝 Claude Code hooks 到 ~/.claude/settings.json。\n"
+msgstr ""
+"usage: ring install-hooks [--dry-run]\n"
+"\n"
+"Install Claude Code hooks into ~/.claude/settings.json.\n"
+
+msgid ""
+"usage: ring remove-hooks [--dry-run]\n"
+"\n"
+"從 ~/.claude/settings.json 移除 RiNG 安裝的 Claude Code hooks。\n"
+msgstr ""
+"usage: ring remove-hooks [--dry-run]\n"
+"\n"
+"Remove RiNG's Claude Code hooks from ~/.claude/settings.json.\n"
+
+msgid ""
+"usage: ring config [get KEY | set KEY VALUE]\n"
+"\n"
+"不帶參數：顯示設定檔位置（~/.config/ring/config.toml）與目前生效的所有設定。\n"
+"  get KEY        印出單一設定的目前值（colors 子鍵用 colors.<name>）。\n"
+"  set KEY VALUE  寫入單一設定。注意：會重寫整個設定檔，原有註解不會保留。\n"
+msgstr ""
+"usage: ring config [get KEY | set KEY VALUE]\n"
+"\n"
+"No args: show config file path (~/.config/ring/config.toml) and all current settings.\n"
+"  get KEY        print the current value of one setting (use colors.<name> for color sub-keys).\n"
+"  set KEY VALUE  write one setting. Note: rewrites the entire config file; existing comments are lost.\n"
+
+msgid ""
+"usage: ring focus SESSION_ID\n"
+"\n"
+"聚焦指定 session；若 RiNG TUI 正在執行，會回到 TUI 並選中該列。\n"
+msgstr ""
+"usage: ring focus SESSION_ID\n"
+"\n"
+"Focus the specified session; if RiNG TUI is running, returns to TUI and selects the row.\n"
+
+msgid ""
+"usage: ring doctor\n"
+"\n"
+"唯讀環境診斷：逐節報告 hook 安裝狀態、通知後端可用性、focuser 可用性與設定檔位置。\n"
+"不寫任何檔案、不安裝、不發通知；固定回傳 0。\n"
+msgstr ""
+"usage: ring doctor\n"
+"\n"
+"Read-only environment diagnosis: reports hook install status, notify backend availability,\n"
+"focuser availability, and config file path. Never writes files, installs, or sends notifications.\n"
+"Always returns 0.\n"
+
+# ── doctor subcommand strings ──
+msgid "RiNG 環境診斷"
+msgstr "RiNG Environment Diagnosis"
+
+msgid "唯讀檢查，不會改動任何設定"
+msgstr "read-only check; no settings will be changed"
+
+msgid "Session 來源"
+msgstr "Session Sources"
+
+msgid "活著"
+msgstr "alive"
+
+msgid "偵測到 {n} 個 session"
+msgstr "detected {n} session(s)"
+
+msgid "偵測失敗"
+msgstr "detection failed"
+
+msgid "Hook 安裝"
+msgstr "Hook Installation"
+
+msgid "已安裝"
+msgstr "installed"
+
+msgid "未安裝（執行 ring install-hooks）"
+msgstr "not installed (run ring install-hooks)"
+
+msgid "未使用 Codex（zero-config）"
+msgstr "Codex not in use (zero-config)"
+
+msgid "通知後端"
+msgstr "Notification Backend"
+
+msgid "目前設定"
+msgstr "current setting"
+
+msgid "可用"
+msgstr "available"
+
+msgid "不可用"
+msgstr "unavailable"
+
+msgid "auto 實際選中"
+msgstr "auto selected"
+
+msgid "不發通知"
+msgstr "no notification"
+
+msgid "backend=none"
+msgstr "backend=none"
+
+msgid "agent-hooks 已接手"
+msgstr "agent-hooks is handling it"
+
+msgid "全部不可用"
+msgstr "all unavailable"
+
+msgid "聚焦終端（focuser）"
+msgstr "Terminal Focuser"
+
+msgid "不可用（tmux 不在 PATH）"
+msgstr "unavailable (tmux not in PATH)"
+
+msgid "不可用（osascript 不在 PATH）"
+msgstr "unavailable (osascript not in PATH)"
+
+msgid "不可用（app 沒在跑）"
+msgstr "unavailable (app not running)"
+
+msgid "設定檔"
+msgstr "Config File"
+
+msgid "完整生效值請看 `ring config`。"
+msgstr "For all effective values, run `ring config`."
+
+msgid "用法：ring doctor"
+msgstr "usage: ring doctor"
