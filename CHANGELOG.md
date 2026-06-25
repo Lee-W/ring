@@ -1,3 +1,13 @@
+## 0.3.0 (2026-06-25)
+
+### Feat
+
+- add ring gc
+
+### Refactor
+
+- split cli command handlers
+
 ## 0.2.0 (2026-06-25)
 
 ### Feat
