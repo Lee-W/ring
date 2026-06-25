@@ -480,7 +480,7 @@ def test_doctor_selected_notify_backend(monkeypatch: pytest.MonkeyPatch, capsys:
     # backend=auto，terminal-notifier 可用 → 選中 terminal-notifier
     tn = _make_fake_notifier("terminal-notifier", True, True)
     monkeypatch.setattr("ring.notify._NOTIFIERS", [tn])
-    monkeypatch.setattr(cli, "get_config", lambda: cli.Config(notify_backend="auto"))
+    monkeypatch.setattr("ring.commands.doctor.get_config", lambda: cli.Config(notify_backend="auto"))
 
     with monkeypatch.context() as m:
         m.setattr("shutil.which", lambda name: None)
@@ -491,7 +491,7 @@ def test_doctor_selected_notify_backend(monkeypatch: pytest.MonkeyPatch, capsys:
     assert "auto 實際選中：terminal-notifier" in out
 
     # backend=none → 不發通知（附原因 backend=none）
-    monkeypatch.setattr(cli, "get_config", lambda: cli.Config(notify_backend="none"))
+    monkeypatch.setattr("ring.commands.doctor.get_config", lambda: cli.Config(notify_backend="none"))
     with monkeypatch.context() as m:
         m.setattr("shutil.which", lambda name: None)
         cli.main(["doctor"])
@@ -512,7 +512,7 @@ def test_doctor_mac_notification_style_hint(
 
     monkeypatch.setattr("ring.hook.hook_status", lambda: _make_fake_hook_status(), raising=False)
     monkeypatch.setattr("ring.notify._NOTIFIERS", [_make_fake_notifier("terminal-notifier", True, True)])
-    monkeypatch.setattr(cli, "get_config", lambda: cli.Config(notify_backend="auto"))
+    monkeypatch.setattr("ring.commands.doctor.get_config", lambda: cli.Config(notify_backend="auto"))
 
     with monkeypatch.context() as m:
         m.setattr("ring.cli.sys.platform", "darwin")
@@ -630,7 +630,7 @@ def test_gc_routes_to_gc_module(capsys: pytest.CaptureFixture[str]) -> None:
     from ring.gc import GcResult
 
     result = GcResult(candidates=[], deleted=[], errors=[], dry_run=True)
-    with patch.object(cli, "gc_run", return_value=result) as mock_gc:
+    with patch("ring.commands.gc.gc_run", return_value=result) as mock_gc:
         rc = cli.main(["gc", "--dry-run", "--older-than", "1d"])
 
     assert rc == 0

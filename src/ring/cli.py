@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import argparse
-import shutil
 import sys
 import time
 from dataclasses import fields
@@ -18,20 +17,21 @@ from importlib.util import find_spec
 from typing import Any
 
 from ring import __version__
+from ring.commands._args import strip_lang as _strip_lang
+from ring.commands.doctor import run_doctor
+from ring.commands.focus import run_focus
+from ring.commands.gc import run_gc
+from ring.commands.hook import run_hook_command, run_install_hooks, run_remove_hooks
 from ring.config import CONFIG_PATH as CONFIG_PATH
 from ring.config import Config as Config
 from ring.config import ConfigError as ConfigError
 from ring.config import get_config as get_config
 from ring.config import set_value as set_value
-from ring.gc import DEFAULT_OLDER_THAN_SECONDS
-from ring.gc import collect_candidates as gc_collect_candidates
-from ring.gc import parse_duration as gc_parse_duration
-from ring.gc import run_gc as gc_run
 from ring.i18n import gettext as _
 from ring.i18n import ngettext, set_lang
 from ring.labels import load_labels
 from ring.registry import Session, Status, running_agent_pids
-from ring.sources import discover_sessions, sources
+from ring.sources import discover_sessions
 
 try:
     from rich.box import SIMPLE_HEAD
@@ -293,23 +293,6 @@ def _config_get_value(key: str) -> object:
     raise ConfigError(_("未知的鍵：{key}", key=key))
 
 
-def _strip_lang(args: list[str]) -> list[str]:
-    """濾掉全域 ``--lang`` 旗標（已在 main 先 peek 過），只留 config 自己的位置參數。"""
-    out: list[str] = []
-    skip = False
-    for i, a in enumerate(args):
-        if skip:
-            skip = False
-            continue
-        if a == "--lang":
-            skip = i + 1 < len(args)  # 連同它的值一起跳過
-            continue
-        if a.startswith("--lang="):
-            continue
-        out.append(a)
-    return out
-
-
 def run_config(args: list[str]) -> int:
     """``ring config`` 進入點：無參數→列表；``get KEY``→讀；``set KEY VALUE``→寫。"""
     args = _strip_lang(args)
@@ -345,171 +328,6 @@ def run_config(args: list[str]) -> int:
 
     print(_("未知的 config 動作：{action}（用 get / set，或不帶參數看目前設定）", action=action), file=sys.stderr)
     return 2
-
-
-def run_doctor(args: list[str]) -> int:
-    """``ring doctor`` 進入點：唯讀環境診斷，印出五節報告，固定回 0。args 非空回 2。"""
-    args = _strip_lang(args)
-    if args:
-        print(_("用法：ring doctor"), file=sys.stderr)
-        return 2
-
-    from ring.focus import focusers
-    from ring.hook import hook_status
-    from ring.notify import _select_notifier, notifiers
-    from ring.osascript import osascript
-
-    cfg = get_config()
-
-    print(_("RiNG 環境診斷"))
-    print(f"  {_('狀態')}：{_('唯讀檢查，不會改動任何設定')}")
-    print()
-
-    # ── (a) Session 來源 ────────────────────────────────────────────────────
-    print(_("Session 來源"))
-    src_list = sources()
-    if src_list:
-        width_src = max(len(s.name) for s in src_list)
-    else:
-        width_src = 10
-    for src in src_list:
-        try:
-            found = src.discover()
-            n = len(found)
-            status_str = _("活著")
-            count_str = _("偵測到 {n} 個 session", n=n)
-            print(f"  {src.name:<{width_src}}  {status_str}    {count_str}")
-        except Exception:
-            print(f"  {src.name:<{width_src}}  {_('偵測失敗')}")
-    print()
-
-    # ── (b) Hook 安裝 ────────────────────────────────────────────────────────
-    print(_("Hook 安裝"))
-    statuses = hook_status()
-    provider_labels = {"claude-code": "Claude Code", "codex": "Codex"}
-    if statuses:
-        width_hook = max(len(provider_labels.get(s.provider, s.provider)) for s in statuses)
-    else:
-        width_hook = 10
-    for hs in statuses:
-        label = provider_labels.get(hs.provider, hs.provider)
-        if not hs.applicable:
-            msg = _("未使用 Codex（zero-config）")
-        elif hs.installed:
-            msg = _("已安裝")
-        else:
-            msg = _("未安裝（執行 ring install-hooks）")
-        print(f"  {label:<{width_hook}}  {msg}")
-    print()
-
-    # ── (c) 通知後端 ─────────────────────────────────────────────────────────
-    print(_("通知後端"))
-    print(f"  {_('目前設定')}：{cfg.notify_backend}")
-    notifier_list = notifiers()
-    if notifier_list:
-        width_n = max(len(nt.name) for nt in notifier_list)
-    else:
-        width_n = 10
-    for nt in notifier_list:
-        avail_str = _("可用") if nt.available() else _("不可用")
-        print(f"  {nt.name:<{width_n}}  {avail_str}")
-    selected = _select_notifier(cfg.notify_backend)
-    if selected is not None:
-        print(f"  {_('auto 實際選中')}：{selected.name}")
-        if sys.platform == "darwin" and selected.name in {"terminal-notifier", "osascript"}:
-            print(f"  {_('macOS 提醒：若只聽到聲音但沒有通知框，請到系統設定的通知項目啟用 Banner/Alert。')}")
-    else:
-        # 附原因
-        if cfg.notify_backend == "none":
-            reason = _("backend=none")
-        elif cfg.notify_backend == "agent-hooks" and shutil.which("agent-hooks") is not None:
-            reason = _("agent-hooks 已接手")
-        else:
-            reason = _("全部不可用")
-        print(f"  {_('auto 實際選中')}：{_('不發通知')}（{reason}）")
-    print()
-
-    # ── (d) 聚焦終端（focuser）───────────────────────────────────────────────
-    print(_("聚焦終端（focuser）"))
-    focuser_list = focusers()
-    if focuser_list:
-        width_f = max(len(f.name) for f in focuser_list)
-    else:
-        width_f = 10
-    for f in focuser_list:
-        name_lower = f.name.lower()
-        if name_lower == "tmux":
-            avail = shutil.which("tmux") is not None
-            avail_str = _("可用") if avail else _("不可用（tmux 不在 PATH）")
-        else:
-            # iTerm2 / Terminal：先確認 osascript 在，再問 app 是否跑著
-            if shutil.which("osascript") is None:
-                avail_str = _("不可用（osascript 不在 PATH）")
-            else:
-                app_name = f.name  # "iTerm2" or "Terminal"
-                try:
-                    rc, out, _err = osascript(f'application "{app_name}" is running')
-                    avail_str = _("可用") if (rc == 0 and out == "true") else _("不可用（app 沒在跑）")
-                except Exception:
-                    avail_str = _("不可用（app 沒在跑）")
-        print(f"  {f.name:<{width_f}}  {avail_str}")
-    print()
-
-    # ── (e) 維護 ─────────────────────────────────────────────────────────────
-    print(_("維護"))
-    try:
-        candidates = gc_collect_candidates(older_than=DEFAULT_OLDER_THAN_SECONDS)
-        if candidates:
-            print(f"  {_('可清理')}：{_('{n} 個 RiNG stale 狀態檔（執行 ring gc --dry-run 預覽）', n=len(candidates))}")
-        else:
-            print(f"  {_('可清理')}：{_('沒有 RiNG stale 狀態檔')}")
-    except Exception:
-        print(f"  {_('可清理')}：{_('偵測失敗')}")
-    print()
-
-    # ── (f) 設定檔 ───────────────────────────────────────────────────────────
-    print(_("設定檔"))
-    exists = CONFIG_PATH.exists()
-    print(f"  {_('路徑')}：{CONFIG_PATH}")
-    print(f"  {_('狀態')}：{_('已存在') if exists else _('不存在（全部用內建預設）')}")
-    print(f"  {_('完整生效值請看 `ring config`。')}")
-
-    return 0
-
-
-def run_gc(args: list[str]) -> int:
-    """``ring gc`` 進入點：清理 RiNG 自己的 stale 狀態檔。"""
-    args = _strip_lang(args)
-
-    parser = argparse.ArgumentParser(prog="ring gc", description=_("清理 RiNG 自己的 stale 狀態檔。"))
-    parser.add_argument("--dry-run", action="store_true", help=_("只預覽，不刪檔"))
-    parser.add_argument(
-        "--older-than",
-        default="7d",
-        metavar="DURATION",
-        help=_("清理超過指定時間的已離場 registry（例如 30m、2h、7d；預設 7d）"),
-    )
-    parser.add_argument("--all-ended", action="store_true", help=_("清理所有目前判定已離場的 registry"))
-    try:
-        ns = parser.parse_args(args)
-        older_than = gc_parse_duration(ns.older_than) if ns.older_than else DEFAULT_OLDER_THAN_SECONDS
-    except SystemExit as e:
-        return e.code if isinstance(e.code, int) else 2
-    except ValueError:
-        print(_("無效的 --older-than：{value}", value=ns.older_than), file=sys.stderr)
-        return 2
-
-    result = gc_run(older_than=older_than, all_ended=ns.all_ended, dry_run=ns.dry_run)
-    action = _("將刪除") if result.dry_run else _("已刪除")
-    count = len(result.candidates) if result.dry_run else len(result.deleted)
-    print(_("RiNG GC：{action} {count} 個檔案", action=action, count=count))
-    shown = result.candidates if result.dry_run else result.deleted
-    for candidate in shown:
-        prefix = "  - " if result.dry_run else "  ✓ "
-        print(f"{prefix}{candidate.path} ({candidate.reason})")
-    for candidate, error in result.errors:
-        print(f"  ! {candidate.path} ({error})", file=sys.stderr)
-    return 1 if result.errors else 0
 
 
 def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int:
@@ -663,26 +481,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if raw and raw[0] == "hook":
-        from ring.hook import run_hook
-
-        provider = "claude-code"
-        hook_args = raw[1:]
-        if hook_args:
-            if hook_args[0] == "--provider" and len(hook_args) >= 2:
-                provider = hook_args[1]
-            elif hook_args[0].startswith("--provider="):
-                provider = hook_args[0].split("=", 1)[1]
-            elif not hook_args[0].startswith("-"):
-                provider = hook_args[0]
-        return run_hook(provider=provider)
+        return run_hook_command(raw[1:])
     if raw and raw[0] == "install-hooks":
-        from ring.hook import install_hooks
-
-        return install_hooks(dry_run="--dry-run" in raw)
+        return run_install_hooks(raw[1:])
     if raw and raw[0] == "remove-hooks":
-        from ring.hook import uninstall_hooks
-
-        return uninstall_hooks(dry_run="--dry-run" in raw)
+        return run_remove_hooks(raw[1:])
     if raw and raw[0] == "config":
         return run_config(raw[1:])
     if raw and raw[0] == "gc":
@@ -690,21 +493,7 @@ def main(argv: list[str] | None = None) -> int:
     if raw and raw[0] == "doctor":
         return run_doctor(raw[1:])
     if raw and raw[0] == "focus" and len(raw) >= 2:
-        from ring.focus import jump as focus_jump
-        from ring.ipc import read_tui_presence, write_focus_request
-        from ring.sources import get_by_id
-
-        session = get_by_id(raw[1])
-        if session is None:
-            return 0
-        presence = read_tui_presence()
-        if presence is not None:
-            # TUI 在跑：寫 focus-request，讓 TUI 自己移游標並 activate 視窗。
-            write_focus_request(raw[1])
-        else:
-            # headless（沒有 TUI 在跑）：退化回現行行為——直接跳到 claude 所在終端。
-            focus_jump(session)
-        return 0
+        return run_focus(raw[1:])
 
     parser = argparse.ArgumentParser(
         prog="ring",
