@@ -771,6 +771,7 @@ def _hook_sessions(
     procs: list[tuple[str, str]] | None = None,
     *,
     procs_by_provider: dict[str, list[tuple[str, str]]] | None = None,
+    purge_session_start_phantoms: bool = True,
 ) -> list[Session]:
     if not RING_REGISTRY.is_dir():
         return []
@@ -786,7 +787,8 @@ def _hook_sessions(
             if provider in _SESSION_START_SOURCES:
                 # 舊版 bug 把 SessionStart 的 source（startup/resume/clear/compact）誤當
                 # provider，留下無 tty、跳不過去、又永不離場的幽靈列。清掉這種腐壞檔，自我修復。
-                f.unlink(missing_ok=True)
+                if purge_session_start_phantoms:
+                    f.unlink(missing_ok=True)
                 continue
             out.append(
                 Session(

@@ -13,6 +13,7 @@ import argparse
 import shutil
 import sys
 import time
+from dataclasses import fields
 from importlib.util import find_spec
 from typing import Any
 
@@ -22,6 +23,10 @@ from ring.config import Config as Config
 from ring.config import ConfigError as ConfigError
 from ring.config import get_config as get_config
 from ring.config import set_value as set_value
+from ring.gc import DEFAULT_OLDER_THAN_SECONDS
+from ring.gc import collect_candidates as gc_collect_candidates
+from ring.gc import parse_duration as gc_parse_duration
+from ring.gc import run_gc as gc_run
 from ring.i18n import gettext as _
 from ring.i18n import ngettext, set_lang
 from ring.labels import load_labels
@@ -74,14 +79,14 @@ def _middle_truncate(text: str, max_len: int) -> str:
        tmux 座標（如 ``main:1.0``）很短，自然走這條，不被動到。
 
     2. 否則以 ``/`` 為界，保留最後一層目錄完整：
-       ``tail = "/" + text.rsplit("/", 1)[-1]``，
+       ``tail = f"/{text.rsplit('/', 1)[-1]}"``，
        ``head_budget = max_len - 1 - len(tail)``（1 = ``…`` 的長度）。
-       若 ``head_budget >= 1``：回傳 ``text[:head_budget] + "…" + tail``。
+       若 ``head_budget >= 1``：回傳 ``f"{text[:head_budget]}…{tail}"``。
 
     3. ``head_budget < 1``（最後一層目錄名本身就超長，或 text 無 ``/``）：
        退化為純字元中段省略——
        ``keep = max_len - 1``；``front = (keep + 1) // 2``；``back = keep // 2``；
-       回傳 ``text[:front] + "…" + text[-back:]``（總長 == max_len）。
+       回傳 ``f"{text[:front]}…{text[-back:]}"``（總長 == max_len）。
 
     4. ``max_len <= 1`` 邊界：直接回傳 ``text[:max_len]``，避免負數切片。
 
@@ -92,17 +97,17 @@ def _middle_truncate(text: str, max_len: int) -> str:
     if len(text) <= max_len:
         return text
     # 以 / 為界，保留最後一層
-    tail = "/" + text.rsplit("/", 1)[-1]
+    tail = f"/{text.rsplit('/', 1)[-1]}"
     head_budget = max_len - 1 - len(tail)  # 1 for "…"
     if head_budget >= 1:
-        return text[:head_budget] + "…" + tail
+        return f"{text[:head_budget]}…{tail}"
     # 病態長尾段 fallback：純字元中段省略
     keep = max_len - 1
     front = (keep + 1) // 2
     back = keep // 2
     if back == 0:
         return text[:max_len]
-    return text[:front] + "…" + text[-back:]
+    return f"{text[:front]}…{text[-back:]}"
 
 
 def board(show_all: bool) -> list[Session]:
@@ -158,7 +163,7 @@ def _rich_renderable(sessions: list[Session], show_legend: bool, show_tool: bool
     if show_legend:
         blocks.append(_rich_legend())
     if not sessions:
-        blocks.append(Text("  " + _("（場館目前沒人上台）"), style=f"{_MUTED} italic"))
+        blocks.append(Text(f"  {_('（場館目前沒人上台）')}", style=f"{_MUTED} italic"))
         return Group(*blocks)
 
     table = Table(box=SIMPLE_HEAD, header_style="bold", pad_edge=False, expand=False)
@@ -196,7 +201,7 @@ def _render_plain(sessions: list[Session], show_legend: bool, show_tool: bool = 
         items = "   ".join(f"{st.marker} {status_label(st)}" for st in Status)
         lines += ["", f"  {_('圖例')}   {items}"]
     if not sessions:
-        lines += ["", "  " + _("（場館目前沒人上台）")]
+        lines += ["", f"  {_('（場館目前沒人上台）')}"]
         return "\n".join(lines)
 
     labels = load_labels()
@@ -219,16 +224,12 @@ def _render_plain(sessions: list[Session], show_legend: bool, show_tool: bool = 
     w_ago = max(len(c_idle), 3, *(len(r[4]) for r in rows))
     w_loc = max(len(c_loc), *(len(r[5]) for r in rows))
     tool_h = f"{c_tool:<{w_tool}}  " if show_tool else ""
-    header = (
-        f"     {tool_h}{c_proj:<{w_proj}}  {c_prog:>{w_prog}}  "
-        f"{c_idle:>{w_ago}}    {c_loc:<{w_loc}}  {c_act}"
-    )
+    header = f"     {tool_h}{c_proj:<{w_proj}}  {c_prog:>{w_prog}}  {c_idle:>{w_ago}}    {c_loc:<{w_loc}}  {c_act}"
     lines += ["", header]
     for marker, tool, project, prog, ago, loc, action in rows:
         tool_c = f"{tool:<{w_tool}}  " if show_tool else ""
         lines.append(
-            f"  {marker} {tool_c}{project:<{w_proj}}  {prog:>{w_prog}}  "
-            f"{ago:>{w_ago}}  📍{loc:<{w_loc}}  {action}"
+            f"  {marker} {tool_c}{project:<{w_proj}}  {prog:>{w_prog}}  {ago:>{w_ago}}  📍{loc:<{w_loc}}  {action}"
         )
     return "\n".join(lines)
 
@@ -247,7 +248,7 @@ def _format_config_value(value: object) -> str:
     if value is None:
         return "—"
     if isinstance(value, tuple):
-        return "[" + ", ".join(str(v) for v in value) + "]" if value else _("（內建預設）")
+        return f"[{', '.join(str(v) for v in value)}]" if value else _("（內建預設）")
     if isinstance(value, dict):
         return ", ".join(f"{k}={v}" for k, v in value.items())
     return str(value)
@@ -259,8 +260,6 @@ def print_config() -> None:
     欄位直接從 ``Config`` dataclass 列舉，所以新增設定不必再動這裡。值跟內建預設
     不同的會標一個箭頭，讓你一眼看出「我改過哪些」。
     """
-    from dataclasses import fields
-
     cfg = get_config()
     defaults = Config()
     exists = CONFIG_PATH.exists()
@@ -278,13 +277,11 @@ def print_config() -> None:
         print(f"  {f.name:<{width}}  {_format_config_value(value)}{mark}")
     print()
     hint = _("用 `ring config set KEY VALUE` 改，或直接編輯上面那個檔；完整選項見 src/ring/config.py 的 docstring。")
-    print("  " + hint)
+    print(f"  {hint}")
 
 
 def _config_get_value(key: str) -> object:
     """讀單一設定的目前生效值（支援 colors.<name> 點記法）。未知鍵丟 ConfigError。"""
-    from dataclasses import fields
-
     cfg = get_config()
     if "." in key:
         table, sub = key.split(".", 1)
@@ -343,7 +340,7 @@ def run_config(args: list[str]) -> int:
             print(f"⚠️ {e}", file=sys.stderr)
             return 1
         print(_("✅ 已設定 {key} = {value}（{path}）", key=key, value=_format_config_value(coerced), path=CONFIG_PATH))
-        print("   " + _("註：set 會重寫整個設定檔，原有註解不會保留。"))
+        print(f"   {_('註：set 會重寫整個設定檔，原有註解不會保留。')}")
         return 0
 
     print(_("未知的 config 動作：{action}（用 get / set，或不帶參數看目前設定）", action=action), file=sys.stderr)
@@ -420,12 +417,7 @@ def run_doctor(args: list[str]) -> int:
     if selected is not None:
         print(f"  {_('auto 實際選中')}：{selected.name}")
         if sys.platform == "darwin" and selected.name in {"terminal-notifier", "osascript"}:
-            print(
-                "  "
-                + _(
-                    "macOS 提醒：若只聽到聲音但沒有通知框，請到系統設定的通知項目啟用 Banner/Alert。"
-                )
-            )
+            print(f"  {_('macOS 提醒：若只聽到聲音但沒有通知框，請到系統設定的通知項目啟用 Banner/Alert。')}")
     else:
         # 附原因
         if cfg.notify_backend == "none":
@@ -463,7 +455,19 @@ def run_doctor(args: list[str]) -> int:
         print(f"  {f.name:<{width_f}}  {avail_str}")
     print()
 
-    # ── (e) 設定檔 ───────────────────────────────────────────────────────────
+    # ── (e) 維護 ─────────────────────────────────────────────────────────────
+    print(_("維護"))
+    try:
+        candidates = gc_collect_candidates(older_than=DEFAULT_OLDER_THAN_SECONDS)
+        if candidates:
+            print(f"  {_('可清理')}：{_('{n} 個 RiNG stale 狀態檔（執行 ring gc --dry-run 預覽）', n=len(candidates))}")
+        else:
+            print(f"  {_('可清理')}：{_('沒有 RiNG stale 狀態檔')}")
+    except Exception:
+        print(f"  {_('可清理')}：{_('偵測失敗')}")
+    print()
+
+    # ── (f) 設定檔 ───────────────────────────────────────────────────────────
     print(_("設定檔"))
     exists = CONFIG_PATH.exists()
     print(f"  {_('路徑')}：{CONFIG_PATH}")
@@ -471,6 +475,41 @@ def run_doctor(args: list[str]) -> int:
     print(f"  {_('完整生效值請看 `ring config`。')}")
 
     return 0
+
+
+def run_gc(args: list[str]) -> int:
+    """``ring gc`` 進入點：清理 RiNG 自己的 stale 狀態檔。"""
+    args = _strip_lang(args)
+
+    parser = argparse.ArgumentParser(prog="ring gc", description=_("清理 RiNG 自己的 stale 狀態檔。"))
+    parser.add_argument("--dry-run", action="store_true", help=_("只預覽，不刪檔"))
+    parser.add_argument(
+        "--older-than",
+        default="7d",
+        metavar="DURATION",
+        help=_("清理超過指定時間的已離場 registry（例如 30m、2h、7d；預設 7d）"),
+    )
+    parser.add_argument("--all-ended", action="store_true", help=_("清理所有目前判定已離場的 registry"))
+    try:
+        ns = parser.parse_args(args)
+        older_than = gc_parse_duration(ns.older_than) if ns.older_than else DEFAULT_OLDER_THAN_SECONDS
+    except SystemExit as e:
+        return e.code if isinstance(e.code, int) else 2
+    except ValueError:
+        print(_("無效的 --older-than：{value}", value=ns.older_than), file=sys.stderr)
+        return 2
+
+    result = gc_run(older_than=older_than, all_ended=ns.all_ended, dry_run=ns.dry_run)
+    action = _("將刪除") if result.dry_run else _("已刪除")
+    count = len(result.candidates) if result.dry_run else len(result.deleted)
+    print(_("RiNG GC：{action} {count} 個檔案", action=action, count=count))
+    shown = result.candidates if result.dry_run else result.deleted
+    for candidate in shown:
+        prefix = "  - " if result.dry_run else "  ✓ "
+        print(f"{prefix}{candidate.path} ({candidate.reason})")
+    for candidate, error in result.errors:
+        print(f"  ! {candidate.path} ({error})", file=sys.stderr)
+    return 1 if result.errors else 0
 
 
 def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int:
@@ -494,7 +533,7 @@ def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int
                 except Exception:
                     pass
                 print(_render_plain(sessions, show_legend, show_tool_column(sessions)))
-                print("\n" + footer_text)
+                print(f"\n{footer_text}")
                 sys.stdout.flush()
                 frames += 1
                 if count and frames >= count:
@@ -517,7 +556,7 @@ def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int
                 except Exception:
                     pass
                 body = _rich_renderable(sessions, show_legend, show_tool_column(sessions))
-                live.update(Group(body, Text("\n" + footer_text, style=_MUTED)), refresh=True)
+                live.update(Group(body, Text(f"\n{footer_text}", style=_MUTED)), refresh=True)
                 frames += 1
                 if count and frames >= count:
                     return 0
@@ -548,7 +587,8 @@ commands:
   config get KEY               讀單一設定的目前值
   config set KEY VALUE         寫入單一設定（會重寫設定檔，不保留註解）
   focus SESSION_ID             聚焦指定 session；TUI 在跑時會回到 RiNG 並選中該列
-  doctor                       顯示環境診斷（唯讀）——hook 安裝狀態、通知後端、focuser 可用性
+  gc [--dry-run]               清理 RiNG 自己的 stale 狀態檔
+  doctor                       顯示環境診斷（唯讀）——hook、通知、focuser、維護提示
 """
     )
 
@@ -587,10 +627,21 @@ def _subcommand_help(name: str) -> str:
 聚焦指定 session；若 RiNG TUI 正在執行，會回到 TUI 並選中該列。
 """
         ),
+        "gc": _(
+            """usage: ring gc [--dry-run] [--older-than DURATION] [--all-ended]
+
+清理 RiNG 自己的 stale 狀態檔；不碰 Claude Code / Codex 的 transcript 或 state。
+
+options:
+  --dry-run              只預覽，不刪檔
+  --older-than DURATION  清理超過指定時間的已離場 registry（例如 30m、2h、7d；預設 7d）
+  --all-ended            清理所有目前判定已離場的 registry
+"""
+        ),
         "doctor": _(
             """usage: ring doctor
 
-唯讀環境診斷：逐節報告 hook 安裝狀態、通知後端可用性、focuser 可用性與設定檔位置。
+唯讀環境診斷：逐節報告 hook 安裝狀態、通知後端可用性、focuser 可用性、維護提示與設定檔位置。
 不寫任何檔案、不安裝、不發通知；固定回傳 0。
 """
         ),
@@ -603,8 +654,10 @@ def main(argv: list[str] | None = None) -> int:
     cfg = get_config()
     set_lang(_peek_lang(raw) or cfg.lang)  # 在 import ring.tui 前設好，Footer 按鍵說明也跟著語言
 
-    if raw and raw[0] in {"hook", "install-hooks", "remove-hooks", "config", "focus", "doctor"} and any(
-        arg in {"-h", "--help"} for arg in raw[1:]
+    if (
+        raw
+        and raw[0] in {"hook", "install-hooks", "remove-hooks", "config", "focus", "gc", "doctor"}
+        and any(arg in {"-h", "--help"} for arg in raw[1:])
     ):
         print(_subcommand_help(raw[0]), end="")
         return 0
@@ -632,6 +685,8 @@ def main(argv: list[str] | None = None) -> int:
         return uninstall_hooks(dry_run="--dry-run" in raw)
     if raw and raw[0] == "config":
         return run_config(raw[1:])
+    if raw and raw[0] == "gc":
+        return run_gc(raw[1:])
     if raw and raw[0] == "doctor":
         return run_doctor(raw[1:])
     if raw and raw[0] == "focus" and len(raw) >= 2:

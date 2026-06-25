@@ -58,6 +58,7 @@ def test_help_lists_hidden_commands(capsys: pytest.CaptureFixture[str]) -> None:
     assert "config" in out
     assert "hook --provider" in out
     assert "focus SESSION_ID" in out
+    assert "gc" in out
     assert "doctor" in out
 
 
@@ -71,9 +72,7 @@ def test_config_shows_path_and_settings(capsys: pytest.CaptureFixture[str]) -> N
     assert "Effective settings" in out
 
 
-def test_config_marks_overridden_values(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_config_marks_overridden_values(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """跟內建預設不同的值要標 ←，預設值不標。"""
     monkeypatch.setattr(cli, "get_config", lambda: cli.Config(notify_backend="agent-hooks"))
     cli.main(["config", "--lang", "en"])
@@ -371,12 +370,11 @@ def test_doctor_returns_zero_and_shows_sections(
     assert "Hook 安裝" in out
     assert "通知後端" in out
     assert "聚焦終端" in out
+    assert "維護" in out
     assert "設定檔" in out
 
 
-def test_doctor_counts_sessions_per_source(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_doctor_counts_sessions_per_source(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """fake source discover 回 3 個 Session → output 含 3。"""
     fake_sessions = [Session(f"s{i}", "/x", Status.IDLE, 0.0, "—", "hook") for i in range(3)]
     fake_src = _make_fake_source("hook", fake_sessions)
@@ -399,9 +397,7 @@ def test_doctor_counts_sessions_per_source(
     assert "3" in out
 
 
-def test_doctor_source_failure_is_isolated(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_doctor_source_failure_is_isolated(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """一個 source discover 拋例外 → rc 仍 0、該 source 標偵測失敗、其他 source 照常。"""
     ok_src = _make_fake_source("claude-code", [Session("s1", "/x", Status.IDLE, 0.0, "—", "hook")])
     bad_src = _make_fake_source("codex", RuntimeError("sqlite gone"))
@@ -427,9 +423,7 @@ def test_doctor_source_failure_is_isolated(
     assert "1" in out  # claude-code 有 1 個 session
 
 
-def test_doctor_reports_hook_status(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_doctor_reports_hook_status(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """hook_status 回三種狀態 → output 正確對應三種文案。"""
     fake_src = _make_fake_source("hook", [])
     monkeypatch.setattr("ring.sources._SOURCES", [fake_src])
@@ -473,9 +467,7 @@ def test_doctor_reports_hook_status(
     assert "ring install-hooks" in out2
 
 
-def test_doctor_selected_notify_backend(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_doctor_selected_notify_backend(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """auto 模式：有可用 notifier → output 含 auto 實際選中；backend=none → 不發通知。"""
     fake_src = _make_fake_source("hook", [])
     monkeypatch.setattr("ring.sources._SOURCES", [fake_src])
@@ -533,9 +525,7 @@ def test_doctor_mac_notification_style_hint(
     assert "Banner/Alert" in out
 
 
-def test_doctor_focuser_availability(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_doctor_focuser_availability(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """tmux/iTerm2/Terminal 各自可用/不可用狀態正確反映。"""
     fake_src = _make_fake_source("hook", [])
     monkeypatch.setattr("ring.sources._SOURCES", [fake_src])
@@ -588,9 +578,7 @@ def test_doctor_help_does_not_run(capsys: pytest.CaptureFixture[str]) -> None:
     assert "usage: ring doctor" in out
 
 
-def test_doctor_is_read_only(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_doctor_is_read_only(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """doctor 全程不呼叫任何寫入入口（install_hooks / notify_waiting / focus.jump）。"""
     fake_src = _make_fake_source("hook", [])
     monkeypatch.setattr("ring.sources._SOURCES", [fake_src])
@@ -623,3 +611,37 @@ def test_doctor_unknown_arg_returns_two(capsys: pytest.CaptureFixture[str]) -> N
     """ring doctor --unknown-flag → rc=2（args 錯誤）。"""
     rc = cli.main(["doctor", "--unknown"])
     assert rc == 2
+
+
+# ---------------------------------------------------------------------------
+# gc 子命令
+# ---------------------------------------------------------------------------
+
+
+def test_gc_help_does_not_run(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch.object(cli, "run_gc") as mock_gc:
+        rc = cli.main(["gc", "--help"])
+    assert rc == 0
+    mock_gc.assert_not_called()
+    assert "usage: ring gc" in capsys.readouterr().out
+
+
+def test_gc_routes_to_gc_module(capsys: pytest.CaptureFixture[str]) -> None:
+    from ring.gc import GcResult
+
+    result = GcResult(candidates=[], deleted=[], errors=[], dry_run=True)
+    with patch.object(cli, "gc_run", return_value=result) as mock_gc:
+        rc = cli.main(["gc", "--dry-run", "--older-than", "1d"])
+
+    assert rc == 0
+    mock_gc.assert_called_once()
+    kwargs = mock_gc.call_args.kwargs
+    assert kwargs["dry_run"] is True
+    assert kwargs["older_than"] == 86400
+    assert "RiNG GC" in capsys.readouterr().out
+
+
+def test_gc_bad_duration_returns_two(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = cli.main(["gc", "--older-than", "nope"])
+    assert rc == 2
+    assert "nope" in capsys.readouterr().err

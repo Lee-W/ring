@@ -74,6 +74,7 @@ zero-config 不用設定就能看 Claude Code / Codex 的本機 session；要精
 ring install-hooks            # 合併寫入 Claude Code / Codex 的 hook 設定
 ring install-hooks --dry-run  # 只預覽，不改檔
 ring doctor                   # 檢查 hook、通知後端、focuser、設定檔
+ring gc --dry-run             # 預覽 RiNG 自己的 stale 狀態檔清理
 ```
 
 hook 只對新開的 session 生效，所以裝完要重開 Claude Code / Codex session。
@@ -93,6 +94,8 @@ hook 只對新開的 session 生效，所以裝完要重開 Claude Code / Codex 
 | `ring config` | 顯示設定檔路徑與生效設定 |
 | `ring config set KEY VALUE` | 寫入單一設定 |
 | `ring doctor` | 唯讀環境診斷 |
+| `ring gc --dry-run` | 預覽 RiNG 自己的 stale 狀態檔清理 |
+| `ring gc` | 清理 RiNG 自己的 stale 狀態檔 |
 
 ### `--watch` 的兩種樣子
 
@@ -131,6 +134,22 @@ brew install terminal-notifier
 沒裝時退化為 macOS 原生純文字通知（不可點擊跳轉），RiNG 會在第一次走到這條路時提示一次。
 通知聲音、重複提醒時間、後端選擇都能在 config 裡調整；通知後端也是可插拔的，見後面的
 `Notifier` 擴充說明。
+
+### 清理 RiNG 狀態檔（`ring gc`）
+
+RiNG 正常收到 `SessionEnd` 時會刪掉自己的 hook registry；如果 agent crash 或 hook 沒跑到結尾，
+可能留下已離場的 `~/.config/ring/sessions/*.json`。這些檔案預設不會顯示在看板上，但可以用
+`ring gc` 清掉。
+
+```sh
+ring gc --dry-run        # 預覽會刪哪些檔案
+ring gc                  # 清掉已離場且超過 7 天的 registry，以及過期 IPC 檔
+ring gc --older-than 1d  # 改成 1 天
+ring gc --all-ended      # 清掉所有目前判定已離場的 registry
+```
+
+`ring gc` 只清 RiNG 自己寫在 `~/.config/ring/` 底下的狀態檔，不會碰 Claude Code / Codex 的
+transcript 或 state。`ring doctor` 維持唯讀診斷，不會替你刪檔。
 
 ## Session 來源
 

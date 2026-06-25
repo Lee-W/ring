@@ -72,6 +72,7 @@ Zero-config mode can discover local Claude Code / Codex sessions without setup. 
 ring install-hooks            # merges into Claude Code / Codex hook settings
 ring install-hooks --dry-run  # preview without writing
 ring doctor                   # inspect hooks, notification backends, focusers, and config
+ring gc --dry-run             # preview RiNG-owned stale state cleanup
 ```
 
 Hooks only apply to new sessions, so restart Claude Code / Codex sessions after installing.
@@ -91,6 +92,8 @@ Hooks only apply to new sessions, so restart Claude Code / Codex sessions after 
 | `ring config` | Show config path and effective settings |
 | `ring config set KEY VALUE` | Write one config value |
 | `ring doctor` | Read-only environment diagnosis |
+| `ring gc --dry-run` | Preview RiNG-owned stale state cleanup |
+| `ring gc` | Clean RiNG-owned stale state files |
 
 ## Watch Mode
 
@@ -123,6 +126,22 @@ brew install terminal-notifier
 Without it, RiNG falls back to macOS text notifications without click-to-focus.
 Notification sound, repeat timing, and backend selection are configurable; notification backends
 are also pluggable via the `Notifier` extension point.
+
+### Cleaning RiNG State Files (`ring gc`)
+
+When RiNG receives `SessionEnd`, it removes its own hook registry entry. If an agent crashes or the
+final hook does not run, ended `~/.config/ring/sessions/*.json` files can remain. They are hidden from
+the board by default, and you can remove them with `ring gc`.
+
+```sh
+ring gc --dry-run        # preview what would be deleted
+ring gc                  # delete ended registry files older than 7 days, plus expired IPC files
+ring gc --older-than 1d  # use a 1-day threshold
+ring gc --all-ended      # delete every registry file currently classified as ended
+```
+
+`ring gc` only cleans state files RiNG owns under `~/.config/ring/`. It does not touch Claude Code /
+Codex transcripts or state. `ring doctor` remains read-only and never deletes files.
 
 ## Session Sources
 
