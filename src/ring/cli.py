@@ -419,6 +419,13 @@ def run_doctor(args: list[str]) -> int:
     selected = _select_notifier(cfg.notify_backend)
     if selected is not None:
         print(f"  {_('auto 實際選中')}：{selected.name}")
+        if sys.platform == "darwin" and selected.name in {"terminal-notifier", "osascript"}:
+            print(
+                "  "
+                + _(
+                    "macOS 提醒：若只聽到聲音但沒有通知框，請到系統設定的通知項目啟用 Banner/Alert。"
+                )
+            )
     else:
         # 附原因
         if cfg.notify_backend == "none":

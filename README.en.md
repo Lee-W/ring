@@ -176,6 +176,7 @@ active_window_seconds = 21600    # only look at sessions touched recently (6h)
 working_threshold_seconds = 90   # idle this long → 🟢 working becomes 🟡 idle
 notify_sound = true              # play a sound for system notifications
 notify_sound_name = "Glass"      # macOS / terminal-notifier sound name
+notify_ignore_dnd = false        # macOS terminal-notifier: bypass Do Not Disturb / Focus
 notify_repeat_seconds = [30, 120, 300]  # remind again if a session keeps waiting
 notify_repeat_max = 3            # max repeat reminders; 0 = unlimited
 focusers = ["tmux", "iTerm2", "Terminal"]   # jump attempt order

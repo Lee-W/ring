@@ -508,6 +508,31 @@ def test_doctor_selected_notify_backend(
     assert "auto 實際選中：不發通知（backend=none）" in out2
 
 
+def test_doctor_mac_notification_style_hint(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """macOS 上後端可用不等於通知框會顯示；doctor 要提示檢查系統通知樣式。"""
+    fake_src = _make_fake_source("hook", [])
+    monkeypatch.setattr("ring.sources._SOURCES", [fake_src])
+
+    fake_focuser = _make_fake_focuser("tmux")
+    monkeypatch.setattr("ring.focus._FOCUSERS", [fake_focuser])
+
+    monkeypatch.setattr("ring.hook.hook_status", lambda: _make_fake_hook_status(), raising=False)
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [_make_fake_notifier("terminal-notifier", True, True)])
+    monkeypatch.setattr(cli, "get_config", lambda: cli.Config(notify_backend="auto"))
+
+    with monkeypatch.context() as m:
+        m.setattr("ring.cli.sys.platform", "darwin")
+        m.setattr("shutil.which", lambda name: None)
+        rc = cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "若只聽到聲音但沒有通知框" in out
+    assert "Banner/Alert" in out
+
+
 def test_doctor_focuser_availability(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

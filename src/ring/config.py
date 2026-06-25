@@ -11,6 +11,7 @@
     waiting_window_seconds = 1800     # IDLE 升 WAITING 的時間窗上限（預設 30 分）
     notify_sound = true               # 系統通知帶聲音
     notify_sound_name = "Glass"       # macOS / terminal-notifier sound name
+    notify_ignore_dnd = false         # terminal-notifier 是否加 -ignoreDnD（穿透勿擾 / Focus）
     notify_backend = "auto"           # auto / terminal-notifier / osascript / notify-send / agent-hooks / none
                                       #   terminal-notifier 被 macOS 擋掉時設 "osascript"
                                       #   （看得到通知，但點擊不跳轉）；
@@ -55,6 +56,7 @@ class Config:
     waiting_window_seconds: int = 1800  # IDLE 升 WAITING 的時間窗上限（預設 30 分）
     notify_sound: bool = True
     notify_sound_name: str = "Glass"
+    notify_ignore_dnd: bool = False
     # 通知後端（完整說明見模組 docstring）：
     #   auto = 第一個可用後端（優先支援點擊跳轉的 terminal-notifier）；
     #   terminal-notifier / osascript / notify-send = 強制指定該後端；
@@ -125,6 +127,7 @@ def load(path: Path | None = None) -> Config:
         notify_sound_name=(
             raw["notify_sound_name"] if isinstance(raw.get("notify_sound_name"), str) else d.notify_sound_name
         ),
+        notify_ignore_dnd=_as_bool(raw.get("notify_ignore_dnd"), d.notify_ignore_dnd),
         notify_repeat_seconds=_as_positive_int_tuple(raw.get("notify_repeat_seconds"), d.notify_repeat_seconds),
         notify_repeat_max=max(0, _as_int(raw.get("notify_repeat_max"), d.notify_repeat_max)),
         notify_backend=notify_backend,
@@ -189,6 +192,7 @@ _SETTERS: dict[str, Callable[[str], object]] = {
     "waiting_window_seconds": _coerce_int,
     "notify_sound": _coerce_bool,
     "notify_sound_name": str,
+    "notify_ignore_dnd": _coerce_bool,
     "notify_backend": str,
     "notify_repeat_seconds": _coerce_int_list,
     "notify_repeat_max": _coerce_int,

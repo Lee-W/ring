@@ -166,6 +166,31 @@ class TestNotifyWithTerminalNotifier:
         args = mock_run.call_args[0][0]
         assert "-sound" not in args
 
+    def test_terminal_notifier_uses_ignore_dnd_when_enabled(self) -> None:
+        session = _s("uuid-1", "maigo")
+        with (
+            patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("ring.notify.get_config", return_value=Config(notify_ignore_dnd=True)),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            notify_waiting([session])
+
+        args = mock_run.call_args[0][0]
+        assert "-ignoreDnD" in args
+
+    def test_terminal_notifier_omits_ignore_dnd_by_default(self) -> None:
+        session = _s("uuid-1", "maigo")
+        with (
+            patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            notify_waiting([session])
+
+        args = mock_run.call_args[0][0]
+        assert "-ignoreDnD" not in args
+
 
 class TestNotifyWithOsascript:
     def test_falls_back_to_osascript_when_no_terminal_notifier(self) -> None:

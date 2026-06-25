@@ -19,6 +19,7 @@ def test_parses_values(tmp_path: Path) -> None:
         "working_threshold_seconds = 30\n"
         "notify_sound = false\n"
         'notify_sound_name = "Ping"\n'
+        "notify_ignore_dnd = true\n"
         "notify_repeat_seconds = [10, 20, 60]\n"
         "notify_repeat_max = 0\n"
         'focusers = ["Terminal", "iTerm2"]\n'
@@ -30,6 +31,7 @@ def test_parses_values(tmp_path: Path) -> None:
     assert cfg.working_threshold_seconds == 30
     assert cfg.notify_sound is False
     assert cfg.notify_sound_name == "Ping"
+    assert cfg.notify_ignore_dnd is True
     assert cfg.notify_repeat_seconds == (10, 20, 60)
     assert cfg.notify_repeat_max == 0
     assert cfg.focusers == ("Terminal", "iTerm2")
@@ -88,12 +90,14 @@ def test_set_value_coerces_types(tmp_path: Path) -> None:
     p = tmp_path / "config.toml"
     set_value("interval", "1.5", p)
     set_value("show_all", "true", p)
+    set_value("notify_ignore_dnd", "true", p)
     set_value("notify_repeat_max", "5", p)
     set_value("notify_repeat_seconds", "10, 20, 30", p)
     set_value("focusers", "tmux, iTerm2", p)
     cfg = load(p)
     assert cfg.interval == 1.5
     assert cfg.show_all is True
+    assert cfg.notify_ignore_dnd is True
     assert cfg.notify_repeat_max == 5
     assert cfg.notify_repeat_seconds == (10, 20, 30)
     assert cfg.focusers == ("tmux", "iTerm2")

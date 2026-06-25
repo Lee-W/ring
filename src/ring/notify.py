@@ -203,6 +203,8 @@ def _notify_with_terminal_notifier(sessions: list[Session]) -> None:
         ]
         if cfg.notify_sound:
             cmd.extend(["-sound", cfg.notify_sound_name or "default"])
+        if cfg.notify_ignore_dnd:
+            cmd.append("-ignoreDnD")
         try:
             subprocess.run(
                 cmd,
