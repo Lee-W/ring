@@ -17,9 +17,15 @@ from ring.registry import Session, Status
 def _hermetic_config(monkeypatch: pytest.MonkeyPatch) -> None:
     """讓 notify 測試不受機器上 ~/.config/ring/config.toml 影響（預設 backend=auto）。
 
-    需要特定 config 的測試仍可在內部用 ``with patch("ring.notify.get_config", ...)`` 覆寫。
+    backend 選擇讀 ``ring.notify.get_config``；實際送出讀各後端模組自己的 get_config，
+    所以三個位置都要蓋成 hermetic 預設。需要特定 config 的測試再於內部 ``patch`` 對應位置。
     """
-    monkeypatch.setattr("ring.notify.get_config", lambda: Config())
+    for target in (
+        "ring.notify.get_config",
+        "ring.notify.terminal_notifier.get_config",
+        "ring.notify.osascript_notifier.get_config",
+    ):
+        monkeypatch.setattr(target, lambda: Config())
 
 
 def _which_only(*available: str) -> Callable[[str], str | None]:
@@ -56,7 +62,7 @@ class TestNotifyWithTerminalNotifier:
         session = _s("test-uuid-123", "proj")
         with (
             patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
-            patch("ring.notify._ring_executable", return_value="/opt/ring/bin/ring"),
+            patch("ring.notify.terminal_notifier._ring_executable", return_value="/opt/ring/bin/ring"),
             patch("subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=0)
@@ -72,7 +78,7 @@ class TestNotifyWithTerminalNotifier:
         session = _s("codex:session with space", "proj")
         with (
             patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
-            patch("ring.notify._ring_executable", return_value="/opt/ring/bin/ring"),
+            patch("ring.notify.terminal_notifier._ring_executable", return_value="/opt/ring/bin/ring"),
             patch("subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=0)
@@ -144,7 +150,10 @@ class TestNotifyWithTerminalNotifier:
         session = _s("uuid-1", "maigo")
         with (
             patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
-            patch("ring.notify.get_config", return_value=Config(notify_sound=True, notify_sound_name="Glass")),
+            patch(
+                "ring.notify.terminal_notifier.get_config",
+                return_value=Config(notify_sound=True, notify_sound_name="Glass"),
+            ),
             patch("subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=0)
@@ -157,7 +166,7 @@ class TestNotifyWithTerminalNotifier:
         session = _s("uuid-1", "maigo")
         with (
             patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
-            patch("ring.notify.get_config", return_value=Config(notify_sound=False)),
+            patch("ring.notify.terminal_notifier.get_config", return_value=Config(notify_sound=False)),
             patch("subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=0)
@@ -170,7 +179,7 @@ class TestNotifyWithTerminalNotifier:
         session = _s("uuid-1", "maigo")
         with (
             patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
-            patch("ring.notify.get_config", return_value=Config(notify_ignore_dnd=True)),
+            patch("ring.notify.terminal_notifier.get_config", return_value=Config(notify_ignore_dnd=True)),
             patch("subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=0)
@@ -198,7 +207,7 @@ class TestNotifyWithOsascript:
         session = _s("uuid-1", "maigo")
         with (
             patch("shutil.which", side_effect=_which_only("osascript")),
-            patch("ring.notify.osascript") as mock_osa,
+            patch("ring.notify.osascript_notifier.osascript") as mock_osa,
             patch("ring.notify._HINT_MARKER") as mock_marker,
         ):
             mock_osa.return_value = (0, "", "")
@@ -213,7 +222,7 @@ class TestNotifyWithOsascript:
         sessions = [_s("uuid-1", "proj1"), _s("uuid-2", "proj2")]
         with (
             patch("shutil.which", side_effect=_which_only("osascript")),
-            patch("ring.notify.osascript") as mock_osa,
+            patch("ring.notify.osascript_notifier.osascript") as mock_osa,
             patch("ring.notify._HINT_MARKER") as mock_marker,
         ):
             mock_osa.return_value = (0, "", "")
@@ -226,7 +235,7 @@ class TestNotifyWithOsascript:
         session = _s("uuid-1", "myproject", cwd="/home/user/repos/myproject")
         with (
             patch("shutil.which", side_effect=_which_only("osascript")),
-            patch("ring.notify.osascript") as mock_osa,
+            patch("ring.notify.osascript_notifier.osascript") as mock_osa,
             patch("ring.notify._HINT_MARKER") as mock_marker,
         ):
             mock_osa.return_value = (0, "", "")
@@ -239,8 +248,11 @@ class TestNotifyWithOsascript:
         session = _s("uuid-1", "maigo")
         with (
             patch("shutil.which", side_effect=_which_only("osascript")),
-            patch("ring.notify.get_config", return_value=Config(notify_sound=True, notify_sound_name="Glass")),
-            patch("ring.notify.osascript") as mock_osa,
+            patch(
+                "ring.notify.osascript_notifier.get_config",
+                return_value=Config(notify_sound=True, notify_sound_name="Glass"),
+            ),
+            patch("ring.notify.osascript_notifier.osascript") as mock_osa,
             patch("ring.notify._HINT_MARKER") as mock_marker,
         ):
             mock_osa.return_value = (0, "", "")
@@ -255,7 +267,7 @@ class TestNotifyWithOsascript:
         session = _s("uuid-1")
         with (
             patch("shutil.which", side_effect=_which_only("osascript")),
-            patch("ring.notify.osascript", side_effect=Exception("osa error")),
+            patch("ring.notify.osascript_notifier.osascript", side_effect=Exception("osa error")),
             patch("ring.notify._HINT_MARKER") as mock_marker,
         ):
             mock_marker.exists.return_value = True
@@ -305,7 +317,7 @@ class TestNotifyBackend:
         with (
             patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
             patch("ring.notify.get_config", return_value=Config(notify_backend="osascript")),
-            patch("ring.notify.osascript") as mock_osa,
+            patch("ring.notify.osascript_notifier.osascript") as mock_osa,
             patch("subprocess.run") as mock_run,
             patch("ring.notify._HINT_MARKER") as mock_marker,
         ):
@@ -321,7 +333,7 @@ class TestNotifyBackend:
         with (
             patch("shutil.which", side_effect=_which_only("osascript")),
             patch("ring.notify.get_config", return_value=Config(notify_backend="osascript")),
-            patch("ring.notify.osascript", return_value=(0, "", "")),
+            patch("ring.notify.osascript_notifier.osascript", return_value=(0, "", "")),
         ):
             assert notify_waiting([session]) is None
 
@@ -332,7 +344,7 @@ class TestNotifyBackend:
             patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
             patch("ring.notify.get_config", return_value=Config(notify_backend="terminal-notifier")),
             patch("subprocess.run") as mock_run,
-            patch("ring.notify.osascript") as mock_osa,
+            patch("ring.notify.osascript_notifier.osascript") as mock_osa,
         ):
             mock_run.return_value = MagicMock(returncode=0)
             notify_waiting([session])
@@ -442,7 +454,7 @@ class TestNotifyEmpty:
         with (
             patch("shutil.which") as mock_which,
             patch("subprocess.run") as mock_run,
-            patch("ring.notify.osascript") as mock_osa,
+            patch("ring.notify.osascript_notifier.osascript") as mock_osa,
         ):
             notify_waiting([])
         mock_which.assert_not_called()

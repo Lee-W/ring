@@ -1,63 +1,21 @@
-"""Session 來源——讓 RiNG 不綁死 Claude Code。
+"""Session 來源 package——讓 RiNG 不綁死 Claude Code。
 
 每個工具是一個 ``SessionSource``：core 不認識任何具體工具，只把各 source 吐出的
-``Session`` 收齊、配 tmux 座標、排序。要支援別的 agent CLI＝寫一個 source、
-``register_source()`` 註冊，core 零改動（跟 ``focus.py`` 的 focuser 同一套設計）。
-
-``Session`` 本身已是工具中立的（session_id / cwd / status / last_action / tty…），
-所以新 source 只要負責「怎麼找到自己的 session、怎麼填這個 model」。
+``Session`` 收齊、配 tmux 座標、排序。要支援別的 agent CLI＝在這個 package 加一個
+模組、``register_source()`` 註冊，core 零改動（跟 ``focus`` 的 focuser 同一套設計）。
 """
 
 from __future__ import annotations
 
-from typing import Protocol
-
 import ring.registry as registry
 from ring.registry import Session, Status
-
-
-class SessionSource(Protocol):
-    name: str
-
-    def discover(self) -> list[Session]: ...
-
-
-class HookRegistrySource:
-    """RiNG hook registry：所有 provider 的精準事件來源。"""
-
-    name = "hook"
-
-    def discover(self) -> list[Session]:
-        return registry._hook_sessions(procs_by_provider=registry.collect_provider_procs())
-
-
-class ClaudeCodeSource:
-    """Claude Code：掃 ``~/.claude/projects`` 的 JSONL。"""
-
-    name = "claude-code"
-
-    def discover(self) -> list[Session]:
-        procs = registry._claude_procs()
-        merged: dict[str, Session] = {}
-        for s in registry._scan_sessions(procs):
-            merged.setdefault(s.session_id, s)
-        existing = list(merged.values())
-        for s in registry._synthetic_sessions(procs, existing):
-            merged.setdefault(s.session_id, s)  # 合成列只填無 row 的 cwd
-        return list(merged.values())
-
-
-class CodexSource:
-    """Codex CLI：讀 ``~/.codex/state_5.sqlite`` threads，並用 live ``codex`` process 配 tty。"""
-
-    name = "codex"
-
-    def discover(self) -> list[Session]:
-        return registry._codex_threads(registry._codex_procs())
-
+from ring.sources.base import SessionSource
+from ring.sources.claude_code import source as _claude_code
+from ring.sources.codex import source as _codex
+from ring.sources.hook_registry import source as _hook_registry
 
 # 註冊表（順序＝彙整順序）。hook registry 先於 zero-config source，精準事件優先。
-_SOURCES: list[SessionSource] = [HookRegistrySource(), ClaudeCodeSource(), CodexSource()]
+_SOURCES: list[SessionSource] = [_hook_registry, _claude_code, _codex]
 
 
 def register_source(source: SessionSource, *, first: bool = False) -> None:
@@ -125,3 +83,12 @@ def get_by_id(session_id: str) -> Session | None:
         if s.session_id == session_id:
             return s
     return None
+
+
+__all__ = [
+    "SessionSource",
+    "discover_sessions",
+    "get_by_id",
+    "register_source",
+    "sources",
+]

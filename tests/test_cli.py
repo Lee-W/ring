@@ -560,7 +560,7 @@ def test_doctor_focuser_availability(
         return 0, "false", ""
 
     with (
-        patch("ring.focus.base.osascript", fake_osascript),
+        patch("ring.osascript.osascript", fake_osascript),
         patch("shutil.which", fake_which),
     ):
         rc = cli.main(["doctor"])

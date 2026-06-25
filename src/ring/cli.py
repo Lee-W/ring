@@ -358,9 +358,9 @@ def run_doctor(args: list[str]) -> int:
         return 2
 
     from ring.focus import focusers
-    from ring.focus.base import osascript
     from ring.hook import hook_status
     from ring.notify import _select_notifier, notifiers
+    from ring.osascript import osascript
 
     cfg = get_config()
 

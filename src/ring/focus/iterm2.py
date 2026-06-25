@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ring.focus.base import AppleScriptTTYFocuser
+from ring.focus.applescript import AppleScriptTTYFocuser
 
 _SCRIPT = """
 if application "iTerm2" is running then
