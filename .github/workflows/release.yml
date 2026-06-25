@@ -1,0 +1,58 @@
+name: Release
+
+# On push to main, commitizen bumps the version from conventional commits,
+# writes the CHANGELOG, tags, then we build and publish to PyPI and cut a
+# GitHub Release. Everything runs in one job, so it does not rely on the tag
+# push triggering a second workflow and the default GITHUB_TOKEN is enough.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # push bump commit + tag, create the GitHub Release
+  id-token: write # PyPI Trusted Publishing (OIDC, no token needed)
+
+jobs:
+  release:
+    # Don't bump again on commitizen's own "bump:" commit. (Commits pushed with
+    # GITHUB_TOKEN don't re-trigger workflows anyway; this is belt-and-suspenders.)
+    if: "!startsWith(github.event.head_commit.message, 'bump:')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Bump version & changelog
+        id: cz
+        uses: commitizen-tools/commitizen-action@0.27.1
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Only this bump's changelog section, used as the GitHub Release body.
+          changelog_increment_filename: body.md
+
+      - name: Set up uv
+        if: steps.cz.outputs.version != steps.cz.outputs.previous_version
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          python-version: "3.13"
+
+      - name: Build distributions
+        if: steps.cz.outputs.version != steps.cz.outputs.previous_version
+        run: uv build
+
+      - name: Publish to PyPI
+        if: steps.cz.outputs.version != steps.cz.outputs.previous_version
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Create GitHub Release
+        if: steps.cz.outputs.version != steps.cz.outputs.previous_version
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.cz.outputs.version }}
+          body_path: body.md
+          files: dist/*

@@ -1,5 +1,7 @@
+# PyPI 上 `ring` 已被既有套件佔用，發佈名改用 `ring-cli`；
+# import 的 module（見 [tool.uv.build-backend] module-name）與 CLI 指令仍是 `ring`。
 [project]
-name = "ring"
+name = "ring-cli"
 version = "0.1.0"
 description = "RiNG — Realtime Instance Notification Grid：看所有 active 的 agent CLI session（內建 Claude Code）上台的場館 TUI。"
 readme = "README.md"
@@ -19,6 +21,10 @@ classifiers = [
   "Topic :: Utilities",
 ]
 dependencies = ["rich>=13"]
+
+[project.urls]
+Homepage = "https://github.com/Lee-W/ring"
+Repository = "https://github.com/Lee-W/ring"
 
 [project.optional-dependencies]
 # live TUI 進階版用 Textual（建在 Rich 之上）。
