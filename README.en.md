@@ -2,6 +2,10 @@
 
 [台灣漢語](https://github.com/Lee-W/ring/blob/main/README.md) · **English**
 
+[![PyPI](https://img.shields.io/pypi/v/ring-cli?label=PyPI)](https://pypi.org/project/ring-cli/)
+[![Python](https://img.shields.io/pypi/pyversions/ring-cli)](https://pypi.org/project/ring-cli/)
+[![License](https://img.shields.io/pypi/l/ring-cli)](LICENSE)
+
 > **R**ealtime **I**nstance **N**otification **G**rid
 > — a local dashboard for active agent-CLI sessions. Claude Code and Codex are built in; other tools can plug in.
 

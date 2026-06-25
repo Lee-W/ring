@@ -2,6 +2,10 @@
 
 **台灣漢語** · [English](README.en.md)
 
+[![PyPI](https://img.shields.io/pypi/v/ring-cli?label=PyPI)](https://pypi.org/project/ring-cli/)
+[![Python](https://img.shields.io/pypi/pyversions/ring-cli)](https://pypi.org/project/ring-cli/)
+[![License](https://img.shields.io/pypi/l/ring-cli)](LICENSE)
+
 > **R**ealtime **I**nstance **N**otification **G**rid
 > ——看所有 active 的 agent CLI session 上台的**場館**（內建 Claude Code / Codex，可擴充）。
 
