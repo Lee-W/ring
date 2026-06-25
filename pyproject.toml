@@ -3,13 +3,13 @@
 [project]
 name = "ring-cli"
 version = "0.1.0"
-description = "RiNG — Realtime Instance Notification Grid：看所有 active 的 agent CLI session（內建 Claude Code）上台的場館 TUI。"
-readme = "README.md"
+description = "RiNG — Realtime Instance Notification Grid for active agent CLI sessions."
+readme = "README.en.md"
 requires-python = ">=3.13"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Wei Lee", email = "weilee.rx@gmail.com" }]
-keywords = ["claude-code", "tui", "dashboard", "session", "monitor", "rich"]
+keywords = ["claude-code", "codex", "tui", "dashboard", "session", "monitor", "rich"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",

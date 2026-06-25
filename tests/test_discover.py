@@ -67,6 +67,23 @@ def test_scan_marks_live_newest_and_ends_the_rest(monkeypatch: pytest.MonkeyPatc
     assert by_id["blog"].status is Status.ENDED  # cwd 沒有活著的 claude
 
 
+def test_scan_marks_recent_transcript_ended_without_live_proc(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """關掉整個終端後，就算 transcript 很新，也不能繼續冒充活 session。"""
+    projects = tmp_path / "projects"
+    _write_session(projects, "-work-app", "closed", "/work/app", time.time())
+
+    monkeypatch.setattr(registry, "CLAUDE_PROJECTS", projects)
+    monkeypatch.setattr(registry, "RING_REGISTRY", tmp_path / "noreg")
+    monkeypatch.setattr(registry, "_claude_procs", lambda: [])
+    monkeypatch.setattr(registry, "_tmux_targets", lambda: {})
+
+    sessions = discover_sessions()
+
+    assert sessions[0].status is Status.ENDED
+
+
 def test_scan_action_parsed_from_jsonl(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     projects = tmp_path / "projects"
     _write_session(projects, "-work-app", "s", "/work/app", time.time())

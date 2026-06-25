@@ -267,8 +267,8 @@ msgid ""
 "  hook [PROVIDER]              從 stdin 讀 provider hook payload，寫入 RiNG "
 "registry\n"
 "  hook --provider PROVIDER     同上，明確指定 provider（例如 codex）\n"
-"  install-hooks [--dry-run]    安裝 Claude Code hooks\n"
-"  remove-hooks [--dry-run]     移除 Claude Code hooks\n"
+"  install-hooks [--dry-run]    安裝 Claude Code / Codex hooks\n"
+"  remove-hooks [--dry-run]     移除 Claude Code / Codex hooks\n"
 "  config                       顯示設定檔位置與目前生效的設定\n"
 "  config get KEY               讀單一設定的目前值\n"
 "  config set KEY VALUE         寫入單一設定（會重寫設定檔，不保留註解）\n"
@@ -287,14 +287,14 @@ msgstr ""
 msgid ""
 "usage: ring install-hooks [--dry-run]\n"
 "\n"
-"安裝 Claude Code hooks 到 ~/.claude/settings.json。\n"
+"安裝 Claude Code / Codex hooks。\n"
 msgstr ""
 
 #: src/ring/cli.py:571
 msgid ""
 "usage: ring remove-hooks [--dry-run]\n"
 "\n"
-"從 ~/.claude/settings.json 移除 RiNG 安裝的 Claude Code hooks。\n"
+"從 Claude Code / Codex hook 設定移除 RiNG 安裝的 hooks。\n"
 msgstr ""
 
 #: src/ring/cli.py:577
@@ -350,11 +350,11 @@ msgid "語言（如 en / zh-Hant；也吃 config / RING_LANG / LANG）"
 msgstr ""
 
 #: src/ring/hook.py:73
-msgid "重開 Claude Code session 後，🔴 待回覆狀態就會精準起來。"
+msgid "重開 Claude Code session 後，🔴 等你狀態就會精準起來。"
 msgstr ""
 
 #: src/ring/hook.py:83
-msgid "重開 Codex session、並在它詢問時「信任」這個 hook，🔴 待回覆狀態才會精準起來（Codex 不會執行未信任的 hook）。"
+msgid "重開 Codex session、並在它詢問時「信任」這個 hook，🔴 等你狀態才會精準起來（Codex 不會執行未信任的 hook）。"
 msgstr ""
 
 #: src/ring/hook.py:331
@@ -465,6 +465,10 @@ msgstr ""
 msgid "已離場的 session 無法跳轉"
 msgstr ""
 
+#: src/ring/focus/__init__.py:61
+msgid "找不到這個終端分頁（可能已關閉；刷新後若仍存在，請裝 hook 取得更精準狀態）"
+msgstr ""
+
 #: src/ring/focus/__init__.py:60
 msgid "沒有 focuser 接得住（裝 hook，或一個專案只開一個 session 才測得到 tty）"
 msgstr ""
@@ -478,4 +482,3 @@ msgstr ""
 #, python-brace-format
 msgid "RiNG · {project} 在等你回話"
 msgstr ""
-

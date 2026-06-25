@@ -57,6 +57,8 @@ def jump(session: Session) -> tuple[bool, str]:
         failures.append(f"{focuser.name}: {msg}")
     if failures:
         return False, "; ".join(failures)
+    if session.tty:
+        return False, _("找不到這個終端分頁（可能已關閉；刷新後若仍存在，請裝 hook 取得更精準狀態）")
     return False, _("沒有 focuser 接得住（裝 hook，或一個專案只開一個 session 才測得到 tty）")
 
 

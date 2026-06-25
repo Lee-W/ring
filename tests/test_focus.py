@@ -61,6 +61,21 @@ def test_falls_through_iterm2_to_terminal(monkeypatch: pytest.MonkeyPatch) -> No
     assert focus.jump(_sess(tty="/dev/ttys003")) == (True, "Terminal /dev/ttys003")
 
 
+def test_stale_tty_reports_closed_terminal_tab(monkeypatch: pytest.MonkeyPatch) -> None:
+    outs: Iterator[str] = iter(["notfound", "notfound"])
+    monkeypatch.setattr("ring.focus.applescript.shutil.which", lambda _name: "/usr/bin/osascript")
+
+    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(cmd, 0, stdout=next(outs), stderr="")
+
+    monkeypatch.setattr("ring.osascript.subprocess.run", fake_run)
+
+    ok, msg = focus.jump(_sess(tty="/dev/ttys999"))
+
+    assert ok is False
+    assert "可能已關閉" in msg
+
+
 def test_surfaces_osascript_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("ring.focus.applescript.shutil.which", lambda _name: "/usr/bin/osascript")
 

@@ -542,8 +542,8 @@ def _commands_help() -> str:
 commands:
   hook [PROVIDER]              從 stdin 讀 provider hook payload，寫入 RiNG registry
   hook --provider PROVIDER     同上，明確指定 provider（例如 codex）
-  install-hooks [--dry-run]    安裝 Claude Code hooks
-  remove-hooks [--dry-run]     移除 Claude Code hooks
+  install-hooks [--dry-run]    安裝 Claude Code / Codex hooks
+  remove-hooks [--dry-run]     移除 Claude Code / Codex hooks
   config                       顯示設定檔位置與目前生效的設定
   config get KEY               讀單一設定的目前值
   config set KEY VALUE         寫入單一設定（會重寫設定檔，不保留註解）
@@ -564,13 +564,13 @@ def _subcommand_help(name: str) -> str:
         "install-hooks": _(
             """usage: ring install-hooks [--dry-run]
 
-安裝 Claude Code hooks 到 ~/.claude/settings.json。
+安裝 Claude Code / Codex hooks。
 """
         ),
         "remove-hooks": _(
             """usage: ring remove-hooks [--dry-run]
 
-從 ~/.claude/settings.json 移除 RiNG 安裝的 Claude Code hooks。
+從 Claude Code / Codex hook 設定移除 RiNG 安裝的 hooks。
 """
         ),
         "config": _(

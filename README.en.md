@@ -1,116 +1,195 @@
 # RiNG 🎤
 
-[台灣漢語](README.md) · **English**
+[台灣漢語](https://github.com/Lee-W/ring/blob/main/README.md) · **English**
 
 > **R**ealtime **I**nstance **N**otification **G**rid
-> — a stage where all your active agent-CLI sessions perform (Claude Code / Codex built in, extensible).
+> — a local dashboard for active agent-CLI sessions. Claude Code and Codex are built in; other tools can plug in.
 
-You've got several Claude Code / Codex sessions running at once and can't tell which one
-is waiting for your reply, which is still working, and which died long ago. RiNG puts them all
-on one stage at a glance — **whoever's waiting for you comes first**. When a session needs you,
-it literally **rings** you.
+When you run several Claude Code / Codex sessions at the same time, it is easy to lose track of
+which one is still working, which one has finished a turn, and which one needs your response.
+RiNG puts them on one board, with sessions waiting for you sorted first.
 
-The name is a triple pun: 📞 it **rings** you (a waiting-for-reply ping) + 🎤 the live house
-"RiNG" from *BanG Dream! It's MyGO!!!!!* (a venue — you sit and watch one band, i.e. one session,
-after another) + **R**ealtime **I**nstance **N**otification **G**rid (what it actually is).
+```text
+🎤 RiNG — 3 sessions on stage · 2 agent processes running
+
+  🔴 maigo            12s  → waiting for permission
+  🟢 pelican-osm       3s  → Edit
+  🟡 commitizen        8m  turn finished, idle
+```
+
+## Who It Is For
+
+- You run multiple Claude Code / Codex sessions in parallel.
+- You want one board for “working”, “idle”, “waiting for me”, and “ended”.
+- You want to jump from a TUI row back to the terminal where the session lives.
+- You are willing to install hooks for precise waiting-state detection and system notifications.
+
+## Key Features
+
+- **One board for every session**: Claude Code / Codex are built in; other tools can feed `ring hook`.
+- **Waiting first**: sessions that need your response are highlighted and sorted above the rest.
+- **Jump back to the terminal**: in the TUI, select a session and press `Enter` / `Space` to focus tmux, iTerm2, or Terminal.app.
+- **System notifications**: hook mode can beep and notify when a session starts waiting; with `terminal-notifier`, clicking the notification jumps back.
+- **Name your sessions**: press `n` in the TUI to add a local label such as `maigo · auth refactor`.
+- **Local and extensible**: RiNG only reads local Claude Code / Codex data and writes `~/.config/ring/`; session sources, focusers, and notifiers are pluggable.
 
 ## Run
 
-`ring` has to be installed as a command first — cloning and typing `ring` gives `command not found`.
+Requires Python 3.13+. The PyPI package is named `ring-cli`, while the import module and CLI command are both `ring`.
 
 ```sh
-# During development: run straight from the repo (uv builds the entry point)
-uv run ring                       # one-shot snapshot
-uv run ring --watch               # keep refreshing, Ctrl-C to leave
-uv run ring --watch --interval 1  # custom refresh seconds
+# Recommended: install the command from PyPI
+uv tool install 'ring-cli[tui]'
 
-# Install as a global command, then just type ring
-uv tool install '.[tui]'          # [tui] brings the Textual UI; or pipx install '.[tui]'
+# Or use pipx
+pipx install 'ring-cli[tui]'
+
+# Then run it
+ring
 ring --watch
+ring --watch --interval 1
 
-# Once installed, the module form works too
+# Module form also works after installation
 python -m ring
 ```
 
-`--count N` makes `--watch` stop after N frames (for CI / tests).
+The `[tui]` extra installs the Textual interactive UI. Without it, `--watch` falls back to Rich polling, then plain text.
 
-### Two faces of `--watch`
+For development inside the repository:
 
-- With **Textual** (`[tui]` extra) in a real terminal → an **interactive TUI**:
-  `↑/↓` select a session, `Enter`/`Space` jump to its terminal, `a` toggle ended ones, `r` refresh, `q` quit.
-- Otherwise → **Rich poll** (clear and redraw); without even Rich, plain text. Three tiers of graceful degradation.
+```sh
+uv run ring
+uv run ring --watch
+```
 
-### Jump to a session (`Enter` / `Space`)
+Zero-config mode can discover local Claude Code / Codex sessions without setup. For precise 🔴 waiting detection, install hooks:
 
-Pick a session and press `Enter` — RiNG brings focus to the terminal it actually lives in. The
-terminal integration is a **pluggable focuser**; the core isn't tied to any vendor:
+```sh
+ring install-hooks            # merges into Claude Code / Codex hook settings
+ring install-hooks --dry-run  # preview without writing
+ring doctor                   # inspect hooks, notification backends, focusers, and config
+```
 
-- **tmux**: `switch-client` straight to that pane (you and it must share a tmux server).
-- **iTerm2 / Terminal.app** (macOS): use the session's `tty` to focus the matching tab via
-  AppleScript, picking the right app automatically (an app that isn't running won't be woken up).
-  The first time you'll get a system "Automation" prompt — allow once.
+Hooks only apply to new sessions, so restart Claude Code / Codex sessions after installing.
 
-Which session lives in which terminal is matched by its `tty` — **most precise in Claude Code
-hook mode**; under zero-config it also lines up when a project has only one session. Codex
-currently uses zero-config: jump works when a cwd has one live Codex process; with multiple
-live Codex sessions in the same cwd, RiNG shows them conservatively to avoid focusing the wrong tab.
+## Common Commands
 
-### It rings you 🔔
+| Command | Purpose |
+|---------|---------|
+| `ring` | Print a one-shot snapshot |
+| `ring --watch` | Keep refreshing; enters the TUI when Textual is installed |
+| `ring --watch --interval 1` | Refresh every second |
+| `ring --watch --count N` | Stop after N frames, useful for tests / CI |
+| `ring --all` | Show ended sessions too |
+| `ring --no-legend` | Hide the legend |
+| `ring --lang zh-Hant` | Switch UI language |
+| `ring focus SESSION_ID` | Focus a specific session |
+| `ring config` | Show config path and effective settings |
+| `ring config set KEY VALUE` | Write one config value |
+| `ring doctor` | Read-only environment diagnosis |
 
-With hooks installed, when a session flips from working to 🔴 waiting, RiNG **beeps and notifies** —
-true to its name, it really rings you. If it stays waiting, RiNG can remind you again on a
-configurable schedule. (Zero-config can't detect WAITING, so this needs hook mode.)
+## Watch Mode
 
-## Two data sources
+- With **Textual** (`[tui]` extra) in a real terminal: interactive TUI.
+  Use `↑/↓` to select, `Enter` / `Space` to jump, `n` to name a session, `a` to toggle ended sessions, `r` to refresh, and `q` to quit.
+  If you have vim muscle memory like I do, `j/k` move up/down and `g/G` jump to the first/last row.
+- Otherwise: Rich polling; without Rich, plain text.
 
-| Mode | Source | Status precision |
-|------|--------|------------------|
-| **Claude Code zero-config** (default) | scans `~/.claude/projects/**/*.jsonl` mtimes + the `cwd` field in records | medium (can infer turn-ended from transcript tail; can't see permission notifications) |
-| **Codex zero-config** (default) | reads `~/.codex/state_5.sqlite` threads + rollout JSONL and matches live `codex` processes to ttys | medium (live / ended / turn-ended; same-cwd multi-session jumps are not guaranteed) |
-| **hook registry** (opt-in, precise) | RiNG hooks write `~/.config/ring/sessions/` on `Notification` / `UserPromptSubmit` / `Stop` / `SessionEnd` | precise (🔴 waiting / 🟢 working / 🟡 idle / ⚫ ended) |
+### Jump To A Session
 
-Zero-config needs no setup; for precise "who's waiting for me", feed provider hook events into
-RiNG's registry. RiNG ships a Claude Code installer; Codex and future tools can use the
-provider-neutral `ring hook` protocol directly.
+Select a session and press `Enter`. RiNG focuses the terminal where that session is running.
 
-## hook mode (precise "waiting for reply")
+- **tmux**: switches directly to the pane via `switch-client`.
+- **iTerm2 / Terminal.app** on macOS: uses the session `tty` and AppleScript to focus the matching tab. The first run may ask for macOS Automation permission.
 
-Zero-config only has file mtimes or local state snapshots, so it **can't reliably tell "needs a
-decision from you" from "just finished"**. With hooks, RiNG receives agent-CLI events directly
-and the status becomes precise — 🔴 waiting plus the beep both rely on it.
+TTY matching is most accurate in hook mode. Without hooks, Codex falls back to zero-config matching:
+one live Codex session per cwd can jump correctly; multiple live Codex sessions in the same cwd are shown conservatively to avoid focusing the wrong tab.
 
-### Claude Code: built-in installer
+### Notifications
 
-1. **Install globally** so `ring` is on `PATH` (Claude hooks run `ring hook`):
+Default behavior: with hooks installed, when a session changes to 🔴 waiting, RiNG beeps and sends
+a system notification. If it keeps waiting, RiNG reminds you again at 30s / 120s / 300s by default.
 
-   ```sh
-   uv tool install '.[tui]'
-   ```
+For clickable notifications on macOS, install `terminal-notifier`:
 
-2. **Register the hooks:**
+```sh
+brew install terminal-notifier
+```
 
-   ```sh
-   ring install-hooks            # writes ~/.claude/settings.json (merges, doesn't clobber)
-   ring install-hooks --dry-run  # preview without touching the file
-   ```
+Without it, RiNG falls back to macOS text notifications without click-to-focus.
+Notification sound, repeat timing, and backend selection are configurable; notification backends
+are also pluggable via the `Notifier` extension point.
 
-   | Claude Code event | RiNG status |
-   |---|---|
-   | `SessionStart` / `UserPromptSubmit` | 🟢 working |
-   | `Stop` | 🟡 idle |
-   | `Notification` with `permission_prompt` / `elicitation_dialog` | 🔴 waiting |
-   | `PermissionRequest` / `PreToolUse` with `AskUserQuestion` | 🔴 waiting |
-   | `SessionEnd` | disappears from the board |
+## Session Sources
 
-3. **Reopen sessions** (hooks only apply to new ones) and verify:
+RiNG collects sessions from registered sources. Built-ins:
 
-   ```sh
-   ls ~/.config/ring/sessions/   # a <session_id>.json means hooks are writing
-   ```
+| Source | Reads From | Precision |
+|--------|------------|-----------|
+| **Claude Code zero-config** | `~/.claude/projects/**/*.jsonl`, mtimes, and `cwd` fields | no setup; detects recent activity and turn completion. Precise user-action prompts require hooks |
+| **Codex zero-config** | `~/.codex/state_5.sqlite`, rollout JSONL, and live `codex` processes | no setup; detects live / ended / turn completion. Use hooks for precise jumps when multiple sessions share a cwd |
+| **hook registry** | `~/.config/ring/sessions/`, written by `ring hook` | precise: 🔴 waiting / 🟢 working / 🟡 idle / ⚫ ended |
 
-### Codex / Future Providers: Neutral Hook Protocol
+Zero-config needs no setup. For precise “who needs me”, install hooks so provider events feed the RiNG registry.
+RiNG includes installers for Claude Code and Codex; other tools can use the provider-neutral `ring hook` protocol.
 
-RiNG does not depend on agent-hooks. Any tool can feed JSON into `ring hook` when an event happens:
+## States
+
+RiNG reduces every session to four user-facing states. 🔴 waiting is sorted first.
+
+| State | Meaning | What RiNG Saw |
+|-------|---------|---------------|
+| 🔴 waiting | You should return now | hook event requiring a user response, such as permission or choices |
+| 🟢 working | Agent is running | prompt submitted or recent activity |
+| 🟡 idle | The current turn finished | `Stop`, or no new activity past `working_threshold_seconds` |
+| ⚫ ended | Session is over | `SessionEnd`, process ended, or local records aged out |
+
+🔴 waiting requires hook mode. Zero-config can tell whether a session was recently active, but not whether it needs a decision from you.
+
+## Hook Mode
+
+Zero-config only has filesystem mtimes and local state snapshots, so it cannot reliably distinguish “needs a decision” from “just finished”.
+Hooks send agent-CLI events directly to RiNG, making 🔴 waiting and notifications precise.
+
+### Claude Code / Codex Installer
+
+Hooks run `ring hook`, so install `ring` somewhere stable on `PATH` first:
+
+```sh
+uv tool install 'ring-cli[tui]'
+```
+
+Then register hooks:
+
+```sh
+ring install-hooks
+ring install-hooks --dry-run
+```
+
+Claude Code hooks are written to `~/.claude/settings.json`. If `~/.codex` exists, Codex hooks are also written to
+`~/.codex/hooks.json`; Codex will ask you to trust the hook before it runs it.
+
+Claude Code events:
+
+| Claude Code Event | RiNG State |
+|-------------------|------------|
+| `SessionStart` / `UserPromptSubmit` | 🟢 working |
+| `Stop` | 🟡 idle |
+| `Notification` with `permission_prompt` / `elicitation_dialog` | 🔴 waiting |
+| `PermissionRequest` / `PreToolUse` with `AskUserQuestion` | 🔴 waiting |
+| `SessionEnd` | removed from the board |
+
+Codex currently installs the supported interactive events: `PreToolUse`, `PermissionRequest`, and `Stop`.
+
+Verify that hooks are writing:
+
+```sh
+ls ~/.config/ring/sessions/
+```
+
+### Other Providers
+
+Any tool can feed JSON into `ring hook`:
 
 ```sh
 ring hook --provider codex
@@ -134,54 +213,55 @@ Payload field names are intentionally loose. At minimum, provide a session id, e
 }
 ```
 
-Event semantics match Claude Code: `SessionStart` / `UserPromptSubmit` → 🟢, `Stop` → 🟡,
-actionable `Notification` / `PermissionRequest` → 🔴, and `SessionEnd` removes the session from
-the board. Non-Claude session ids are provider-qualified automatically, for example
-`codex:thread-123`, to avoid collisions.
+If a provider can distinguish “needs user action now” from “just waiting for the next prompt”,
+send `requires_action = true/false` or `waiting_for = "permission" | "options" | "next_step"`.
 
-When a provider can distinguish "needs user action now" from "just waiting for the next prompt",
-send an explicit field: `requires_action = true/false` or
-`waiting_for = "permission" | "options" | "next_step"`. RiNG trusts those first and only falls
-back to event / notification-type inference when they are absent.
+### agent-hooks
 
-**System notifications (🔔 click-to-focus):** when a session turns 🔴 waiting, RiNG sends a
-system notification (both headless `--watch` and TUI). If it stays waiting, RiNG reminds you
-again according to `notify_repeat_seconds` (30s / 120s / 300s by default). Clicking the
-notification jumps back to the RiNG TUI and selects that session; if no TUI is running, it jumps
-straight to the session terminal. Install `terminal-notifier` for click-to-focus and notification
-sound; without it, notifications fall back to macOS alerts (sound works, no click action), and
-RiNG will show a one-time install hint the first time:
+Notification details: `--watch` and the TUI both send notifications. The default backend is `auto`:
+RiNG prefers clickable `terminal-notifier`, then falls back to `osascript` on macOS or `notify-send`
+on Linux. If none are available, RiNG keeps the board running and skips notifications.
 
-```sh
-brew install terminal-notifier
-```
+Config keys include `notify_sound`, `notify_sound_name`, `notify_ignore_dnd`,
+`notify_repeat_seconds`, `notify_repeat_max`, and `notify_backend`. Custom notification channels
+can be added by registering another `Notifier`.
 
-To remove hooks:
+`agent-hooks` is an optional external hook helper / decision UI. If it is installed and
+`notify_backend = "agent-hooks"`, `ring hook` still writes RiNG registry state, then passes the
+raw payload to `agent-hooks callback` for the synchronous decision UI. RiNG `--watch` will not send
+a duplicate notification. If `agent-hooks` is not on `PATH`, RiNG automatically falls back to `auto`.
+
+### Remove Hooks
 
 ```sh
-ring remove-hooks             # removes ring hook entries from ~/.claude/settings.json
-ring remove-hooks --dry-run   # preview without touching the file
+ring remove-hooks
+ring remove-hooks --dry-run
 ```
 
-## Configuration (optional)
+This removes RiNG-installed hook entries from Claude Code / Codex settings. It does not delete
+`~/.config/ring/` session records and does not touch other hooks.
 
-`~/.config/ring/config.toml`, everything optional, missing keys fall back to defaults:
+## Configuration
+
+`~/.config/ring/config.toml`, all optional:
 
 ```toml
-lang = "zh-Hant"                 # default language (CLI --lang wins, then RING_LANG / LANG)
-interval = 2.0                   # watch refresh seconds
-show_all = false                 # show ended sessions by default?
-legend = true                    # show the color legend by default?
-active_window_seconds = 21600    # only look at sessions touched recently (6h)
-working_threshold_seconds = 90   # idle this long → 🟢 working becomes 🟡 idle
-notify_sound = true              # play a sound for system notifications
-notify_sound_name = "Glass"      # macOS / terminal-notifier sound name
-notify_ignore_dnd = false        # macOS terminal-notifier: bypass Do Not Disturb / Focus
-notify_repeat_seconds = [30, 120, 300]  # remind again if a session keeps waiting
-notify_repeat_max = 3            # max repeat reminders; 0 = unlimited
-focusers = ["tmux", "iTerm2", "Terminal"]   # jump attempt order
+lang = "en"
+interval = 2.0
+show_all = false
+legend = true
+active_window_seconds = 21600
+working_threshold_seconds = 90
+waiting_window_seconds = 1800
+notify_sound = true
+notify_sound_name = "Glass"
+notify_ignore_dnd = false
+notify_backend = "auto"          # auto / terminal-notifier / osascript / notify-send / agent-hooks / none
+notify_repeat_seconds = [30, 120, 300]
+notify_repeat_max = 3
+focusers = ["tmux", "iTerm2", "Terminal"]
 
-[colors]                         # Rich style strings, override per item
+[colors]
 waiting = "bold red"
 working = "green"
 idle = "yellow"
@@ -191,68 +271,38 @@ location = "bright_blue"
 muted = "grey50"
 ```
 
-## Why no token / cost stats
-
-Claude Code's JSONL token counts are broken (input off by ~100×, output by ~10×), and every tool
-that bills off them is affected. RiNG only shows **status**, no cost accounting — deliberately
-sidestepping that landmine.
-
-## Language / translation
-
-The UI uses **gettext**, with msgids written in **Taiwanese Mandarin** — so the default (zh-Hant)
-needs no `.mo` at all, the source is the translation. Switch with `--lang en`. Plurals are handled
-properly via `ngettext` (`1 session` vs `2 sessions`).
-
-To add a language or after changing strings:
-
-```sh
-poe i18n-extract     # extract msgids from source → src/ring/locale/ring.pot
-# copy ring.pot to src/ring/locale/<lang>/LC_MESSAGES/ring.po, fill in msgstr
-poe i18n-compile     # .po → .mo (commit the .mo; the wheel carries it automatically)
-```
-
 ## Extending
 
-The core is tied to no specific tool or terminal. Both extension points are "write a small class
-and register it", with zero changes to the main flow.
+RiNG is not tied to a specific tool or terminal.
 
-### Another agent CLI (`SessionSource`)
+| Extension Point | Purpose | Built-ins |
+|-----------------|---------|-----------|
+| `SessionSource` | find sessions | Claude Code, Codex, hook registry |
+| `Focuser` | jump to terminals | tmux, iTerm2, Terminal.app |
+| `Notifier` | notify when sessions are waiting | terminal-notifier, osascript, notify-send |
 
-`HookRegistrySource` is built in (reads `~/.config/ring/sessions/`), as are `ClaudeCodeSource`
-(scans `~/.claude`) and `CodexSource` (reads `~/.codex/state_5.sqlite`). Prefer feeding
-`ring hook` when the tool has hooks; if not, write a source that emits `Session` objects and
-register it:
+Each backend is a small module under `ring/sources/`, `ring/focus/`, or `ring/notify/`, registered via `register_*()`.
 
-```python
-from ring.registry import Session, Status
-from ring.sources import register_source
+## Platform & Privacy
 
+- **Platform**: macOS / Linux. Windows is not supported.
+- **Privacy**: entirely local. RiNG only reads local `~/.claude/` and `~/.codex/` data and writes
+  `~/.config/ring/`. No network, uploads, or telemetry.
 
-class MyToolSource:
-    name = "mytool"
+## Name
 
-    def discover(self) -> list[Session]:
-        return [Session(session_id="…", cwd="…", status=Status.WORKING,
-                        last_active=0.0, last_action="→ …", source="mytool")]
+The name is a triple pun:
 
+1. It **rings** you when a session needs a response.
+2. “RiNG” is the live house from *BanG Dream!*.
+3. **R**ealtime **I**nstance **N**otification **G**rid describes what it is.
 
-register_source(MyToolSource())
-```
+## Non-Goals
 
-`Session` is tool-neutral (id / cwd / status / last_action / tty / todo…); each source decides how
-to fill it.
+RiNG tracks session state. It is not a token or cost dashboard.
 
-### Another terminal (`Focuser`)
-
-Jump integration works the same way — write a class matching the `Focuser` protocol
-(`try_focus(session) -> (ok, msg) | None`) and call `ring.focus.register_focuser(MyFocuser())`.
-tmux / iTerm2 / Terminal.app ship built in, each as its own module (`ring/focus/tmux.py`, …).
-
-## Platform & privacy
-
-- **Platform**: macOS / Linux (detection via `ps` / `lsof` / `tmux`; Windows unsupported).
-- **Privacy**: entirely local — it only **reads** local `~/.claude/` and `~/.codex/` data, and
-  only **writes** `~/.config/ring/`. No network, no uploads, nothing sent anywhere.
+Claude Code JSONL token counts are currently unreliable enough to make cost accounting misleading,
+so RiNG deliberately avoids that surface.
 
 ## License
 

@@ -695,7 +695,8 @@ def _scan_sessions(procs: list[tuple[str, str]]) -> list[Session]:
     # 按「當下 cwd」（s.cwd）分組——確保 liveness 排名母體與計數母體一致。
     # counts / cwd_ttys 的鍵是 live process 回報的當下 cwd，分組鍵必須相同才能正確比對。
     # 每個 cwd 群組裡，mtime 最新的 N 個＝活著（N 取決於該 cwd 的 live claude 數）。
-    # 另外：working 門檻內還在寫的，無論如何算活著（cwd 比對失敗時的保險）。
+    # 沒有 live process 對上的 transcript 直接維持 ENDED；若真的有活 process 但 cwd 對不上，
+    # _synthetic_sessions 會補一列 source="proc"，不要讓舊 transcript 冒充活 session。
     #
     # 注意：「此 session 屬於哪個專案」由 Session.project property 讀 origin_cwd 獨立處理，
     # 與這裡的 liveness 分組無關——兩者語意已分離，不需要讓分組鍵跟著改。
@@ -713,7 +714,7 @@ def _scan_sessions(procs: list[tuple[str, str]]) -> list[Session]:
             # 多個 claude 同 cwd 無法精準對應，留給 hook 模式處理。
             uniq_tty = cwd_ttys[skey][0] if live_n == 1 and cwd_ttys.get(skey) else ""
             idle = now - s.last_active
-            if i < live_n or idle < WORKING_THRESHOLD_SECONDS:
+            if i < live_n:
                 s.status = _scan_status(idle)
                 s.status = _apply_waiting(s.status, idle, s._tail_kind, WAITING_WINDOW_SECONDS)
             if i == 0 and uniq_tty:
