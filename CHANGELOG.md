@@ -1,3 +1,13 @@
+## 0.4.0 (2026-06-27)
+
+### Feat
+
+- ring you from the hook the moment a session needs you
+
+### Fix
+
+- keep stale live codex thread on symlinked cwd
+
 ## 0.3.0 (2026-06-25)
 
 ### Feat
