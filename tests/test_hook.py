@@ -13,8 +13,13 @@ from ring.registry import Status
 
 @pytest.fixture(autouse=True)
 def _hermetic_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    """讓 hook 測試不受機器 config 影響（預設 backend=auto → 不委派 agent-hooks）。"""
+    """讓 hook 測試不受機器 config 影響（預設 backend=auto → 不委派 agent-hooks）。
+
+    同時清空 notifier registry：hook 現在會在 WAITING 事件就地發系統通知，darwin 上
+    osascript 永遠可用，不擋會在跑測試時噴真實通知。空 registry → _select_notifier 回
+    None → notify_waiting no-op。要驗證「有發」的測試自己注入 spy notifier。"""
     monkeypatch.setattr("ring.hook.get_config", lambda: Config())
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [])
 
 
 def _feed(monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any]) -> None:
@@ -120,6 +125,51 @@ def test_permission_request_writes_waiting(monkeypatch: pytest.MonkeyPatch, tmp_
 
     data = json.loads((tmp_path / "s1.json").read_text())
     assert data["status"] == Status.WAITING.value
+
+
+class _SpyNotifier:
+    """記下被 send 的 session，供「hook 有沒有就地發通知」斷言。"""
+
+    name = "spy"
+
+    def __init__(self) -> None:
+        self.sent: list[Any] = []
+
+    def available(self) -> bool:
+        return True
+
+    def supports_click(self) -> bool:
+        return True
+
+    def send(self, sessions: list[Any]) -> None:
+        self.sent.extend(sessions)
+
+
+def test_waiting_event_delivers_notification_in_hook(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """轉 🔴 等你時，hook 就地發系統通知（不必等看板輪詢）。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    spy = _SpyNotifier()
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [spy])
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/proj"})
+
+    assert hook.run_hook() == 0
+
+    assert len(spy.sent) == 1
+    assert spy.sent[0].session_id == "s1"
+    assert spy.sent[0].status is Status.WAITING
+    assert spy.sent[0].cwd == "/proj"
+
+
+def test_non_waiting_event_does_not_notify_in_hook(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """非等你狀態（Stop → 🟡 閒置）不該觸發系統通知。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    spy = _SpyNotifier()
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [spy])
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "Stop", "cwd": "/proj"})
+
+    assert hook.run_hook() == 0
+
+    assert spy.sent == []
 
 
 def test_ask_user_question_writes_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

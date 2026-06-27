@@ -331,25 +331,15 @@ def run_config(args: list[str]) -> int:
 
 
 def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int:
-    from ring.notify import notify_waiting
-    from ring.watcher import WaitingAlertScheduler
-
-    cfg = get_config()
+    # 系統通知由 ``ring hook`` 在 session 轉 🔴 等你的當下就地發出（見 hook._ring_waiting_now）；
+    # watch 只負責顯示看板，不再輪詢發通知——這樣關掉看板也照樣 ring 你。
     frames = 0
     footer_text = _("每 {interval}s 刷新 · Ctrl-C 離場", interval=int(interval))
     if not HAVE_RICH:
-        scheduler = WaitingAlertScheduler(cfg.notify_repeat_seconds, cfg.notify_repeat_max)
         try:
             while True:
                 sys.stdout.write("\033[2J\033[H")
                 sessions = board(show_all)
-                alerts = scheduler.feed(sessions)
-                try:
-                    hint = notify_waiting(alerts)
-                    if hint:
-                        print(hint)
-                except Exception:
-                    pass
                 print(_render_plain(sessions, show_legend, show_tool_column(sessions)))
                 print(f"\n{footer_text}")
                 sys.stdout.flush()
@@ -361,18 +351,10 @@ def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int
             return 0
 
     console = Console()
-    scheduler = WaitingAlertScheduler(cfg.notify_repeat_seconds, cfg.notify_repeat_max)
     try:
         with Live(console=console, screen=True, auto_refresh=False) as live:
             while True:
                 sessions = board(show_all)
-                alerts = scheduler.feed(sessions)
-                try:
-                    hint = notify_waiting(alerts)
-                    if hint:
-                        print(hint)
-                except Exception:
-                    pass
                 body = _rich_renderable(sessions, show_legend, show_tool_column(sessions))
                 live.update(Group(body, Text(f"\n{footer_text}", style=_MUTED)), refresh=True)
                 frames += 1

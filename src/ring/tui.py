@@ -36,7 +36,6 @@ from ring.i18n import gettext as _
 from ring.i18n import set_lang
 from ring.ipc import clear_tui_presence, read_focus_request, write_tui_presence
 from ring.labels import get_label, load_labels, set_label
-from ring.notify import notify_waiting
 from ring.registry import Session, Status, running_agent_pids
 from ring.watcher import WaitingAlertScheduler
 
@@ -280,14 +279,10 @@ class RingApp(App[None]):
             cur = next((s for s in self._sessions if s.session_id == self._focused_sid), None)
             if cur is None or cur.status is not Status.WAITING:
                 self._focused_sid = None
+        # 系統通知（toast）改由 ``ring hook`` 在事件當下發出（見 hook._ring_waiting_now）；
+        # 這裡只留 TUI 自己的 in-app 響鈴 / 訊息列與醒目標記，不重複發系統通知。
         alerts = self._alerts.feed(self._sessions)
         self._ring_on_waiting_alerts(alerts)
-        try:
-            hint = notify_waiting(alerts)
-            if hint:
-                self.notify(hint, timeout=10)
-        except Exception:
-            pass
         self.sub_title = _header(len(self._sessions), len(running_agent_pids()))
         labels = load_labels()
         table.clear()

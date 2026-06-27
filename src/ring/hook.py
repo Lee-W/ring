@@ -33,6 +33,7 @@ from ring.i18n import gettext as _
 from ring.i18n import set_lang
 from ring.registry import (
     RING_REGISTRY,
+    Session,
     Status,
     _extract_todo,
     _latest_action,
@@ -127,11 +128,13 @@ def _session_tty(process_names: tuple[str, ...]) -> str:
 
 
 def run_hook(provider: str = "claude-code") -> int:
-    """讀一次 stdin → 寫 RiNG registry 狀態（看板）→（可選）把決策委派給 agent-hooks。
+    """讀一次 stdin → 寫 RiNG registry 狀態（看板）→ 轉等你時就地發通知 →（可選）委派 agent-hooks。
 
-    委派只在 ``notify_backend == "agent-hooks"`` 且 PATH 上有 ``agent-hooks`` 時發生：
-    把原始 payload 透傳給 ``agent-hooks callback``，由它同步出 modal、收按鈕、把決策
-    寫到 stdout 回給 Claude。其餘情況 RiNG 只記狀態、exit 0（你在終端自己回答）。
+    轉 🔴 等你的事件，會在當下直接發系統通知（見 ``_ring_waiting_now``）——不必開著看板，
+    關掉終端也照樣 ring 你。委派只在 ``notify_backend == "agent-hooks"`` 且 PATH 上有
+    ``agent-hooks`` 時發生：把原始 payload 透傳給 ``agent-hooks callback``，由它同步出 modal、
+    收按鈕、把決策寫到 stdout 回給 Claude（這條路下 ``_ring_waiting_now`` 自動短路、不重複發）。
+    其餘情況 RiNG 記狀態 + 發通知後 exit 0（你在終端自己回答）。
     """
     try:
         raw = sys.stdin.read()
@@ -190,6 +193,40 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload))
     tmp.replace(path)  # atomic
+
+    if event.status is Status.WAITING:
+        _ring_waiting_now(event, payload, last_action)
+
+
+def _ring_waiting_now(event: Any, payload: dict[str, Any], last_action: str) -> None:
+    """session 轉 🔴 等你的當下，就地由 hook 發系統通知——不必等 RiNG 看板輪詢。
+
+    WAITING 只會從 hook 來（scan 模式永不標 WAITING），所以 hook 是第一手知道「等你」
+    的地方；在事件當下通知最即時，也不依賴看板有沒有開著（看板沒開時舊版根本不會 ring
+    你）。backend=none / agent-hooks 由 notify_waiting → _select_notifier 自動短路
+    （agent-hooks 改走 _delegate_to_agent_hooks 的 modal 委派），不會重複發。
+    失敗安靜吞掉，絕不擋住 session。
+    """
+    try:
+        from ring.notify import notify_waiting
+
+        notify_waiting(
+            [
+                Session(
+                    session_id=event.session_id,
+                    cwd=event.cwd,
+                    status=Status.WAITING,
+                    last_active=float(payload.get("last_active", time.time())),
+                    last_action=last_action,
+                    source="hook",
+                    tty=payload.get("tty"),
+                    provider=event.provider,
+                    origin_cwd=event.cwd,
+                )
+            ]
+        )
+    except Exception:
+        pass
 
 
 def _delegate_to_agent_hooks(raw: str, selected_provider: str) -> int:
