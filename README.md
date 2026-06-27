@@ -33,7 +33,7 @@ session 需要你回話時，它「**ring** 你」。
 - **一張看板看全部 session**：Claude Code / Codex 內建支援，其他工具可接 `ring hook`。
 - **等你優先**：需要你回應的 session 會排最上面，避免被工作中的 session 淹掉。
 - **一鍵跳回終端**：在 TUI 選 session 後按 `Enter` / `Space`，跳回 tmux、iTerm2 或 Terminal.app 裡的原本位置。
-- **等你時通知**：hook 模式下可響鈴、發系統通知，裝 `terminal-notifier` 後還能點通知跳回 session。
+- **等你時通知，不必開著看板**：裝了 hook，session 轉 🔴 等你的**當下**就響鈴 + 發系統通知——關掉 RiNG 看板、關掉終端也照樣 ring 你。裝 `terminal-notifier` 後還能點通知跳回 session。
 - **替 session 命名**：TUI 裡按 `n` 幫 session 加上自己的標籤，像 `maigo · 重構登入`，不用只靠專案目錄猜它在做什麼。
 - **全本機、可擴充**：只讀本機 Claude Code / Codex 資料，只寫 `~/.config/ring/`；source、focuser、notifier 都可插拔。
 
@@ -120,8 +120,9 @@ zero-config 下每個專案只開一個 session 時也對得上。Codex 沒裝 h
 
 ### 等你時發通知
 
-預設行為：裝了 hook 後，有 session 從工作中轉成 🔴 等你時，RiNG 會**響鈴 + 發系統通知**。
-若它一直停在等你，RiNG 會在 30s / 120s / 300s 各補提醒一次，避免第一聲被你忽略。
+預設行為：裝了 hook 後，session 從工作中轉成 🔴 等你的**當下**，hook 就地**響鈴 + 發系統通知**——
+**不必開著 RiNG 看板**，關掉終端也照樣 ring 你（通知由事件觸發，不靠輪詢）。
+開著 TUI 時，若它一直停在等你，TUI 還會在 30s / 120s / 300s 各補一次 in-app 響鈴提醒。
 （zero-config 測不到「等你」，所以這個需要 hook 模式。）
 
 macOS 上若要點通知後直接跳回 RiNG TUI 並選中那個 session，需要安裝
@@ -270,9 +271,9 @@ RiNG 會優先相信這些欄位；沒有時才退回 event / notification type 
 
 ### 系統通知（🔔 等你時自動通知 + 點擊聚焦）
 
-這裡補細節：headless `--watch` 與 TUI 兩條路徑都會送通知。預設後端是 `auto`：
-有可點擊的 `terminal-notifier` 就優先用它；沒有時退回 `osascript`（macOS）或
-`notify-send`（Linux）。如果全部不可用，就只保留看板，不讓通知失敗打斷主流程。
+這裡補細節：系統通知由 `ring hook` 在事件當下送出（headless `--watch` 與 TUI 都只負責顯示
+看板，不發系統通知）。預設後端是 `auto`：有可點擊的 `terminal-notifier` 就優先用它；沒有時
+退回 `osascript`（macOS）或 `notify-send`（Linux）。如果全部不可用，就只保留看板，不讓通知失敗打斷主流程。
 
 - **設定**：`notify_sound`、`notify_sound_name`、`notify_ignore_dnd`、`notify_repeat_seconds`、
   `notify_repeat_max`、`notify_backend` 都可在 `~/.config/ring/config.toml` 調整。

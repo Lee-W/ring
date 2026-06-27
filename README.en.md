@@ -33,7 +33,7 @@ RiNG puts them on one board, with sessions waiting for you sorted first.
 - **One board for every session**: Claude Code / Codex are built in; other tools can feed `ring hook`.
 - **Waiting first**: sessions that need your response are highlighted and sorted above the rest.
 - **Jump back to the terminal**: in the TUI, select a session and press `Enter` / `Space` to focus tmux, iTerm2, or Terminal.app.
-- **System notifications**: hook mode can beep and notify when a session starts waiting; with `terminal-notifier`, clicking the notification jumps back.
+- **Notifies you without the board open**: with hooks installed, the moment a session turns 🔴 waiting it beeps and fires a system notification — even with no RiNG board running. With `terminal-notifier`, clicking the notification jumps back.
 - **Name your sessions**: press `n` in the TUI to add a local label such as `maigo · auth refactor`.
 - **Local and extensible**: RiNG only reads local Claude Code / Codex data and writes `~/.config/ring/`; session sources, focusers, and notifiers are pluggable.
 
@@ -114,8 +114,10 @@ one live Codex session per cwd can jump correctly; multiple live Codex sessions 
 
 ### Notifications
 
-Default behavior: with hooks installed, when a session changes to 🔴 waiting, RiNG beeps and sends
-a system notification. If it keeps waiting, RiNG reminds you again at 30s / 120s / 300s by default.
+Default behavior: with hooks installed, the moment a session changes to 🔴 waiting, the hook beeps
+and sends a system notification right then — **no RiNG board needs to be open**, so it rings you even
+after you close the terminal (notifications are event-driven, not polled). While a TUI is open, it
+also nudges you again in-app at 30s / 120s / 300s if the session keeps waiting.
 
 For clickable notifications on macOS, install `terminal-notifier`:
 
@@ -241,7 +243,8 @@ send `requires_action = true/false` or `waiting_for = "permission" | "options" |
 
 ### agent-hooks
 
-Notification details: `--watch` and the TUI both send notifications. The default backend is `auto`:
+Notification details: system notifications are sent by `ring hook` at the event (both `--watch` and
+the TUI only render the board; they no longer send system notifications). The default backend is `auto`:
 RiNG prefers clickable `terminal-notifier`, then falls back to `osascript` on macOS or `notify-send`
 on Linux. If none are available, RiNG keeps the board running and skips notifications.
 
