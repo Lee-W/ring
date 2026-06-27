@@ -590,7 +590,7 @@ def _codex_threads(procs: list[tuple[str, str]]) -> list[Session]:
             continue
         updated_ms = int(row["updated_at_ms"] or 0)
         last_active = updated_ms / 1000 if updated_ms else float(row["updated_at"] or 0)
-        if now - last_active > ACTIVE_WINDOW_SECONDS and counts.get(cwd, 0) == 0:
+        if now - last_active > ACTIVE_WINDOW_SECONDS and counts.get(_real(cwd), 0) == 0:
             continue
         rollout_path = Path(str(row["rollout_path"] or ""))
         records = _tail_records(rollout_path) if rollout_path else []

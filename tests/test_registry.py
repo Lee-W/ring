@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from ring.registry import (
+    ACTIVE_WINDOW_SECONDS,
     Session,
     Status,
     _apply_waiting,
@@ -606,6 +607,46 @@ def test_codex_threads_reads_state_and_marks_live_idle(
     assert sessions[0].source == "codex"
     assert sessions[0].status is Status.IDLE
     assert sessions[0].tty == "/dev/ttys003"
+
+
+def test_codex_threads_keeps_stale_live_thread_on_symlinked_cwd(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # thread 已超過 active window，只剩 live proc 救它；proc 的 cwd 經 lsof 是 realpath，
+    # sqlite 存的卻是 symlink 字面路徑。counts 以 realpath 為鍵，6h 過濾若不 realpath
+    # 比對就會誤判離場、把活著的 thread 漏抓掉。
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    link_dir = tmp_path / "link"
+    link_dir.symlink_to(real_dir)
+
+    rollout = tmp_path / "rollout.jsonl"
+    _write_rollout(rollout, [{"type": "event_msg", "payload": {"type": "task_complete"}}])
+    db = tmp_path / "state.sqlite"
+    stale_ms = int((time.time() - ACTIVE_WINDOW_SECONDS - 3600) * 1000)
+    _write_codex_state(
+        db,
+        [
+            {
+                "id": "stale-live",
+                "cwd": str(link_dir),  # sqlite 記字面 symlink 路徑
+                "title": "Long-running",
+                "rollout_path": str(rollout),
+                "preview": "Long-running",
+                "updated_at": stale_ms // 1000,
+                "updated_at_ms": stale_ms,
+                "archived": 0,
+            }
+        ],
+    )
+    monkeypatch.setattr("ring.registry.CODEX_STATE", db)
+
+    # live proc 的 cwd 是 realpath（lsof 行為）
+    sessions = _codex_threads([(str(real_dir), "/dev/ttys004")])
+
+    assert len(sessions) == 1
+    assert sessions[0].session_id == "codex:stale-live"
+    assert sessions[0].status is not Status.ENDED
 
 
 def test_codex_threads_hides_closed_recent_thread(
