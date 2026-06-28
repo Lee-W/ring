@@ -32,7 +32,7 @@ RiNG puts them on one board, with sessions waiting for you sorted first.
 
 - **One board for every session**: Claude Code / Codex are built in; other tools can feed `ring hook`.
 - **Waiting first**: sessions that need your response are highlighted and sorted above the rest.
-- **Jump back to the terminal**: in the TUI, select a session and press `Enter` / `Space` to focus tmux, iTerm2, or Terminal.app.
+- **Jump back to the terminal**: in the TUI, select a session and press `Enter` / `Space` to focus tmux, iTerm2, Terminal.app (macOS), or a Linux X11 window (`wmctrl`).
 - **Notifies you without the board open**: with hooks installed, the moment a session turns 🔴 waiting it beeps and fires a system notification — even with no RiNG board running. With `terminal-notifier`, clicking the notification jumps back.
 - **Name your sessions**: press `n` in the TUI to add a local label such as `maigo · auth refactor`.
 - **Local and extensible**: RiNG only reads local Claude Code / Codex data and writes `~/.config/ring/`; session sources, focusers, and notifiers are pluggable.
@@ -108,6 +108,7 @@ Select a session and press `Enter`. RiNG focuses the terminal where that session
 
 - **tmux**: switches directly to the pane via `switch-client`.
 - **iTerm2 / Terminal.app** on macOS: uses the session `tty` and AppleScript to focus the matching tab. The first run may ask for macOS Automation permission.
+- **Linux X11 window** (`wmctrl`, best-effort fallback): for Linux without tmux — walks from the `tty` up to the terminal window that owns it and raises it via `wmctrl`. **Limits**: X11 only (usually a no-op on Wayland), raises the whole window but cannot pick the tab, and gnome-terminal's client/server model may not match. Requires `apt install wmctrl`.
 
 TTY matching is most accurate in hook mode. Without hooks, Codex falls back to zero-config matching:
 one live Codex session per cwd can jump correctly; multiple live Codex sessions in the same cwd are shown conservatively to avoid focusing the wrong tab.
@@ -285,7 +286,7 @@ notify_ignore_dnd = false
 notify_backend = "auto"          # auto / terminal-notifier / osascript / notify-send / agent-hooks / none
 notify_repeat_seconds = [30, 120, 300]
 notify_repeat_max = 3
-focusers = ["tmux", "iTerm2", "Terminal"]
+focusers = ["tmux", "iTerm2", "Terminal", "linux-wm"]
 
 [colors]
 waiting = "bold red"
@@ -304,7 +305,7 @@ RiNG is not tied to a specific tool or terminal.
 | Extension Point | Purpose | Built-ins |
 |-----------------|---------|-----------|
 | `SessionSource` | find sessions | Claude Code, Codex, hook registry |
-| `Focuser` | jump to terminals | tmux, iTerm2, Terminal.app |
+| `Focuser` | jump to terminals | tmux, iTerm2, Terminal.app, Linux X11 (wmctrl) |
 | `Notifier` | notify when sessions are waiting | terminal-notifier, osascript, notify-send |
 
 Each backend is a small module under `ring/sources/`, `ring/focus/`, or `ring/notify/`, registered via `register_*()`.

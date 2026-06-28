@@ -86,3 +86,74 @@ def test_surfaces_osascript_error(monkeypatch: pytest.MonkeyPatch) -> None:
     ok, msg = focus.jump(_sess(tty="/dev/ttys999"))
     assert ok is False
     assert "Not authorized" in msg
+
+
+# --- Linux X11 視窗 focuser（wmctrl，best-effort fallback）---
+
+from ring.focus import linux_wm  # noqa: E402
+
+
+def _wm_run(activate_rc: int = 0, windows: str = "0x111 0 150 host title\n") -> object:
+    """模擬 linux_wm 用到的各指令：ps（tty pids / ppid map）、wmctrl（列視窗 / 聚焦）。
+
+    場景：tty 上的 shell(200) → 終端模擬器(150) → init(1)，模擬器 150 擁有視窗 0x111。
+    """
+
+    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        def cp(out: str = "", rc: int = 0) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(cmd, rc, stdout=out, stderr="")
+
+        if cmd[:2] == ["ps", "-o"]:  # tty 上的 pids
+            return cp("200\n")
+        if cmd[:2] == ["ps", "-eo"]:  # pid → ppid
+            return cp("200 150\n150 1\n")
+        if cmd[:2] == ["wmctrl", "-lp"]:  # 視窗清單
+            return cp(windows)
+        if cmd[:2] == ["wmctrl", "-i"]:  # 聚焦
+            return cp("", activate_rc)
+        return cp("", 1)
+
+    return fake_run
+
+
+def _patch_linux(monkeypatch: pytest.MonkeyPatch, run: object) -> None:
+    monkeypatch.setattr("ring.focus.linux_wm.sys.platform", "linux")
+    monkeypatch.setattr("ring.focus.linux_wm.shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr("ring.focus.linux_wm.subprocess.run", run)
+
+
+def test_linux_wm_registered_in_builtin() -> None:
+    assert "linux-wm" in focus._BUILTIN
+
+
+def test_linux_wm_activates_owning_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_linux(monkeypatch, _wm_run())
+    assert linux_wm.focuser.try_focus(_sess(tty="/dev/pts/3")) == (True, "linux-wm 0x111")
+
+
+def test_linux_wm_skips_when_not_linux(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("ring.focus.linux_wm.sys.platform", "darwin")
+    assert linux_wm.focuser.try_focus(_sess(tty="/dev/pts/3")) is None
+
+
+def test_linux_wm_skips_without_wmctrl(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("ring.focus.linux_wm.sys.platform", "linux")
+    monkeypatch.setattr("ring.focus.linux_wm.shutil.which", lambda _name: None)
+    assert linux_wm.focuser.try_focus(_sess(tty="/dev/pts/3")) is None
+
+
+def test_linux_wm_skips_without_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_linux(monkeypatch, _wm_run())
+    assert linux_wm.focuser.try_focus(_sess()) is None
+
+
+def test_linux_wm_falls_through_when_no_owning_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_linux(monkeypatch, _wm_run(windows="0x999 0 4242 host other\n"))  # 視窗不屬這條祖先鏈
+    assert linux_wm.focuser.try_focus(_sess(tty="/dev/pts/3")) is None
+
+
+def test_linux_wm_reports_activate_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_linux(monkeypatch, _wm_run(activate_rc=1))
+    ok, msg = linux_wm.focuser.try_focus(_sess(tty="/dev/pts/3"))  # type: ignore[misc]
+    assert ok is False
+    assert "0x111" in msg

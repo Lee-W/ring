@@ -20,7 +20,7 @@
                                       #   "none" = 完全不發通知（RiNG 當純看板）
     notify_repeat_seconds = [30, 120, 300]  # 持續等你時，多久後重複提醒
     notify_repeat_max = 3             # 重複提醒上限；0 = 不限
-    focusers = ["tmux", "iTerm2", "Terminal"]   # 跳轉嘗試順序；省略＝內建預設
+    focusers = ["tmux", "iTerm2", "Terminal", "linux-wm"]  # 跳轉嘗試順序；省略＝內建預設
 """
 
 from __future__ import annotations

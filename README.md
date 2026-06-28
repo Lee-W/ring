@@ -32,7 +32,7 @@ session 需要你回話時，它「**ring** 你」。
 
 - **一張看板看全部 session**：Claude Code / Codex 內建支援，其他工具可接 `ring hook`。
 - **等你優先**：需要你回應的 session 會排最上面，避免被工作中的 session 淹掉。
-- **一鍵跳回終端**：在 TUI 選 session 後按 `Enter` / `Space`，跳回 tmux、iTerm2 或 Terminal.app 裡的原本位置。
+- **一鍵跳回終端**：在 TUI 選 session 後按 `Enter` / `Space`，跳回 tmux、iTerm2、Terminal.app（macOS）或 Linux X11 視窗（`wmctrl`）裡的原本位置。
 - **等你時通知，不必開著看板**：裝了 hook，session 轉 🔴 等你的**當下**就響鈴 + 發系統通知——關掉 RiNG 看板、關掉終端也照樣 ring 你。裝 `terminal-notifier` 後還能點通知跳回 session。
 - **替 session 命名**：TUI 裡按 `n` 幫 session 加上自己的標籤，像 `maigo · 重構登入`，不用只靠專案目錄猜它在做什麼。
 - **全本機、可擴充**：只讀本機 Claude Code / Codex 資料，只寫 `~/.config/ring/`；source、focuser、notifier 都可插拔。
@@ -113,6 +113,9 @@ hook 只對新開的 session 生效，所以裝完要重開 Claude Code / Codex 
 - **tmux**：`switch-client` 直接切到那個 pane（你跟它要在同一個 tmux server）。
 - **iTerm2 / Terminal.app**（macOS）：用 session 的 `tty` 透過 AppleScript 聚焦對應分頁，
   自動分辨是哪個 app（沒在跑的 app 不會被喚醒）。第一次會跳系統「自動化」授權，准一次即可。
+- **Linux X11 視窗**（`wmctrl`，best-effort fallback）：Linux 上沒跑 tmux 時的後備——
+  從 `tty` 追到擁有它的終端視窗，用 `wmctrl` 帶到前景。**限制**：只支援 X11（Wayland 通常無效）、
+  只能聚焦整個視窗無法選分頁、gnome-terminal 的 client/server 架構可能配不到。要先 `apt install wmctrl`。
 
 「哪個 session 在哪個終端」靠它的 `tty` 對應——**hook 模式最精準**；
 zero-config 下每個專案只開一個 session 時也對得上。Codex 沒裝 hook 時會走 zero-config：
@@ -321,7 +324,7 @@ notify_ignore_dnd = false        # macOS terminal-notifier 是否穿透勿擾 / 
 notify_backend = "auto"          # auto / terminal-notifier / osascript / notify-send / agent-hooks / none
 notify_repeat_seconds = [30, 120, 300]  # 持續等你時，幾秒後重複提醒
 notify_repeat_max = 3            # 重複提醒上限；0 = 不限
-focusers = ["tmux", "iTerm2", "Terminal"]   # 跳轉嘗試順序
+focusers = ["tmux", "iTerm2", "Terminal", "linux-wm"]   # 跳轉嘗試順序
 
 [colors]                         # Rich 樣式字串，逐項覆寫（深淺底安全色為預設）
 waiting = "bold red"
@@ -354,7 +357,7 @@ core 不綁死任何特定工具或終端。三個維度都可插拔，每個都
 | 維度 | 在做什麼 | 內建 |
 |------|----------|------|
 | `SessionSource` | 從哪裡找到 session | Claude Code、Codex、RiNG hook registry |
-| `Focuser` | 跳轉時把焦點帶去哪個終端 | tmux、iTerm2、Terminal.app |
+| `Focuser` | 跳轉時把焦點帶去哪個終端 | tmux、iTerm2、Terminal.app、Linux X11（wmctrl）|
 | `Notifier` | 等你時怎麼發系統通知 | terminal-notifier、osascript、notify-send |
 
 每個維度各自一個 package（`ring/sources/`、`ring/focus/`、`ring/notify/`），每個後端是裡面
@@ -389,8 +392,8 @@ register_source(MyToolSource())
 
 跳轉的終端整合也一樣——寫個符合 `Focuser` 協定的類別（`try_focus(session) ->
 (ok, msg) | None`），呼叫 `ring.focus.register_focuser(MyFocuser())`。內建 tmux /
-iTerm2 / Terminal.app，各自一個模組（`ring/focus/tmux.py` …）。要再加 Ghostty /
-Kitty / WezTerm，就照這個模式新增 focuser；嘗試順序也能用 config 的 `focusers` 調整。
+iTerm2 / Terminal.app / Linux X11 視窗（wmctrl），各自一個模組（`ring/focus/tmux.py` …）。
+要再加 Ghostty / Kitty / WezTerm，就照這個模式新增 focuser；嘗試順序也能用 config 的 `focusers` 調整。
 
 ### 其他通知後端（`Notifier`）
 

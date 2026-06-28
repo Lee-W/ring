@@ -2,7 +2,8 @@
 
 每個終端是一個 ``Focuser``（見 ``base.Focuser``）：core 不認識任何具體終端，
 只依序問每個 focuser「這個 session 歸不歸你管」。要支援新終端＝寫一個模組、
-``register_focuser()`` 註冊，core 零改動。內建：tmux / iTerm2 / Terminal.app。
+``register_focuser()`` 註冊，core 零改動。內建：tmux / iTerm2 / Terminal.app /
+Linux X11 視窗（wmctrl，best-effort fallback）。
 """
 
 from __future__ import annotations
@@ -10,13 +11,20 @@ from __future__ import annotations
 from ring.config import get_config
 from ring.focus.base import Focuser
 from ring.focus.iterm2 import focuser as _iterm2
+from ring.focus.linux_wm import focuser as _linux_wm
 from ring.focus.terminal import focuser as _terminal
 from ring.focus.tmux import focuser as _tmux
 from ring.i18n import gettext as _
 from ring.registry import Session, Status
 
-# 內建 focuser。順序可由 config 的 `focusers` 覆寫。
-_BUILTIN: dict[str, Focuser] = {"tmux": _tmux, "iTerm2": _iterm2, "Terminal": _terminal}
+# 內建 focuser。順序可由 config 的 `focusers` 覆寫。tmux 跨平台、最快，排最前；
+# macOS app 在非 macOS 會自己 return None；linux-wm 殿後當 X11 fallback。
+_BUILTIN: dict[str, Focuser] = {
+    "tmux": _tmux,
+    "iTerm2": _iterm2,
+    "Terminal": _terminal,
+    "linux-wm": _linux_wm,
+}
 
 
 def _initial_focusers() -> list[Focuser]:
