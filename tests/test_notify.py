@@ -448,6 +448,41 @@ class TestNotifierAbstraction:
         assert notifiers()[0] is first
 
 
+class TestNotifySend:
+    """notify-send 後端（Linux / libnotify 純文字）。"""
+
+    def test_supports_click_is_false(self) -> None:
+        from ring.notify.notify_send import notifier
+
+        assert notifier.supports_click() is False
+
+    def test_available_checks_notify_send_binary(self) -> None:
+        from ring.notify.notify_send import notifier
+
+        with patch("shutil.which", side_effect=_which_only("notify-send")):
+            assert notifier.available() is True
+        with patch("shutil.which", side_effect=_which_only()):
+            assert notifier.available() is False
+
+    def test_sends_one_notification_per_session(self) -> None:
+        from ring.notify.notify_send import notifier
+
+        sessions = [_s("a", "proj1"), _s("b", "proj2")]
+        with patch("ring.notify.notify_send.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            notifier.send(sessions)
+        assert mock_run.call_count == 2
+        first_cmd = mock_run.call_args_list[0][0][0]
+        assert first_cmd[0] == "notify-send"
+        assert "proj1" in first_cmd[1]  # title 含 project
+
+    def test_subprocess_failure_is_swallowed(self) -> None:
+        from ring.notify.notify_send import notifier
+
+        with patch("ring.notify.notify_send.subprocess.run", side_effect=Exception("boom")):
+            notifier.send([_s("a")])  # 不應拋例外
+
+
 class TestNotifyEmpty:
     def test_empty_sessions_does_nothing(self) -> None:
         """空清單直接回傳，不呼叫任何通知機制。"""
