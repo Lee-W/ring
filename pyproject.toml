@@ -11,7 +11,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "Wei Lee", email = "weilee.rx@gmail.com" }]
 keywords = ["claude-code", "codex", "tui", "dashboard", "session", "monitor", "rich"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Environment :: Console",
   "Intended Audience :: Developers",
   "Operating System :: MacOS",
