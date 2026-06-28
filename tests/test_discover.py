@@ -7,8 +7,9 @@ from unittest.mock import patch
 import pytest
 
 import ring.registry as registry
-from ring.registry import Session, Status, _head_cwd
+from ring.registry import Session, Status
 from ring.sources import discover_sessions, get_by_id
+from ring.transcript import _head_cwd
 
 
 def _write_session(

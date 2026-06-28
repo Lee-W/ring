@@ -35,11 +35,9 @@ from ring.registry import (
     RING_REGISTRY,
     Session,
     Status,
-    _extract_todo,
-    _latest_action,
     _pid_tty,
-    _tail_records,
 )
+from ring.transcript import _extract_todo, _latest_action, _tail_records
 
 _HOOK_EVENTS = list(HOOK_EVENTS)
 
