@@ -64,6 +64,10 @@ def test_falls_through_iterm2_to_terminal(monkeypatch: pytest.MonkeyPatch) -> No
 def test_stale_tty_reports_closed_terminal_tab(monkeypatch: pytest.MonkeyPatch) -> None:
     outs: Iterator[str] = iter(["notfound", "notfound"])
     monkeypatch.setattr("ring.focus.applescript.shutil.which", lambda _name: "/usr/bin/osascript")
+    # 在 Linux（如 CI runner）上 linux-wm focuser 也會接手；它與 osascript 共用 subprocess.run，
+    # 會多吃掉 outs 一格而 StopIteration。讓 wmctrl「找不到」→ linux-wm 直接 return None，
+    # 測試聚焦在 macOS 終端 app fallback、且跨平台穩定。
+    monkeypatch.setattr("ring.focus.linux_wm.shutil.which", lambda _name: None)
 
     def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(cmd, 0, stdout=next(outs), stderr="")
