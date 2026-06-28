@@ -1,3 +1,13 @@
+## 0.5.0 (2026-06-28)
+
+### Feat
+
+- jump back to Linux terminals via wmctrl
+
+### Refactor
+
+- split transcript parsing out of registry
+
 ## 0.4.0 (2026-06-27)
 
 ### Feat
