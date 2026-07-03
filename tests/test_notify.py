@@ -24,6 +24,8 @@ def _hermetic_config(monkeypatch: pytest.MonkeyPatch) -> None:
         "ring.notify.get_config",
         "ring.notify.terminal_notifier.get_config",
         "ring.notify.osascript_notifier.get_config",
+        "ring.notify.ntfy.get_config",
+        "ring.notify.webhook.get_config",
     ):
         monkeypatch.setattr(target, lambda: Config())
 
@@ -495,3 +497,151 @@ class TestNotifyEmpty:
         mock_which.assert_not_called()
         mock_run.assert_not_called()
         mock_osa.assert_not_called()
+
+
+class TestRemoteBackends:
+    """ntfy / webhook 遠端後端：設了 URL 才可用，發送走 urllib、失敗安靜吞。"""
+
+    def test_ntfy_unavailable_without_url(self) -> None:
+        from ring.notify.ntfy import notifier as ntfy
+
+        assert ntfy.available() is False
+
+    def test_ntfy_posts_json_to_server_root(self) -> None:
+        from ring.notify import ntfy as ntfy_mod
+
+        cfg = Config(notify_ntfy_url="https://ntfy.sh/my-ring-topic")
+        with (
+            patch("ring.notify.ntfy.get_config", return_value=cfg),
+            patch("urllib.request.urlopen") as mock_open,
+        ):
+            assert ntfy_mod.notifier.available() is True
+            ntfy_mod.notifier.send([_s("uuid-1", "maigo")])
+        mock_open.assert_called_once()
+        req = mock_open.call_args[0][0]
+        assert req.full_url == "https://ntfy.sh"
+        import json
+
+        body = json.loads(req.data.decode("utf-8"))
+        assert body["topic"] == "my-ring-topic"
+        assert "maigo" in body["title"]
+        assert body["priority"] == 4
+
+    def test_ntfy_http_failure_is_swallowed(self) -> None:
+        from ring.notify import ntfy as ntfy_mod
+
+        cfg = Config(notify_ntfy_url="https://ntfy.sh/topic")
+        with (
+            patch("ring.notify.ntfy.get_config", return_value=cfg),
+            patch("urllib.request.urlopen", side_effect=OSError("net down")),
+        ):
+            ntfy_mod.notifier.send([_s("uuid-1")])  # 不炸即通過
+
+    def test_webhook_unavailable_without_url(self) -> None:
+        from ring.notify.webhook import notifier as webhook
+
+        assert webhook.available() is False
+
+    def test_webhook_posts_stable_json_payload(self) -> None:
+        import json
+
+        from ring.notify import webhook as webhook_mod
+
+        cfg = Config(notify_webhook_url="https://example.com/hook")
+        with (
+            patch("ring.notify.webhook.get_config", return_value=cfg),
+            patch("urllib.request.urlopen") as mock_open,
+        ):
+            webhook_mod.notifier.send([_s("uuid-9", "blog")])
+        req = mock_open.call_args[0][0]
+        assert req.full_url == "https://example.com/hook"
+        body = json.loads(req.data.decode("utf-8"))
+        assert body["source"] == "ring"
+        assert body["event"] == "waiting"
+        assert body["session_id"] == "uuid-9"
+        assert body["project"] == "blog"
+
+    def test_notify_backend_ntfy_forces_remote(self) -> None:
+        """notify_backend = "ntfy" → 桌面後端都在也走 ntfy。"""
+        cfg = Config(notify_backend="ntfy", notify_ntfy_url="https://ntfy.sh/topic")
+        with (
+            patch("ring.notify.get_config", return_value=cfg),
+            patch("ring.notify.ntfy.get_config", return_value=cfg),
+            patch("shutil.which", return_value="/usr/bin/whatever"),
+            patch("urllib.request.urlopen") as mock_open,
+            patch("subprocess.run") as mock_run,
+        ):
+            notify_waiting([_s("uuid-1")])
+        mock_open.assert_called_once()
+        mock_run.assert_not_called()
+
+    def test_notify_also_sends_extra_copy(self) -> None:
+        """主後端（terminal-notifier）照發，notify_also = ["ntfy"] 再推一份到手機。"""
+        cfg = Config(notify_also=("ntfy",), notify_ntfy_url="https://ntfy.sh/topic")
+        with (
+            patch("ring.notify.get_config", return_value=cfg),
+            patch("ring.notify.ntfy.get_config", return_value=cfg),
+            patch("ring.notify.terminal_notifier.get_config", return_value=cfg),
+            patch("shutil.which", side_effect=_which_only("terminal-notifier")),
+            patch("urllib.request.urlopen") as mock_open,
+            patch("subprocess.run") as mock_run,
+        ):
+            notify_waiting([_s("uuid-1")])
+        mock_run.assert_called_once()  # 桌面通知
+        mock_open.assert_called_once()  # ntfy 加發
+
+    def test_notify_also_skips_primary_duplicate(self) -> None:
+        """主後端已是 ntfy 時，notify_also 裡的 ntfy 不重複發。"""
+        cfg = Config(notify_backend="ntfy", notify_also=("ntfy",), notify_ntfy_url="https://ntfy.sh/topic")
+        with (
+            patch("ring.notify.get_config", return_value=cfg),
+            patch("ring.notify.ntfy.get_config", return_value=cfg),
+            patch("shutil.which", return_value=None),
+            patch("urllib.request.urlopen") as mock_open,
+        ):
+            notify_waiting([_s("uuid-1")])
+        mock_open.assert_called_once()
+
+    def test_backend_none_also_silences_notify_also(self) -> None:
+        """backend=none =「完全不發通知」，notify_also 也不例外（要純手機用 backend="ntfy"）。"""
+        cfg = Config(notify_backend="none", notify_also=("ntfy",), notify_ntfy_url="https://ntfy.sh/topic")
+        with (
+            patch("ring.notify.get_config", return_value=cfg),
+            patch("ring.notify.ntfy.get_config", return_value=cfg),
+            patch("urllib.request.urlopen") as mock_open,
+        ):
+            notify_waiting([_s("uuid-1")])
+        mock_open.assert_not_called()
+
+
+class TestMessageAndTitle:
+    def test_message_includes_waiting_detail(self) -> None:
+        from ring.notify.base import notify_message
+
+        s = _s("uuid-1", "maigo")
+        s.waiting_detail = "Bash: rm -rf node_modules"
+        msg = notify_message(s)
+        assert "Bash: rm -rf node_modules" in msg
+        assert "📍" in msg
+
+    def test_message_without_detail_is_location_only(self) -> None:
+        from ring.notify.base import notify_message
+
+        msg = notify_message(_s("uuid-1", "maigo"))
+        assert msg.startswith("📍")
+        assert "\n" not in msg
+
+    def test_title_prefers_user_label(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """取過名的 session，通知標題用名字而非 workspace 名。"""
+        from ring.notify import base
+
+        monkeypatch.setattr(base, "get_label", lambda sid, **kw: "重構登入" if sid == "uuid-1" else "")
+        title = base.notify_title(_s("uuid-1", "maigo"))
+        assert "重構登入" in title
+        assert "maigo" not in title
+
+    def test_title_falls_back_to_project(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from ring.notify import base
+
+        monkeypatch.setattr(base, "get_label", lambda sid, **kw: "")
+        assert "maigo" in base.notify_title(_s("uuid-1", "maigo"))

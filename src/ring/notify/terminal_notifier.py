@@ -9,8 +9,7 @@ import sys
 from pathlib import Path
 
 from ring.config import get_config
-from ring.i18n import gettext as _
-from ring.notify.base import notify_message
+from ring.notify.base import notify_message, notify_title
 from ring.notify.command import CommandNotifier
 from ring.registry import Session
 
@@ -45,7 +44,7 @@ class TerminalNotifierNotifier(CommandNotifier):
             cmd = [
                 "terminal-notifier",
                 "-title",
-                _("RiNG · {project} 在等你回話", project=s.project),
+                notify_title(s),
                 "-message",
                 notify_message(s),
                 "-execute",

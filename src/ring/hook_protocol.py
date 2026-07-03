@@ -35,6 +35,7 @@ class NormalizedHookEvent:
     tty: str = ""
     last_action: str = ""
     waiting_for: str = ""
+    detail: str = ""  # 需要你決策的具體內容（要跑的指令 / 問的問題），給 TUI detail 與通知內文
 
 
 _ALWAYS_STATUS = {
@@ -126,6 +127,7 @@ class CommonHookAdapter:
             tty=_first_str(data, "tty"),
             last_action=_first_str(data, "last_action", "lastAction", "message", "title"),
             waiting_for=_waiting_for(data),
+            detail=_action_detail(data),
         )
 
 
@@ -211,6 +213,48 @@ def _is_action_required_payload(data: Mapping[str, Any]) -> bool:
         if isinstance(value, list) and value:
             return True
     return False
+
+
+# tool_input 裡最能代表「這次要動什麼」的欄位，依序取第一個非空字串。
+_DETAIL_INPUT_KEYS = ("command", "file_path", "path", "url", "pattern", "description")
+
+_DETAIL_MAX = 160
+
+
+def _action_detail(data: Mapping[str, Any]) -> str:
+    """從 payload 萃取「到底在等什麼」的具體內容，供 TUI detail 與通知內文。
+
+    優先序：AskUserQuestion 的第一個問題 > tool_input 的代表性欄位（command /
+    file_path…）> Notification 的 message。有 tool 名時加前綴（``Bash: rm -rf …``）。
+    壓成單行、上限 ``_DETAIL_MAX`` 字元；什麼都沒有回空字串。
+    """
+    tool = _first_str(data, "tool_name", "toolName", "tool")
+    tool_input = data.get("tool_input") or data.get("toolInput") or data.get("input")
+
+    detail = ""
+    if isinstance(tool_input, Mapping):
+        questions = tool_input.get("questions")
+        if isinstance(questions, list) and questions:
+            q0 = questions[0]
+            if isinstance(q0, Mapping):
+                detail = str(q0.get("question") or "")
+            elif isinstance(q0, str):
+                detail = q0
+        if not detail:
+            for key in _DETAIL_INPUT_KEYS:
+                value = tool_input.get(key)
+                if isinstance(value, str) and value:
+                    detail = value
+                    break
+    if not detail:
+        detail = _first_str(data, "message", "prompt", "question")
+
+    if tool and detail:
+        out = f"{tool}: {detail}"
+    else:
+        out = tool or detail
+    out = " ".join(out.split())  # 多行指令壓成單行
+    return out if len(out) <= _DETAIL_MAX else out[: _DETAIL_MAX - 1] + "…"
 
 
 def _waiting_for(data: Mapping[str, Any]) -> str:

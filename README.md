@@ -34,8 +34,11 @@ session 需要你回話時，它「**ring** 你」。
 - **等你優先**：需要你回應的 session 會排最上面，避免被工作中的 session 淹掉。
 - **一鍵跳回終端**：在 TUI 選 session 後按 `Enter` / `Space`，跳回 tmux、iTerm2、Terminal.app（macOS）或 Linux X11 視窗（`wmctrl`）裡的原本位置。
 - **等你時通知，不必開著看板**：裝了 hook，session 轉 🔴 等你的**當下**就響鈴 + 發系統通知——關掉 RiNG 看板、關掉終端也照樣 ring 你。裝 `terminal-notifier` 後還能點通知跳回 session。
-- **替 session 命名**：TUI 裡按 `n` 幫 session 加上自己的標籤，像 `maigo · 重構登入`，不用只靠專案目錄猜它在做什麼。
-- **全本機、可擴充**：只讀本機 Claude Code / Codex 資料，只寫 `~/.config/ring/`；source、focuser、notifier 都可插拔。
+- **替 session 命名**：TUI 裡按 `n` 幫 session 取名，像「重構登入」；取了名，看板與通知就直接顯示名字，不再用專案目錄名猜它在做什麼。
+- **看得到它在等什麼**：hook 模式下，🔴 等你的 session 會帶「具體在等什麼」（要跑的指令、問的問題），TUI 選中即顯示、通知內文也帶——小事可以先放著。
+- **塞進 status bar**：`ring --format oneline` 印 `🔴2 🟢1 🟡3` 單行摘要給 tmux / SwiftBar / waybar；`--format json` 給腳本吃。
+- **人不在座位也 ring 你**：內建 ntfy / webhook 遠端通知後端，等你的當下直接推到手機。
+- **預設全本機、可擴充**：只讀本機 Claude Code / Codex 資料，只寫 `~/.config/ring/`；唯一會連網的是你自己設定的 ntfy / webhook 通知。source、focuser、notifier 都可插拔。
 
 ## 跑起來
 
@@ -96,12 +99,39 @@ hook 只對新開的 session 生效，所以裝完要重開 Claude Code / Codex 
 | `ring doctor` | 唯讀環境診斷 |
 | `ring gc --dry-run` | 預覽 RiNG 自己的 stale 狀態檔清理 |
 | `ring gc` | 清理 RiNG 自己的 stale 狀態檔 |
+| `ring --format json` | 整個看板的機器可讀快照（給 jq / 腳本） |
+| `ring --format oneline` | `🔴2 🟢1 🟡3` 單行摘要（給 status bar） |
+| `ring stats` | 等待統計：最近 7 天你讓 agent 🔴 等了多久 |
+| `ring completion zsh` | 印 shell 補全腳本（zsh / bash） |
+
+### 塞進 status bar（`--format`）
+
+```sh
+ring --format oneline        # 🔴2 🟢1 🟡3（沒 session 時輸出空字串，段落自然收起）
+ring --format json | jq '.counts.waiting'
+```
+
+- **tmux**：`set -g status-right '#(ring --format oneline) …'`（配 `status-interval 5`）。
+- **SwiftBar / xbar / waybar**：包一層腳本呼叫 `ring --format oneline` 或吃 JSON 自己排版。
+- JSON 的鍵名視為穩定介面（只加不改），放心接腳本。
+
+### Shell 補全（`ring completion`）
+
+```sh
+# ~/.zshrc
+eval "$(ring completion zsh)"
+# ~/.bashrc
+eval "$(ring completion bash)"
+```
+
+子命令、旗標、`config set` 的鍵都補得到。
 
 ### `--watch` 的兩種樣子
 
 - 裝了 **Textual**（`[tui]` extra）且在真終端 → **互動 TUI**：
   `↑/↓` 選 session、`Enter` / `Space` 跳到它所在的終端、`n` 命名、`a` 切換是否顯示已離場、`r` 刷新、`q` 離場。
   如果你跟我一樣有 vim 手癖，也可以用 `j/k` 上下移動、`g/G` 跳到第一列 / 最後一列。
+  選中 🔴 等你的列時，表格下方會多一行顯示**它具體在等什麼**（要跑的指令、問的問題；hook 模式才有）。
 - 否則 → **Rich poll**（清除畫面重畫）；連 Rich 都沒有就純文字。三層優雅降級。
 
 ### 跳到 session（`Enter` / `Space`）
@@ -139,6 +169,19 @@ brew install terminal-notifier
 通知聲音、重複提醒時間、後端選擇都能在 config 裡調整；通知後端也是可插拔的，見後面的
 `Notifier` 擴充說明。
 
+#### 推到手機（ntfy / webhook）
+
+人不在座位時，桌面通知等於沒響。設定 [ntfy](https://ntfy.sh) topic URL 就能推到手機：
+
+```toml
+# ~/.config/ring/config.toml
+notify_ntfy_url = "https://ntfy.sh/my-ring-topic"  # 手機裝 ntfy app、訂同一個 topic
+notify_also = ["ntfy"]                             # 桌面通知照發，再「加發」一份到手機
+```
+
+`notify_backend = "ntfy"` 則是只推手機、不發桌面通知。要接 Slack / 自家 bot / IFTTT，
+用 `notify_webhook_url` 走通用 webhook 後端（JSON POST，欄位穩定只加不改）。
+
 ### 清理 RiNG 狀態檔（`ring gc`）
 
 RiNG 正常收到 `SessionEnd` 時會刪掉自己的 hook registry；如果 agent crash 或 hook 沒跑到結尾，
@@ -154,6 +197,19 @@ ring gc --all-ended      # 清掉所有目前判定已離場的 registry
 
 `ring gc` 只清 RiNG 自己寫在 `~/.config/ring/` 底下的狀態檔，不會碰 Claude Code / Codex 的
 transcript 或 state。`ring doctor` 維持唯讀診斷，不會替你刪檔。
+
+### 等待統計（`ring stats`）
+
+hook 模式下，RiNG 會把 session 的**狀態轉換**記進 `~/.config/ring/events.jsonl`
+（只記轉換、量很小、超過上限自動砍半保新）。`ring stats` 據此告訴你：最近這段時間，
+每個專案 🔴 等了你幾次、平均 / 最長 / 總共等多久。
+
+```sh
+ring stats               # 最近 7 天
+ring stats --since 12h   # 自訂時間窗
+```
+
+跟精準通知一樣，zero-config 測不到 🔴，所以 stats 也需要 hook 模式。
 
 ## Session 來源
 
@@ -324,7 +380,11 @@ notify_ignore_dnd = false        # macOS terminal-notifier 是否穿透勿擾 / 
 notify_backend = "auto"          # auto / terminal-notifier / osascript / notify-send / agent-hooks / none
 notify_repeat_seconds = [30, 120, 300]  # 持續等你時，幾秒後重複提醒
 notify_repeat_max = 3            # 重複提醒上限；0 = 不限
+notify_ntfy_url = ""             # 設完整 ntfy topic URL 啟用手機推播（如 https://ntfy.sh/my-topic）
+notify_webhook_url = ""          # 設 URL 啟用通用 webhook 後端（JSON POST）
+notify_also = []                 # 主後端之外「加發」的後端，如 ["ntfy"]（桌面＋手機各一份）
 focusers = ["tmux", "iTerm2", "Terminal", "linux-wm"]   # 跳轉嘗試順序
+plugins = []                     # 啟動時 import 的外部 plugin 模組（見「支援的工具與擴充」）
 
 [colors]                         # Rich 樣式字串，逐項覆寫（深淺底安全色為預設）
 waiting = "bold red"
@@ -358,10 +418,27 @@ core 不綁死任何特定工具或終端。三個維度都可插拔，每個都
 |------|----------|------|
 | `SessionSource` | 從哪裡找到 session | Claude Code、Codex、RiNG hook registry |
 | `Focuser` | 跳轉時把焦點帶去哪個終端 | tmux、iTerm2、Terminal.app、Linux X11（wmctrl）|
-| `Notifier` | 等你時怎麼發系統通知 | terminal-notifier、osascript、notify-send |
+| `Notifier` | 等你時怎麼發系統通知 | terminal-notifier、osascript、notify-send、ntfy、webhook |
 
 每個維度各自一個 package（`ring/sources/`、`ring/focus/`、`ring/notify/`），每個後端是裡面
 一個模組；要加新的＝丟一個模組 ＋ `register_*()`。
+
+### 讓裝好的 `ring` 載入你的 plugin
+
+`register_*()` 要有人執行才算數。裝好的 `ring` 指令啟動時會自動載入兩種來源的 plugin：
+
+1. **entry point**（發佈成套件時）——在你套件的 `pyproject.toml` 宣告，指向一個模組或
+   callable（模組在 import 時自行 `register_*()`；callable 會被無參數呼叫一次）：
+
+   ```toml
+   [project.entry-points."ring.plugins"]
+   mytool = "ring_mytool.plugin"
+   ```
+
+2. **config**（本機腳本）——`~/.config/ring/config.toml` 寫 `plugins = ["my_module"]`，
+   模組要在 `sys.path` 上（site-packages 或 `PYTHONPATH`）。
+
+單一 plugin 壞掉只會在 stderr 警告一行、不擋看板。
 
 ### 其他 agent CLI（`SessionSource`）
 

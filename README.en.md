@@ -34,7 +34,10 @@ RiNG puts them on one board, with sessions waiting for you sorted first.
 - **Waiting first**: sessions that need your response are highlighted and sorted above the rest.
 - **Jump back to the terminal**: in the TUI, select a session and press `Enter` / `Space` to focus tmux, iTerm2, Terminal.app (macOS), or a Linux X11 window (`wmctrl`).
 - **Notifies you without the board open**: with hooks installed, the moment a session turns 🔴 waiting it beeps and fires a system notification — even with no RiNG board running. With `terminal-notifier`, clicking the notification jumps back.
-- **Name your sessions**: press `n` in the TUI to add a local label such as `maigo · auth refactor`.
+- **Name your sessions**: press `n` in the TUI to name a session, e.g. "auth refactor"; once named, the board and notifications show the name instead of the workspace directory.
+- **See what it is waiting for**: in hook mode, a 🔴 waiting session carries the concrete pending item (the command to run, the question asked) — shown in the TUI and in the notification body.
+- **Fits your status bar**: `ring --format oneline` prints a `🔴2 🟢1 🟡3` one-liner for tmux / SwiftBar / waybar; `--format json` feeds scripts.
+- **Rings your phone too**: built-in ntfy / webhook notifiers push 🔴 waiting to your phone when you are away from the desk.
 - **Local and extensible**: RiNG only reads local Claude Code / Codex data and writes `~/.config/ring/`; session sources, focusers, and notifiers are pluggable.
 
 ## Run
@@ -94,12 +97,39 @@ Hooks only apply to new sessions, so restart Claude Code / Codex sessions after 
 | `ring doctor` | Read-only environment diagnosis |
 | `ring gc --dry-run` | Preview RiNG-owned stale state cleanup |
 | `ring gc` | Clean RiNG-owned stale state files |
+| `ring --format json` | Machine-readable board snapshot (for jq / scripts) |
+| `ring --format oneline` | `🔴2 🟢1 🟡3` one-liner (for status bars) |
+| `ring stats` | Waiting stats: how long agents kept 🔴 waiting in the last 7 days |
+| `ring completion zsh` | Print a shell completion script (zsh / bash) |
+
+### Status Bar Integration (`--format`)
+
+```sh
+ring --format oneline        # 🔴2 🟢1 🟡3 (empty output when no sessions, so the segment collapses)
+ring --format json | jq '.counts.waiting'
+```
+
+- **tmux**: `set -g status-right '#(ring --format oneline) …'` (with `status-interval 5`).
+- **SwiftBar / xbar / waybar**: wrap `ring --format oneline` or consume the JSON.
+- JSON keys are a stable interface (additive only), safe to script against.
+
+### Shell Completion (`ring completion`)
+
+```sh
+# ~/.zshrc
+eval "$(ring completion zsh)"
+# ~/.bashrc
+eval "$(ring completion bash)"
+```
+
+Completes subcommands, flags, and `config set` keys.
 
 ## Watch Mode
 
 - With **Textual** (`[tui]` extra) in a real terminal: interactive TUI.
   Use `↑/↓` to select, `Enter` / `Space` to jump, `n` to name a session, `a` to toggle ended sessions, `r` to refresh, and `q` to quit.
   If you have vim muscle memory like I do, `j/k` move up/down and `g/G` jump to the first/last row.
+  When the selected row is 🔴 waiting, a line under the table shows **what it is concretely waiting for** (the command to run, the question asked; hook mode only).
 - Otherwise: Rich polling; without Rich, plain text.
 
 ### Jump To A Session
@@ -130,6 +160,20 @@ Without it, RiNG falls back to macOS text notifications without click-to-focus.
 Notification sound, repeat timing, and backend selection are configurable; notification backends
 are also pluggable via the `Notifier` extension point.
 
+#### Push To Your Phone (ntfy / webhook)
+
+Desktop notifications do not help when you are away from the desk. Point RiNG at an
+[ntfy](https://ntfy.sh) topic to push to your phone:
+
+```toml
+# ~/.config/ring/config.toml
+notify_ntfy_url = "https://ntfy.sh/my-ring-topic"  # subscribe to the same topic in the ntfy app
+notify_also = ["ntfy"]                             # desktop notification as usual, plus a copy to the phone
+```
+
+`notify_backend = "ntfy"` pushes to the phone only. For Slack / your own bot / IFTTT, set
+`notify_webhook_url` to use the generic webhook backend (JSON POST with a stable, additive-only payload).
+
 ### Cleaning RiNG State Files (`ring gc`)
 
 When RiNG receives `SessionEnd`, it removes its own hook registry entry. If an agent crashes or the
@@ -145,6 +189,19 @@ ring gc --all-ended      # delete every registry file currently classified as en
 
 `ring gc` only cleans state files RiNG owns under `~/.config/ring/`. It does not touch Claude Code /
 Codex transcripts or state. `ring doctor` remains read-only and never deletes files.
+
+### Waiting Stats (`ring stats`)
+
+In hook mode, RiNG logs session **state transitions** to `~/.config/ring/events.jsonl`
+(transitions only, tiny, self-trimming past a size cap). `ring stats` then tells you, per project,
+how many times an agent 🔴 waited on you and for how long (avg / max / total).
+
+```sh
+ring stats               # last 7 days
+ring stats --since 12h   # custom window
+```
+
+Like precise notifications, 🔴 waiting is invisible to zero-config, so stats also needs hook mode.
 
 ## Session Sources
 
@@ -286,7 +343,11 @@ notify_ignore_dnd = false
 notify_backend = "auto"          # auto / terminal-notifier / osascript / notify-send / agent-hooks / none
 notify_repeat_seconds = [30, 120, 300]
 notify_repeat_max = 3
+notify_ntfy_url = ""             # full ntfy topic URL enables phone push (e.g. https://ntfy.sh/my-topic)
+notify_webhook_url = ""          # URL enables the generic webhook backend (JSON POST)
+notify_also = []                 # extra backends fired besides the primary, e.g. ["ntfy"]
 focusers = ["tmux", "iTerm2", "Terminal", "linux-wm"]
+plugins = []                     # external plugin modules imported at startup (see Extending)
 
 [colors]
 waiting = "bold red"
@@ -306,15 +367,35 @@ RiNG is not tied to a specific tool or terminal.
 |-----------------|---------|-----------|
 | `SessionSource` | find sessions | Claude Code, Codex, hook registry |
 | `Focuser` | jump to terminals | tmux, iTerm2, Terminal.app, Linux X11 (wmctrl) |
-| `Notifier` | notify when sessions are waiting | terminal-notifier, osascript, notify-send |
+| `Notifier` | notify when sessions are waiting | terminal-notifier, osascript, notify-send, ntfy, webhook |
 
 Each backend is a small module under `ring/sources/`, `ring/focus/`, or `ring/notify/`, registered via `register_*()`.
+
+### Loading Your Plugin Into An Installed `ring`
+
+`register_*()` only counts if something runs it. The installed `ring` command loads plugins from
+two places at startup:
+
+1. **Entry point** (for published packages) — declare it in your package's `pyproject.toml`,
+   pointing at a module or callable (a module registers on import; a callable is invoked once
+   with no arguments):
+
+   ```toml
+   [project.entry-points."ring.plugins"]
+   mytool = "ring_mytool.plugin"
+   ```
+
+2. **Config** (for local scripts) — add `plugins = ["my_module"]` to `~/.config/ring/config.toml`;
+   the module must be importable (site-packages or `PYTHONPATH`).
+
+A broken plugin prints one warning line to stderr and never blocks the board.
 
 ## Platform & Privacy
 
 - **Platform**: macOS / Linux. Windows is not supported.
-- **Privacy**: entirely local. RiNG only reads local `~/.claude/` and `~/.codex/` data and writes
-  `~/.config/ring/`. No network, uploads, or telemetry.
+- **Privacy**: local by default. RiNG only reads local `~/.claude/` and `~/.codex/` data and writes
+  `~/.config/ring/`. No telemetry. The only network calls are the optional ntfy / webhook notifiers,
+  and only to URLs you configure yourself.
 
 ## Name
 

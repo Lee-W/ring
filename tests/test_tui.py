@@ -245,7 +245,7 @@ async def test_poll_focus_request_session_not_found_does_not_crash(
 
 @pytest.mark.asyncio
 async def test_label_shown_in_project_cell(monkeypatch: pytest.MonkeyPatch) -> None:
-    """有自訂標籤的 session → 專案欄顯示「專案 · 標籤」。"""
+    """有自訂標籤的 session → 專案欄直接顯示標籤（取代 workspace 名）。"""
     sessions = [Session("sess-1", "/x/maigo", Status.WAITING, 0.0, "→ Edit", "hook")]
     monkeypatch.setattr(tui, "board", lambda show_all: sessions)
     monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
@@ -254,9 +254,9 @@ async def test_label_shown_in_project_cell(monkeypatch: pytest.MonkeyPatch) -> N
     app = tui.RingApp(lang="en")
     async with app.run_test():
         table = app.query_one(DataTable)
-        row_text = " ".join(str(c) for c in table.get_row_at(0))
-        assert "重構登入" in row_text
-        assert "maigo" in row_text
+        cells = [str(c) for c in table.get_row_at(0)]
+        project_cell = cells[1]  # 單一 provider → 無工具欄，專案欄在 index 1
+        assert project_cell == "重構登入"  # 取了名就取代 workspace 名
 
 
 @pytest.mark.asyncio
@@ -409,16 +409,12 @@ async def test_name_session_escape_does_not_save(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.asyncio
-async def test_focused_highlight_clears_when_no_longer_waiting(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+async def test_focused_highlight_clears_when_no_longer_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """通知指向的 session 回應後（離開 WAITING）→ 持續標記自動解除。"""
     from ring.ipc import write_focus_request
 
     req_path = tmp_path / "focus-request"
-    state: dict[str, list[Session]] = {
-        "sessions": [Session("sid-1", "/x/proj", Status.WAITING, 0.0, "→ Edit", "hook")]
-    }
+    state: dict[str, list[Session]] = {"sessions": [Session("sid-1", "/x/proj", Status.WAITING, 0.0, "→ Edit", "hook")]}
     monkeypatch.setattr(tui, "board", lambda show_all: state["sessions"])
     monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
 
@@ -438,3 +434,34 @@ async def test_focused_highlight_clears_when_no_longer_waiting(
             state["sessions"] = [Session("sid-1", "/x/proj", Status.WORKING, 0.0, "hi", "hook")]
             app._reload()
             assert app._focused_sid is None  # 標記自動解除
+
+
+@pytest.mark.asyncio
+async def test_detail_row_shows_waiting_detail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """選中 🔴 等你且有 waiting_detail 的列 → detail 列顯示它在等什麼。"""
+    from textual.widgets import Static
+
+    sessions = [
+        Session(
+            "w",
+            "/x/maigo",
+            Status.WAITING,
+            0.0,
+            "→ 等你",
+            "hook",
+            waiting_detail="Bash: rm -rf node_modules",
+        ),
+        Session("b", "/y/blog", Status.WORKING, 0.0, "→ Edit", "hook"),
+    ]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        detail = app.query_one("#detail", Static)
+        # WAITING 排最上面，游標預設在第 0 列 → 顯示 detail
+        assert "rm -rf node_modules" in str(detail.render())
+        # 移到沒有 detail 的列 → 清空
+        app.query_one(DataTable).move_cursor(row=1)
+        await pilot.pause()
+        assert str(detail.render()) == ""

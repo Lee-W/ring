@@ -150,6 +150,7 @@ class RingApp(App[None]):
         yield Header(show_clock=True)
         yield Static(id="legend")
         yield _Grid(id="grid", zebra_stripes=True)
+        yield Static(id="detail")
         yield Static(id="status")
         yield Footer()
 
@@ -205,11 +206,15 @@ class RingApp(App[None]):
             legend.append(f"{status.marker} {status_label(status)}   ", style=_STATUS_STYLE[status])
         self.query_one("#legend", Static).update(legend)
 
+    def _display_name(self, s: Session) -> str:
+        """訊息 / 提醒用顯示名：取過名用名字，否則用專案名（與看板專案欄一致）。"""
+        return labeled_project(s.project, get_label(s.session_id))
+
     def _ring_on_waiting_alerts(self, alerts: list[Session]) -> None:
         """有 session 需要提醒 → RiNG 真的「ring」你（響鈴 + toast 通知）。"""
         if alerts:
             self.bell()
-            names = ", ".join(sorted(s.project for s in alerts))
+            names = ", ".join(sorted(self._display_name(s) for s in alerts))
             self.notify(_("🔔 {names} 在等你回話", names=names), timeout=8)
 
     def _activate_own_window(self) -> None:
@@ -251,7 +256,7 @@ class RingApp(App[None]):
             table = self.query_one(DataTable)
             table.move_cursor(row=target_row)
             found_session = self._sessions[target_row]
-            msg = _("→ 已跳到 {project}（來自通知）", project=found_session.project)
+            msg = _("→ 已跳到 {project}（來自通知）", project=self._display_name(found_session))
             self._set_status(msg)
             self.notify(msg, timeout=8)
         else:
@@ -301,7 +306,28 @@ class RingApp(App[None]):
             table.add_row(*cells)
         if self._sessions:
             table.move_cursor(row=min(cursor, len(self._sessions) - 1))
+        self._update_detail()
         self._poll_focus_request()
+
+    def _update_detail(self) -> None:
+        """detail 列：選中的 session 在 🔴 等什麼（hook 有給具體內容才顯示）。
+
+        讓你不必跳過去就知道「哦是要跑這個指令的權限」——小事可以先放著。
+        """
+        s = self._selected()
+        widget = self.query_one("#detail", Static)
+        if s is not None and s.status is Status.WAITING and s.waiting_detail:
+            widget.update(Text(f"  🔴 {s.waiting_detail}", style=_STATUS_STYLE[Status.WAITING]))
+        else:
+            widget.update("")
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        # 游標移動（↑/↓/j/k）時同步 detail 列，不必等下一次刷新。
+        # RowHighlighted 是非同步訊息，可能在 app 收場、widget 已卸載後才送達——安靜跳過。
+        try:
+            self._update_detail()
+        except Exception:
+            pass
 
     def _selected(self) -> Session | None:
         row = self.query_one(DataTable).cursor_row
@@ -342,10 +368,11 @@ class RingApp(App[None]):
         if s.session_id == self._focused_sid:
             self._focused_sid = None  # 你已親自跳過去處理，解除通知標記
         ok, msg = focus_jump(s)
+        name = self._display_name(s)
         if ok:
-            text = _("→ {project}（{where}）", project=s.project, where=msg)
+            text = _("→ {project}（{where}）", project=name, where=msg)
         else:
-            text = _("{project}：{msg}", project=s.project, msg=msg)
+            text = _("{project}：{msg}", project=name, msg=msg)
         self._set_status(text)
         self.notify(text, severity="information" if ok else "warning", timeout=10)
 

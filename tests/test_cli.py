@@ -645,3 +645,152 @@ def test_gc_bad_duration_returns_two(capsys: pytest.CaptureFixture[str]) -> None
     rc = cli.main(["gc", "--older-than", "nope"])
     assert rc == 2
     assert "nope" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# --format json / oneline（機器可讀輸出）
+# ---------------------------------------------------------------------------
+
+
+def _format_sessions() -> list[Session]:
+    return [
+        Session("w", "/x/maigo", Status.WAITING, 0.0, "→ 等你確認權限", "hook", provider="claude-code"),
+        Session("a", "/x/maigo", Status.WORKING, 0.0, "→ Edit", "scan", provider="claude-code", todo=(2, 5)),
+        Session("b", "/y/blog", Status.IDLE, 0.0, "—", "codex", provider="codex"),
+    ]
+
+
+def test_format_json_outputs_machine_readable_board(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import json
+
+    monkeypatch.setattr(cli, "board", lambda show_all: _format_sessions())
+    monkeypatch.setattr(cli, "running_agent_pids", lambda: [1, 2])
+    monkeypatch.setattr(cli, "load_labels", lambda: {"w": "重構登入"})
+    rc = cli.main(["--format", "json"])
+    assert rc == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["agent_processes"] == 2
+    assert data["counts"] == {"waiting": 1, "working": 1, "idle": 1, "ended": 0}
+    by_id = {s["session_id"]: s for s in data["sessions"]}
+    assert by_id["w"]["label"] == "重構登入"
+    assert by_id["w"]["status"] == "waiting"
+    assert by_id["w"]["marker"] == "🔴"
+    assert by_id["a"]["todo"] == {"done": 2, "total": 5}
+    assert by_id["b"]["todo"] is None
+    assert by_id["a"]["project"] == "maigo"
+
+
+def test_format_oneline_counts_nonzero_statuses(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "board", lambda show_all: _format_sessions())
+    rc = cli.main(["--format", "oneline"])
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == "🔴1 🟢1 🟡1"
+
+
+def test_format_oneline_empty_board_prints_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "board", lambda show_all: [])
+    rc = cli.main(["--format", "oneline"])
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == ""
+
+
+def test_format_rejects_watch(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = cli.main(["--watch", "--format", "json"])
+    assert rc == 2
+    assert "--format" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# completion 子命令
+# ---------------------------------------------------------------------------
+
+
+def test_completion_zsh_script(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = cli.main(["completion", "zsh"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "compdef _ring ring" in out
+    assert "install-hooks" in out
+    assert "notify_backend" in out  # config 鍵動態帶入
+
+
+def test_completion_bash_script(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = cli.main(["completion", "bash"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "complete -F _ring_completion ring" in out
+    assert "--format" in out
+    assert "notify_backend" in out
+
+
+def test_completion_requires_shell(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["completion"]) == 2
+    assert "zsh|bash" in capsys.readouterr().err
+
+
+def test_completion_unknown_shell(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["completion", "fish"]) == 2
+    assert "fish" in capsys.readouterr().err
+
+
+def test_completion_help_does_not_print_script(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = cli.main(["completion", "--help"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "usage: ring completion" in out
+    assert "compdef" not in out
+
+
+# ---------------------------------------------------------------------------
+# stats 子命令
+# ---------------------------------------------------------------------------
+
+
+def test_stats_no_data_hints_hooks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("ring.stats.EVENTS_PATH", tmp_path / "events.jsonl")
+    rc = cli.main(["stats", "--lang", "en"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "install-hooks" in out
+
+
+def test_stats_prints_project_table(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import time as _time
+
+    from ring.stats import log_transition
+
+    events = tmp_path / "events.jsonl"
+    monkeypatch.setattr("ring.stats.EVENTS_PATH", events)
+    now = _time.time()
+    log_transition("s1", "claude-code", "/x/maigo", "waiting", path=events, now=now - 100)
+    log_transition("s1", "claude-code", "/x/maigo", "working", path=events, now=now - 55)
+
+    rc = cli.main(["stats"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "maigo" in out
+    assert "45s" in out
+    assert "全部" in out
+
+
+def test_stats_bad_since_returns_two(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["stats", "--since", "nope"]) == 2
+    assert "nope" in capsys.readouterr().err
+
+
+def test_stats_help_does_not_run(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("ring.commands.stats.collect_waits") as mock_collect:
+        rc = cli.main(["stats", "--help"])
+    assert rc == 0
+    mock_collect.assert_not_called()
+    assert "usage: ring stats" in capsys.readouterr().out

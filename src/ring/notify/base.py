@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from ring.i18n import gettext as _
+from ring.labels import get_label
 from ring.registry import Session
 
 
@@ -29,9 +31,20 @@ class Notifier(Protocol):
         ...
 
 
-def notify_message(session: Session) -> str:
-    """通知內文——只給重要訊息：去哪（完整路徑或 tmux 座標）。
+def display_name(session: Session) -> str:
+    """通知顯示用名稱：使用者取過名（TUI 按 ``n``）就用名字，否則用專案（目錄）名。"""
+    return get_label(session.session_id) or session.project
 
-    標題已經說了「哪個專案在等你」，內文就補「位置」讓你（尤其不能點擊跳轉時）知道去哪。
+
+def notify_title(session: Session) -> str:
+    """通知標題——「哪個 session 在等你」，全後端共用一句。"""
+    return _("RiNG · {project} 在等你回話", project=display_name(session))
+
+
+def notify_message(session: Session) -> str:
+    """通知內文——它在等什麼（hook 有給 detail 時）＋去哪（完整路徑或 tmux 座標）。
+
+    標題已經說了「誰在等你」，內文就補「等什麼、去哪」，讓你看一眼就能決定要不要現在回去。
     """
-    return f"📍 {session.location}"
+    location = f"📍 {session.location}"
+    return f"{session.waiting_detail}\n{location}" if session.waiting_detail else location

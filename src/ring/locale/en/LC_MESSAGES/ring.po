@@ -239,7 +239,10 @@ msgid ""
 "  config get KEY               讀單一設定的目前值\n"
 "  config set KEY VALUE         寫入單一設定（會重寫設定檔，不保留註解）\n"
 "  focus SESSION_ID             聚焦指定 session；TUI 在跑時會回到 RiNG 並選中該列\n"
-"  doctor                       顯示環境診斷（唯讀）——hook 安裝狀態、通知後端、focuser 可用性\n"
+"  gc [--dry-run]               清理 RiNG 自己的 stale 狀態檔\n"
+"  doctor                       顯示環境診斷（唯讀）——hook、通知、focuser、維護提示\n"
+"  stats [--since 7d]           等待統計：你讓 agent 🔴 等了多久（hook 模式）\n"
+"  completion SHELL             印出 shell 補全腳本（zsh / bash）\n"
 msgstr ""
 "\n"
 "commands:\n"
@@ -251,7 +254,10 @@ msgstr ""
 "  config get KEY               read one setting's current value\n"
 "  config set KEY VALUE         write one setting (rewrites config file, comments lost)\n"
 "  focus SESSION_ID             focus a session; if TUI is running, returns to RiNG and selects the row\n"
-"  doctor                       show environment diagnosis (read-only) — hook status, notify backend, focuser availability\n"
+"  gc [--dry-run]               clean RiNG's own stale state files\n"
+"  doctor                       show environment diagnosis (read-only) — hooks, notify, focuser, maintenance hints\n"
+"  stats [--since 7d]           waiting stats: how long you kept agents 🔴 waiting (hook mode)\n"
+"  completion SHELL             print shell completion script (zsh / bash)\n"
 
 # ── subcommand help ──
 msgid ""
@@ -306,14 +312,14 @@ msgstr ""
 msgid ""
 "usage: ring doctor\n"
 "\n"
-"唯讀環境診斷：逐節報告 hook 安裝狀態、通知後端可用性、focuser 可用性與設定檔位置。\n"
+"唯讀環境診斷：逐節報告 hook 安裝狀態、通知後端可用性、focuser 可用性、維護提示與設定檔位置。\n"
 "不寫任何檔案、不安裝、不發通知；固定回傳 0。\n"
 msgstr ""
 "usage: ring doctor\n"
 "\n"
 "Read-only environment diagnosis: reports hook install status, notify backend availability,\n"
-"focuser availability, and config file path. Never writes files, installs, or sends notifications.\n"
-"Always returns 0.\n"
+"focuser availability, maintenance hints, and config file path. Never writes files, installs,\n"
+"or sends notifications. Always returns 0.\n"
 
 # ── doctor subcommand strings ──
 msgid "RiNG 環境診斷"
@@ -393,3 +399,143 @@ msgstr "For all effective values, run `ring config`."
 
 msgid "用法：ring doctor"
 msgstr "usage: ring doctor"
+
+
+# ── gc ──
+msgid ""
+"usage: ring gc [--dry-run] [--older-than DURATION] [--all-ended]\n"
+"\n"
+"清理 RiNG 自己的 stale 狀態檔；不碰 Claude Code / Codex 的 transcript 或 state。\n"
+"\n"
+"options:\n"
+"  --dry-run              只預覽，不刪檔\n"
+"  --older-than DURATION  清理超過指定時間的已離場 registry（例如 30m、2h、7d；預設 7d）\n"
+"  --all-ended            清理所有目前判定已離場的 registry\n"
+msgstr ""
+"usage: ring gc [--dry-run] [--older-than DURATION] [--all-ended]\n"
+"\n"
+"Clean RiNG's own stale state files; never touches Claude Code / Codex transcripts or state.\n"
+"\n"
+"options:\n"
+"  --dry-run              preview only, delete nothing\n"
+"  --older-than DURATION  remove ended registries older than DURATION (e.g. 30m, 2h, 7d; default 7d)\n"
+"  --all-ended            remove every registry currently judged ended\n"
+
+msgid "清理 RiNG 自己的 stale 狀態檔。"
+msgstr "Clean RiNG's own stale state files."
+
+msgid "只預覽，不刪檔"
+msgstr "preview only, delete nothing"
+
+msgid "清理超過指定時間的已離場 registry（例如 30m、2h、7d；預設 7d）"
+msgstr "remove ended registries older than DURATION (e.g. 30m, 2h, 7d; default 7d)"
+
+msgid "清理所有目前判定已離場的 registry"
+msgstr "remove every registry currently judged ended"
+
+msgid "無效的 --older-than：{value}"
+msgstr "invalid --older-than: {value}"
+
+msgid "RiNG GC：{action} {count} 個檔案"
+msgstr "RiNG GC: {action} {count} file(s)"
+
+msgid "將刪除"
+msgstr "would delete"
+
+msgid "已刪除"
+msgstr "deleted"
+
+# ── doctor 維護節 ──
+msgid "維護"
+msgstr "Maintenance"
+
+msgid "可清理"
+msgstr "cleanable"
+
+msgid "沒有 RiNG stale 狀態檔"
+msgstr "no RiNG stale state files"
+
+msgid "{n} 個 RiNG stale 狀態檔（執行 ring gc --dry-run 預覽）"
+msgstr "{n} RiNG stale state file(s) (preview with ring gc --dry-run)"
+
+msgid "macOS 提醒：若只聽到聲音但沒有通知框，請到系統設定的通知項目啟用 Banner/Alert。"
+msgstr "macOS tip: if you hear a sound but see no banner, enable Banner/Alert for the app under System Settings → Notifications."
+
+# ── --format / 機器可讀輸出 ──
+msgid "輸出格式：table（預設）/ json（機器可讀）/ oneline（status bar 單行摘要）"
+msgstr "output format: table (default) / json (machine-readable) / oneline (status bar one-liner)"
+
+msgid "--format {fmt} 只能用在快照模式，不能配 --watch。"
+msgstr "--format {fmt} only works in snapshot mode, not with --watch."
+
+# ── plugins ──
+msgid "⚠️ ring plugin '{name}' 載入失敗：{error}"
+msgstr "⚠️ ring plugin '{name}' failed to load: {error}"
+
+# ── completion ──
+msgid ""
+"usage: ring completion zsh|bash\n"
+"\n"
+"印出 shell 補全腳本。zsh 放 ~/.zshrc：eval \"$(ring completion zsh)\"；bash 同理。\n"
+msgstr ""
+"usage: ring completion zsh|bash\n"
+"\n"
+"Print a shell completion script. zsh: add eval \"$(ring completion zsh)\" to ~/.zshrc; bash likewise.\n"
+
+msgid "用法：ring completion zsh|bash"
+msgstr "usage: ring completion zsh|bash"
+
+msgid "不支援的 shell：{shell}（目前支援 zsh / bash）"
+msgstr "unsupported shell: {shell} (zsh / bash supported)"
+
+# ── stats ──
+msgid ""
+"usage: ring stats [--since DURATION]\n"
+"\n"
+"等待統計：最近一段時間各專案讓你回應的次數與 🔴 等待時長（平均 / 最長 / 總計）。\n"
+"資料來自 hook 寫的狀態轉換 log（~/.config/ring/events.jsonl），zero-config 測不到等待。\n"
+"\n"
+"options:\n"
+"  --since DURATION  統計時間窗（例如 12h、7d、30d；預設 7d）\n"
+msgstr ""
+"usage: ring stats [--since DURATION]\n"
+"\n"
+"Waiting stats: per-project counts and 🔴 wait durations (avg / max / total) for a recent window.\n"
+"Data comes from the hook-written transition log (~/.config/ring/events.jsonl);\n"
+"zero-config cannot detect waits.\n"
+"\n"
+"options:\n"
+"  --since DURATION  stats window (e.g. 12h, 7d, 30d; default 7d)\n"
+
+msgid "等待統計：你讓 agent 🔴 等了多久。"
+msgstr "Waiting stats: how long you kept agents 🔴 waiting."
+
+msgid "統計時間窗（例如 12h、7d、30d；預設 7d）"
+msgstr "stats window (e.g. 12h, 7d, 30d; default 7d)"
+
+msgid "無效的 --since：{value}"
+msgstr "invalid --since: {value}"
+
+msgid "🎤 RiNG stats — 最近 {since} 的 🔴 等待"
+msgstr "🎤 RiNG stats — 🔴 waits in the last {since}"
+
+msgid "（這段時間沒有等待紀錄。stats 需要 hook 模式：ring install-hooks）"
+msgstr "(no waiting records in this window. stats needs hook mode: ring install-hooks)"
+
+msgid "全部"
+msgstr "total"
+
+msgid "次數"
+msgstr "waits"
+
+msgid "平均"
+msgstr "avg"
+
+msgid "最長"
+msgstr "max"
+
+msgid "總等待"
+msgstr "total wait"
+
+msgid "⚠️ 其中 {n} 段還在 🔴 等你（計到現在為止）。"
+msgstr "⚠️ {n} of these are still 🔴 waiting for you (counted up to now)."

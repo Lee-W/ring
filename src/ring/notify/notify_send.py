@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import subprocess
 
-from ring.i18n import gettext as _
-from ring.notify.base import notify_message
+from ring.notify.base import notify_message, notify_title
 from ring.notify.command import CommandNotifier
 from ring.registry import Session
 
@@ -19,7 +18,7 @@ class NotifySendNotifier(CommandNotifier):
     def send(self, sessions: list[Session]) -> None:
         """用 libnotify 的 ``notify-send`` 逐 session 各發一則純文字通知。"""
         for s in sessions:
-            title = _("RiNG · {project} 在等你回話", project=s.project)
+            title = notify_title(s)
             message = notify_message(s)
             try:
                 subprocess.run(["notify-send", title, message], capture_output=True, timeout=10)

@@ -37,6 +37,7 @@ from ring.registry import (
     Status,
     _pid_tty,
 )
+from ring.stats import log_transition
 from ring.transcript import _extract_todo, _latest_action, _tail_records
 
 _HOOK_EVENTS = list(HOOK_EVENTS)
@@ -158,8 +159,11 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
         return
 
     path = RING_REGISTRY / f"{quote(event.session_id, safe=':')}.json"
+    prev_status = _previous_status(path)
     if event.status is Status.ENDED:
         path.unlink(missing_ok=True)  # 乾淨離場：直接消失
+        if prev_status is not None and prev_status != Status.ENDED.value:
+            log_transition(event.session_id, event.provider, event.cwd, Status.ENDED.value)
         return
 
     last_action, todo = event.last_action or "—", None
@@ -183,6 +187,8 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
         payload["todo"] = list(todo)
     if event.waiting_for:
         payload["waiting_for"] = event.waiting_for
+    if event.status is Status.WAITING and event.detail:
+        payload["waiting_detail"] = event.detail
     tty = event.tty or _session_tty(adapter.process_names)
     if tty:
         payload["tty"] = tty
@@ -192,8 +198,20 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
     tmp.write_text(json.dumps(payload))
     tmp.replace(path)  # atomic
 
+    if prev_status != event.status.value:
+        log_transition(event.session_id, event.provider, event.cwd, event.status.value)
+
     if event.status is Status.WAITING:
         _ring_waiting_now(event, payload, last_action)
+
+
+def _previous_status(path: Path) -> str | None:
+    """讀 registry 檔目前的狀態值（給轉換偵測用）；沒檔 / 壞檔回 None。"""
+    try:
+        data = json.loads(path.read_text())
+        return str(data["status"])
+    except Exception:
+        return None
 
 
 def _ring_waiting_now(event: Any, payload: dict[str, Any], last_action: str) -> None:
@@ -219,6 +237,7 @@ def _ring_waiting_now(event: Any, payload: dict[str, Any], last_action: str) -> 
                     source="hook",
                     tty=payload.get("tty"),
                     provider=event.provider,
+                    waiting_detail=str(payload.get("waiting_detail", "")),
                     origin_cwd=event.cwd,
                 )
             ]

@@ -12,14 +12,16 @@ from ring.registry import Status
 
 
 @pytest.fixture(autouse=True)
-def _hermetic_config(monkeypatch: pytest.MonkeyPatch) -> None:
+def _hermetic_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """讓 hook 測試不受機器 config 影響（預設 backend=auto → 不委派 agent-hooks）。
 
     同時清空 notifier registry：hook 現在會在 WAITING 事件就地發系統通知，darwin 上
     osascript 永遠可用，不擋會在跑測試時噴真實通知。空 registry → _select_notifier 回
-    None → notify_waiting no-op。要驗證「有發」的測試自己注入 spy notifier。"""
+    None → notify_waiting no-op。要驗證「有發」的測試自己注入 spy notifier。
+    stats 的狀態轉換 log 也導去 tmp，避免測試寫進使用者的 events.jsonl。"""
     monkeypatch.setattr("ring.hook.get_config", lambda: Config())
     monkeypatch.setattr("ring.notify._NOTIFIERS", [])
+    monkeypatch.setattr("ring.stats.EVENTS_PATH", tmp_path / "events.jsonl")
 
 
 def _feed(monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any]) -> None:
@@ -681,3 +683,104 @@ def test_uninstall_hooks_invalid_json(monkeypatch: pytest.MonkeyPatch, tmp_path:
     monkeypatch.setattr("ring.hook.Path.home", lambda: tmp_path)
 
     assert uninstall_hooks() == 1
+
+
+# ---------------------------------------------------------------------------
+# waiting_detail：等你時「到底在等什麼」
+# ---------------------------------------------------------------------------
+
+
+def test_waiting_detail_captures_bash_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """PermissionRequest 帶 tool_input.command → registry 存 `Bash: <指令>`。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "PermissionRequest",
+            "cwd": "/x",
+            "tool_name": "Bash",
+            "tool_input": {"command": "rm -rf node_modules"},
+        },
+    )
+    assert hook.run_hook() == 0
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WAITING.value
+    assert data["waiting_detail"] == "Bash: rm -rf node_modules"
+
+
+def test_waiting_detail_captures_question_text(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """AskUserQuestion → 存第一個問題的內容。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "PreToolUse",
+            "cwd": "/x",
+            "tool_name": "AskUserQuestion",
+            "tool_input": {"questions": [{"question": "要用哪個 auth 方案？"}]},
+        },
+    )
+    assert hook.run_hook() == 0
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WAITING.value
+    assert "要用哪個 auth 方案" in data["waiting_detail"]
+    assert data["waiting_detail"].startswith("AskUserQuestion: ")
+
+
+def test_waiting_detail_collapses_multiline_and_truncates(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    long_cmd = "echo start\n" + "x" * 400
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "PermissionRequest",
+            "cwd": "/x",
+            "tool_name": "Bash",
+            "tool_input": {"command": long_cmd},
+        },
+    )
+    assert hook.run_hook() == 0
+    detail = json.loads((tmp_path / "s1.json").read_text())["waiting_detail"]
+    assert "\n" not in detail
+    assert len(detail) <= 160
+    assert detail.endswith("…")
+
+
+def test_non_waiting_event_has_no_waiting_detail(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """🟢 WORKING 的 PreToolUse 就算帶 tool_input 也不寫 waiting_detail（沒在等）。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "PreToolUse",
+            "cwd": "/x",
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls"},
+        },
+    )
+    assert hook.run_hook() == 0
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WORKING.value
+    assert "waiting_detail" not in data
+
+
+def test_notification_message_used_as_waiting_detail(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "Notification",
+            "notification_type": "permission_prompt",
+            "message": "Claude needs your permission to use Edit",
+            "cwd": "/x",
+        },
+    )
+    assert hook.run_hook() == 0
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WAITING.value
+    assert data["waiting_detail"] == "Claude needs your permission to use Edit"

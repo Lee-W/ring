@@ -110,6 +110,7 @@ class Session:
     todo: tuple[int, int] | None = None  # (done, total)
     recent_actions: list[str] = field(default_factory=list)
     provider: str = ""
+    waiting_detail: str = ""  # 🔴 等你時「到底在等什麼」（權限指令 / 問題內容；hook 模式才有）
     _tail_kind: str = field(default="none", repr=False, compare=False)  # 內部：scan 路徑暫存對話尾判定
     origin_cwd: str = ""  # 開場 cwd（session 第一筆帶 cwd 紀錄），用於歸屬；空時 fallback 到 cwd
 
@@ -617,6 +618,7 @@ def _hook_sessions(
                     tty=str(data.get("tty", "")) or None,
                     todo=tuple(todo) if isinstance(todo, list) and len(todo) == 2 else None,
                     provider=provider,
+                    waiting_detail=str(data.get("waiting_detail", "")),
                     origin_cwd=str(data.get("origin_cwd", "")),
                 )
             )

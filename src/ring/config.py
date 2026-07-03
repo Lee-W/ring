@@ -20,7 +20,11 @@
                                       #   "none" = 完全不發通知（RiNG 當純看板）
     notify_repeat_seconds = [30, 120, 300]  # 持續等你時，多久後重複提醒
     notify_repeat_max = 3             # 重複提醒上限；0 = 不限
+    notify_ntfy_url = "https://ntfy.sh/my-topic"   # 設了才啟用 ntfy 後端（推到手機）
+    notify_webhook_url = "https://example.com/hook"  # 設了才啟用 webhook 後端（JSON POST）
+    notify_also = ["ntfy"]            # 主後端之外「加發」的後端（例如桌面通知＋手機各一份）
     focusers = ["tmux", "iTerm2", "Terminal", "linux-wm"]  # 跳轉嘗試順序；省略＝內建預設
+    plugins = ["my_ring_plugin"]      # 啟動時 import 的外部 plugin 模組（自行 register_*）
 """
 
 from __future__ import annotations
@@ -65,7 +69,11 @@ class Config:
     notify_backend: str = "auto"
     notify_repeat_seconds: tuple[int, ...] = (30, 120, 300)
     notify_repeat_max: int = 3  # 0 = 不限
+    notify_ntfy_url: str = ""  # 完整 ntfy topic URL；空＝ntfy 後端不可用
+    notify_webhook_url: str = ""  # webhook URL；空＝webhook 後端不可用
+    notify_also: tuple[str, ...] = ()  # 主後端之外加發的後端名（如 ["ntfy"]）
     focusers: tuple[str, ...] = ()  # 空＝用內建預設順序
+    plugins: tuple[str, ...] = ()  # 啟動時 import 的外部 plugin 模組（entry point 之外的本機路）
     colors: dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_COLORS))
 
 
@@ -131,7 +139,11 @@ def load(path: Path | None = None) -> Config:
         notify_repeat_seconds=_as_positive_int_tuple(raw.get("notify_repeat_seconds"), d.notify_repeat_seconds),
         notify_repeat_max=max(0, _as_int(raw.get("notify_repeat_max"), d.notify_repeat_max)),
         notify_backend=notify_backend,
+        notify_ntfy_url=(raw["notify_ntfy_url"] if isinstance(raw.get("notify_ntfy_url"), str) else ""),
+        notify_webhook_url=(raw["notify_webhook_url"] if isinstance(raw.get("notify_webhook_url"), str) else ""),
+        notify_also=_as_str_tuple(raw.get("notify_also")),
         focusers=_as_str_tuple(raw.get("focusers")),
+        plugins=_as_str_tuple(raw.get("plugins")),
         colors=_parse_colors(raw.get("colors")),
     )
 
@@ -196,7 +208,11 @@ _SETTERS: dict[str, Callable[[str], object]] = {
     "notify_backend": str,
     "notify_repeat_seconds": _coerce_int_list,
     "notify_repeat_max": _coerce_int,
+    "notify_ntfy_url": str,
+    "notify_webhook_url": str,
+    "notify_also": _coerce_str_list,
     "focusers": _coerce_str_list,
+    "plugins": _coerce_str_list,
 }
 
 

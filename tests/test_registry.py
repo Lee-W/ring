@@ -106,10 +106,7 @@ def test_running_claude_pids_ignores_daemon_and_bg_pty(monkeypatch: pytest.Monke
         stdout = "\n".join(
             [
                 "  PID COMM ARGS",
-                (
-                    " 101 /Users/me/.local/bin/claude "
-                    "/Users/me/.local/bin/claude daemon run --origin transient"
-                ),
+                (" 101 /Users/me/.local/bin/claude /Users/me/.local/bin/claude daemon run --origin transient"),
                 (
                     " 102 claude "
                     "claude --bg-pty-host /tmp/cc-daemon/pty/s.sock 72 35 -- "
@@ -399,9 +396,7 @@ def test_hook_sessions_keeps_cwd_fallback_when_live_tty_unknown(
     assert sessions[0].status is Status.WAITING
 
 
-def test_hook_sessions_keeps_lone_live_session_with_wrong_tty(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_hook_sessions_keeps_lone_live_session_with_wrong_tty(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """單一 live session 但 hook 記的 tty 不對（被重配 / 錯置）→ 仍要顯示，不可憑空消失。
 
     cwd 只有一個 live proc、只有一筆 hook row 時，就算 tty 對不上也不該標離場——
@@ -453,9 +448,7 @@ def test_hook_sessions_caps_same_cwd_same_tty_rows_to_live_process_count(
     assert by_id["codex:new"].status is Status.WAITING
 
 
-def test_hook_sessions_purges_session_start_source_phantom(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_hook_sessions_purges_session_start_source_phantom(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """provider 是 SessionStart source（startup 等）的腐壞檔 → 不顯示且自我刪除。"""
     registry_dir = tmp_path / "sessions"
     _write_hook_session(registry_dir, "startup:abc", "/work/app", "", provider="startup")
@@ -578,9 +571,7 @@ def test_codex_latest_action_prefers_function_call() -> None:
     assert _codex_latest_action(records, "fallback") == "→ exec_command"
 
 
-def test_codex_threads_reads_state_and_marks_live_idle(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_codex_threads_reads_state_and_marks_live_idle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     rollout = tmp_path / "rollout.jsonl"
     _write_rollout(rollout, [{"type": "event_msg", "payload": {"type": "task_complete"}}])
     db = tmp_path / "state.sqlite"
@@ -651,9 +642,7 @@ def test_codex_threads_keeps_stale_live_thread_on_symlinked_cwd(
     assert sessions[0].status is not Status.ENDED
 
 
-def test_codex_threads_hides_closed_recent_thread(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_codex_threads_hides_closed_recent_thread(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     rollout = tmp_path / "rollout.jsonl"
     _write_rollout(rollout, [{"type": "event_msg", "payload": {"type": "task_complete"}}])
     db = tmp_path / "state.sqlite"
@@ -680,3 +669,27 @@ def test_codex_threads_hides_closed_recent_thread(
     assert len(sessions) == 1
     assert sessions[0].status is Status.ENDED
     assert sessions[0].tty is None
+
+
+def test_hook_sessions_loads_waiting_detail(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """registry 檔的 waiting_detail 要進 Session（沒有時回空字串）。"""
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", tmp_path)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "s1.json").write_text(
+        json.dumps(
+            {
+                "session_id": "s1",
+                "provider": "claude-code",
+                "cwd": "/work/app",
+                "status": "waiting",
+                "last_active": 123.0,
+                "last_action": "—",
+                "waiting_detail": "Bash: rm -rf node_modules",
+            }
+        )
+    )
+    _write_hook_session(tmp_path, "s2", "/work/app", "")
+
+    by_id = {s.session_id: s for s in _hook_sessions([("/work/app", "")])}
+    assert by_id["s1"].waiting_detail == "Bash: rm -rf node_modules"
+    assert by_id["s2"].waiting_detail == ""

@@ -23,16 +23,20 @@ from ring.config import get_config
 from ring.i18n import gettext as _
 from ring.notify.base import Notifier
 from ring.notify.notify_send import notifier as _notify_send
+from ring.notify.ntfy import notifier as _ntfy
 from ring.notify.osascript_notifier import notifier as _osascript
 from ring.notify.terminal_notifier import notifier as _terminal_notifier
+from ring.notify.webhook import notifier as _webhook
 from ring.registry import Session
 
 # 一次性安裝引導的 marker 檔路徑。
 _HINT_MARKER: Path = Path.home() / ".config" / "ring" / ".tn-hint-shown"
 
 # 內建後端。順序即 auto 的偏好順序（前面優先）。terminal-notifier 先於 osascript（macOS），
-# notify-send 殿後（Linux）。register_notifier(first=True) 可插到最前。
-_NOTIFIERS: list[Notifier] = [_terminal_notifier, _osascript, _notify_send]
+# notify-send 殿後（Linux）。ntfy / webhook 是遠端後端，設了 URL 才 available，放最後——
+# auto 只在本機後端全滅時才選到它們；平常用 notify_also 加發或 notify_backend 指名。
+# register_notifier(first=True) 可插到最前。
+_NOTIFIERS: list[Notifier] = [_terminal_notifier, _osascript, _notify_send, _ntfy, _webhook]
 
 
 def register_notifier(notifier: Notifier, *, first: bool = False) -> None:
@@ -90,15 +94,38 @@ def notify_waiting(sessions: list[Session]) -> str | None:
     if not sessions:
         return None
 
-    backend = get_config().notify_backend
+    cfg = get_config()
+    backend = cfg.notify_backend
+    if backend == "none":
+        return None  # 「完全不發通知」說到做到，notify_also 也不例外
     notifier = _select_notifier(backend)
+    if notifier is not None:
+        notifier.send(sessions)
+    _send_also(sessions, cfg.notify_also, primary=notifier)
     if notifier is None:
         return None
-    notifier.send(sessions)
     # auto 落到非點擊後端、且在 macOS（terminal-notifier 是可裝的點擊選項）→ 提示一次。
     if backend == "auto" and not notifier.supports_click() and sys.platform == "darwin":
         return _maybe_show_install_hint()
     return None
+
+
+def _send_also(sessions: list[Session], also: tuple[str, ...], primary: Notifier | None) -> None:
+    """notify_also 的加發：主後端之外，再對指定名稱的後端各發一份。
+
+    典型用法是桌面通知（primary）＋ ntfy 推手機（also）同時響。跳過主後端本身
+    （不重複發）、跳過不可用的；失敗一律安靜吞掉。
+    """
+    for name in also:
+        if primary is not None and name == primary.name:
+            continue
+        for n in _NOTIFIERS:
+            if n.name == name and n.available():
+                try:
+                    n.send(sessions)
+                except Exception:
+                    pass
+                break
 
 
 def _maybe_show_install_hint() -> str | None:

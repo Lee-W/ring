@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from dataclasses import fields
@@ -18,10 +19,12 @@ from typing import Any
 
 from ring import __version__
 from ring.commands._args import strip_lang as _strip_lang
+from ring.commands.completion import run_completion
 from ring.commands.doctor import run_doctor
 from ring.commands.focus import run_focus
 from ring.commands.gc import run_gc
 from ring.commands.hook import run_hook_command, run_install_hooks, run_remove_hooks
+from ring.commands.stats import run_stats
 from ring.config import CONFIG_PATH as CONFIG_PATH
 from ring.config import Config as Config
 from ring.config import ConfigError as ConfigError
@@ -30,6 +33,7 @@ from ring.config import set_value as set_value
 from ring.i18n import gettext as _
 from ring.i18n import ngettext, set_lang
 from ring.labels import load_labels
+from ring.plugins import load_plugins
 from ring.registry import Session, Status, running_agent_pids
 from ring.sources import discover_sessions
 
@@ -134,8 +138,12 @@ def provider_label(provider: str) -> str:
 
 
 def labeled_project(project: str, label: str) -> str:
-    """專案名後接使用者自訂標籤（有的話）：``maigo · 重構登入``。"""
-    return f"{project} · {label}" if label else project
+    """看板顯示名：使用者取過名（TUI 按 ``n``）就用名字，否則用專案（目錄）名。
+
+    名字本來就是「這個 session 在做什麼」的更精準描述，取了就直接取代 workspace 名，
+    不再併排（``maigo · 重構登入`` 太佔欄寬）。
+    """
+    return label or project
 
 
 def show_tool_column(sessions: list[Session]) -> bool:
@@ -232,6 +240,55 @@ def _render_plain(sessions: list[Session], show_legend: bool, show_tool: bool = 
             f"  {marker} {tool_c}{project:<{w_proj}}  {prog:>{w_prog}}  {ago:>{w_ago}}  📍{loc:<{w_loc}}  {action}"
         )
     return "\n".join(lines)
+
+
+# ----------------------------------------------------------------------------- machine-readable
+def render_json(sessions: list[Session]) -> str:
+    """整個看板的機器可讀快照（給 jq / 腳本 / 自訂 status bar widget 用）。
+
+    鍵名視為穩定介面：只加不改。``label`` 是使用者在 TUI 按 ``n`` 取的名字，沒取過為空字串。
+    """
+    labels = load_labels()
+    data = {
+        "generated_at": time.time(),
+        "agent_processes": len(running_agent_pids()),
+        "counts": {st.value: sum(1 for s in sessions if s.status is st) for st in Status},
+        "sessions": [
+            {
+                "session_id": s.session_id,
+                "provider": s.provider,
+                "project": s.project,
+                "label": labels.get(s.session_id, ""),
+                "status": s.status.value,
+                "marker": s.status.marker,
+                "cwd": s.cwd,
+                "location": s.location,
+                "tmux_target": s.tmux_target,
+                "tty": s.tty,
+                "idle_seconds": round(s.idle_for, 1),
+                "last_active": s.last_active,
+                "last_action": s.last_action,
+                "waiting_detail": s.waiting_detail,
+                "todo": {"done": s.todo[0], "total": s.todo[1]} if s.todo else None,
+                "source": s.source,
+            }
+            for s in sessions
+        ],
+    }
+    return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+def render_oneline(sessions: list[Session]) -> str:
+    """超精簡單行摘要（給 tmux status bar / SwiftBar / waybar 用）：``🔴2 🟢1 🟡3``。
+
+    只列非零狀態；完全沒 session 時回空字串，讓 status bar 段落自然收起來。
+    """
+    parts = [
+        f"{st.marker}{n}"
+        for st in (Status.WAITING, Status.WORKING, Status.IDLE, Status.ENDED)
+        if (n := sum(1 for s in sessions if s.status is st))
+    ]
+    return " ".join(parts)
 
 
 # ----------------------------------------------------------------------------- entry
@@ -389,6 +446,8 @@ commands:
   focus SESSION_ID             聚焦指定 session；TUI 在跑時會回到 RiNG 並選中該列
   gc [--dry-run]               清理 RiNG 自己的 stale 狀態檔
   doctor                       顯示環境診斷（唯讀）——hook、通知、focuser、維護提示
+  stats [--since 7d]           等待統計：你讓 agent 🔴 等了多久（hook 模式）
+  completion SHELL             印出 shell 補全腳本（zsh / bash）
 """
     )
 
@@ -445,6 +504,22 @@ options:
 不寫任何檔案、不安裝、不發通知；固定回傳 0。
 """
         ),
+        "stats": _(
+            """usage: ring stats [--since DURATION]
+
+等待統計：最近一段時間各專案讓你回應的次數與 🔴 等待時長（平均 / 最長 / 總計）。
+資料來自 hook 寫的狀態轉換 log（~/.config/ring/events.jsonl），zero-config 測不到等待。
+
+options:
+  --since DURATION  統計時間窗（例如 12h、7d、30d；預設 7d）
+"""
+        ),
+        "completion": _(
+            """usage: ring completion zsh|bash
+
+印出 shell 補全腳本。zsh 放 ~/.zshrc：eval "$(ring completion zsh)"；bash 同理。
+"""
+        ),
     }
     return helps.get(name, "")
 
@@ -453,10 +528,12 @@ def main(argv: list[str] | None = None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     cfg = get_config()
     set_lang(_peek_lang(raw) or cfg.lang)  # 在 import ring.tui 前設好，Footer 按鍵說明也跟著語言
+    load_plugins()  # 在任何 dispatch 之前：hook（notifier plugin）與看板（source plugin）都吃得到
 
     if (
         raw
-        and raw[0] in {"hook", "install-hooks", "remove-hooks", "config", "focus", "gc", "doctor"}
+        and raw[0]
+        in {"hook", "install-hooks", "remove-hooks", "config", "focus", "gc", "doctor", "stats", "completion"}
         and any(arg in {"-h", "--help"} for arg in raw[1:])
     ):
         print(_subcommand_help(raw[0]), end="")
@@ -474,6 +551,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_gc(raw[1:])
     if raw and raw[0] == "doctor":
         return run_doctor(raw[1:])
+    if raw and raw[0] == "stats":
+        return run_stats(raw[1:])
+    if raw and raw[0] == "completion":
+        return run_completion(raw[1:])
     if raw and raw[0] == "focus" and len(raw) >= 2:
         return run_focus(raw[1:])
 
@@ -495,7 +576,21 @@ def main(argv: list[str] | None = None) -> int:
         help=_("顯示顏色圖例（--no-legend 關閉）"),
     )
     parser.add_argument("--lang", help=_("語言（如 en / zh-Hant；也吃 config / RING_LANG / LANG）"))
+    parser.add_argument(
+        "--format",
+        choices=["table", "json", "oneline"],
+        default="table",
+        help=_("輸出格式：table（預設）/ json（機器可讀）/ oneline（status bar 單行摘要）"),
+    )
     args = parser.parse_args(raw)
+
+    if args.format != "table":
+        if args.watch:
+            print(_("--format {fmt} 只能用在快照模式，不能配 --watch。", fmt=args.format), file=sys.stderr)
+            return 2
+        sessions = board(args.all)
+        print(render_json(sessions) if args.format == "json" else render_oneline(sessions))
+        return 0
 
     if args.watch:
         if HAVE_TEXTUAL and sys.stdout.isatty():
