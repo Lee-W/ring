@@ -1,3 +1,9 @@
+## 0.6.0 (2026-07-03)
+
+### Feat
+
+- add --format output, remote notify, plugins, stats & completion
+
 ## 0.5.0 (2026-06-28)
 
 ### Feat
