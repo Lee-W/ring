@@ -1,5 +1,9 @@
+import shutil
 import subprocess
+import tempfile
+import time
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -253,3 +257,61 @@ def test_linux_wm_reports_activate_failure(monkeypatch: pytest.MonkeyPatch) -> N
     ok, msg = linux_wm.focuser.try_focus(_sess(tty="/dev/pts/3"))  # type: ignore[misc]
     assert ok is False
     assert "0x111" in msg
+
+
+# --- Neovim remote-expr 對真實 nvim 的 regression（沒裝 nvim 就 skip） ---
+
+_NVIM_BIN = shutil.which("nvim")
+
+
+@pytest.mark.skipif(_NVIM_BIN is None, reason="needs nvim on PATH")
+def test_remote_expr_skips_dead_terminal_buffer() -> None:
+    """regression: 已死的 :terminal buffer 排在活 buffer 前面時，expression 不該被
+    jobpid 的 E900 炸掉，要跳過它、找到後面活著的 terminal。"""
+    assert _NVIM_BIN is not None
+    # 不用 pytest 的 tmp_path：unix socket 路徑上限約 104 bytes，pytest 路徑太長會 bind 失敗
+    sock_dir = tempfile.mkdtemp(prefix="ring-nvim-")
+    sock = str(Path(sock_dir) / "nvim.sock")
+    server = subprocess.Popen(
+        [_NVIM_BIN, "--clean", "--headless", "--listen", sock],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        for _ in range(50):
+            if Path(sock).exists():
+                break
+            time.sleep(0.1)
+        else:
+            pytest.fail("nvim server socket never appeared")
+
+        def remote(expr: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [_NVIM_BIN, "--server", sock, "--remote-expr", expr],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+
+        # buffer 1：馬上結束的 terminal（等它死透，channel 關閉）
+        dead_job = remote("luaeval(\"vim.fn.termopen('true')\")").stdout.strip()
+        remote(f'luaeval("vim.fn.jobwait({{{dead_job}}}, 5000)[1]")')
+        # buffer 2：活著的 terminal
+        live_job = remote("luaeval(\"(function() vim.cmd('enew') return vim.fn.termopen('sleep 30') end)()\")")
+        live_id = live_job.stdout.strip()
+        # 活 terminal 的 tty（從 server 端的 jobpid → ps 反查）
+        tty_lua = (
+            f"(function() local ok, p = pcall(vim.fn.jobpid, {live_id}) if not ok then return '' end "
+            "return vim.trim(vim.fn.system({'ps', '-o', 'tty=', '-p', tostring(p)})) end)()"
+        )
+        tty = remote(f'luaeval("{tty_lua}")').stdout.strip()
+        assert tty, "could not resolve live terminal tty"
+        tty = tty if tty.startswith("/dev/") else f"/dev/{tty}"
+
+        result = remote(neovim._remote_expr(tty))
+        assert result.returncode == 0, f"remote-expr errored: {result.stderr.strip()[-200:]}"
+        assert int(result.stdout.strip()) > 0  # 找到活的 terminal buffer
+    finally:
+        server.kill()
+        server.wait(timeout=5)
+        shutil.rmtree(sock_dir, ignore_errors=True)

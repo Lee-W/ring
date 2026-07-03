@@ -125,7 +125,10 @@ def _remote_expr(tty: str) -> str:
   end
   for _, buf in ipairs(vim.api.nvim_list_bufs()) do
     local ok, job = pcall(vim.api.nvim_buf_get_var, buf, 'terminal_job_id')
-    if ok and job_tty(vim.fn.jobpid(job)) == target then
+    -- 已死的 :terminal buffer（[Process exited]）還留著 terminal_job_id，但 channel
+    -- 已關，jobpid 會丟 E900——pcall 跳過它，才輪得到後面活著的 buffer。
+    local ok_pid, pid = pcall(vim.fn.jobpid, job)
+    if ok and ok_pid and job_tty(pid) == target then
       for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
         for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
           if vim.api.nvim_win_get_buf(win) == buf then
