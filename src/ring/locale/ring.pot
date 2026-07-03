@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-07-03 00:39+0800\n"
+"POT-Creation-Date: 2026-07-03 08:44+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -61,7 +61,7 @@ msgid "（場館目前沒人上台）"
 msgstr ""
 
 #: src/ring/cli.py:178 src/ring/cli.py:326 src/ring/commands/doctor.py:31
-#: src/ring/commands/doctor.py:119 src/ring/tui.py:163
+#: src/ring/commands/doctor.py:122 src/ring/tui.py:163
 msgid "狀態"
 msgstr ""
 
@@ -98,15 +98,15 @@ msgstr ""
 msgid "RiNG 設定檔"
 msgstr ""
 
-#: src/ring/cli.py:325 src/ring/commands/doctor.py:118
+#: src/ring/cli.py:325 src/ring/commands/doctor.py:121
 msgid "路徑"
 msgstr ""
 
-#: src/ring/cli.py:326 src/ring/commands/doctor.py:119
+#: src/ring/cli.py:326 src/ring/commands/doctor.py:122
 msgid "已存在"
 msgstr ""
 
-#: src/ring/cli.py:326 src/ring/commands/doctor.py:119
+#: src/ring/cli.py:326 src/ring/commands/doctor.py:122
 msgid "不存在（全部用內建預設）"
 msgstr ""
 
@@ -434,7 +434,7 @@ msgstr ""
 msgid "偵測到 {n} 個 session"
 msgstr ""
 
-#: src/ring/commands/doctor.py:45 src/ring/commands/doctor.py:113
+#: src/ring/commands/doctor.py:45 src/ring/commands/doctor.py:116
 msgid "偵測失敗"
 msgstr ""
 
@@ -463,7 +463,7 @@ msgid "目前設定"
 msgstr ""
 
 #: src/ring/commands/doctor.py:68 src/ring/commands/doctor.py:92
-#: src/ring/commands/doctor.py:99
+#: src/ring/commands/doctor.py:95 src/ring/commands/doctor.py:102
 msgid "可用"
 msgstr ""
 
@@ -500,40 +500,44 @@ msgid "聚焦終端（focuser）"
 msgstr ""
 
 #: src/ring/commands/doctor.py:92
+msgid "不可用（nvim 不在 PATH）"
+msgstr ""
+
+#: src/ring/commands/doctor.py:95
 msgid "不可用（tmux 不在 PATH）"
 msgstr ""
 
-#: src/ring/commands/doctor.py:94
+#: src/ring/commands/doctor.py:97
 msgid "不可用（osascript 不在 PATH）"
 msgstr ""
 
-#: src/ring/commands/doctor.py:99 src/ring/commands/doctor.py:101
+#: src/ring/commands/doctor.py:102 src/ring/commands/doctor.py:104
 msgid "不可用（app 沒在跑）"
 msgstr ""
 
-#: src/ring/commands/doctor.py:105
+#: src/ring/commands/doctor.py:108
 msgid "維護"
 msgstr ""
 
-#: src/ring/commands/doctor.py:109 src/ring/commands/doctor.py:111
-#: src/ring/commands/doctor.py:113
+#: src/ring/commands/doctor.py:112 src/ring/commands/doctor.py:114
+#: src/ring/commands/doctor.py:116
 msgid "可清理"
 msgstr ""
 
-#: src/ring/commands/doctor.py:109
+#: src/ring/commands/doctor.py:112
 #, python-brace-format
 msgid "{n} 個 RiNG stale 狀態檔（執行 ring gc --dry-run 預覽）"
 msgstr ""
 
-#: src/ring/commands/doctor.py:111
+#: src/ring/commands/doctor.py:114
 msgid "沒有 RiNG stale 狀態檔"
 msgstr ""
 
-#: src/ring/commands/doctor.py:116
+#: src/ring/commands/doctor.py:119
 msgid "設定檔"
 msgstr ""
 
-#: src/ring/commands/doctor.py:120
+#: src/ring/commands/doctor.py:123
 msgid "完整生效值請看 `ring config`。"
 msgstr ""
 
@@ -618,15 +622,15 @@ msgstr ""
 msgid "⚠️ 其中 {n} 段還在 🔴 等你（計到現在為止）。"
 msgstr ""
 
-#: src/ring/focus/__init__.py:56
+#: src/ring/focus/__init__.py:58
 msgid "已離場的 session 無法跳轉"
 msgstr ""
 
-#: src/ring/focus/__init__.py:69
+#: src/ring/focus/__init__.py:81
 msgid "找不到這個終端分頁（可能已關閉；刷新後若仍存在，請裝 hook 取得更精準狀態）"
 msgstr ""
 
-#: src/ring/focus/__init__.py:70
+#: src/ring/focus/__init__.py:82
 msgid "沒有 focuser 接得住（裝 hook，或一個專案只開一個 session 才測得到 tty）"
 msgstr ""
 

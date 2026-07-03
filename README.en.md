@@ -137,6 +137,7 @@ Completes subcommands, flags, and `config set` keys.
 Select a session and press `Enter`. RiNG focuses the terminal where that session is running.
 
 - **tmux**: switches directly to the pane via `switch-client`.
+- **Neovim `:terminal`**: uses the terminal job's inherited `$NVIM` server socket to switch to the exact buffer, then lets the outer tmux or terminal focuser raise its pane/window.
 - **iTerm2 / Terminal.app** on macOS: uses the session `tty` and AppleScript to focus the matching tab. The first run may ask for macOS Automation permission.
 - **Linux X11 window** (`wmctrl`, best-effort fallback): for Linux without tmux — walks from the `tty` up to the terminal window that owns it and raises it via `wmctrl`. **Limits**: X11 only (usually a no-op on Wayland), raises the whole window but cannot pick the tab, and gnome-terminal's client/server model may not match. Requires `apt install wmctrl`.
 
@@ -346,7 +347,7 @@ notify_repeat_max = 3
 notify_ntfy_url = ""             # full ntfy topic URL enables phone push (e.g. https://ntfy.sh/my-topic)
 notify_webhook_url = ""          # URL enables the generic webhook backend (JSON POST)
 notify_also = []                 # extra backends fired besides the primary, e.g. ["ntfy"]
-focusers = ["tmux", "iTerm2", "Terminal", "linux-wm"]
+focusers = ["Neovim", "tmux", "iTerm2", "Terminal", "linux-wm"]
 plugins = []                     # external plugin modules imported at startup (see Extending)
 
 [colors]

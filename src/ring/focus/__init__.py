@@ -2,8 +2,8 @@
 
 每個終端是一個 ``Focuser``（見 ``base.Focuser``）：core 不認識任何具體終端，
 只依序問每個 focuser「這個 session 歸不歸你管」。要支援新終端＝寫一個模組、
-``register_focuser()`` 註冊，core 零改動。內建：tmux / iTerm2 / Terminal.app /
-Linux X11 視窗（wmctrl，best-effort fallback）。
+``register_focuser()`` 註冊，core 零改動。內建：Neovim terminal / tmux / iTerm2 /
+Terminal.app / Linux X11 視窗（wmctrl，best-effort fallback）。
 """
 
 from __future__ import annotations
@@ -12,14 +12,16 @@ from ring.config import get_config
 from ring.focus.base import Focuser
 from ring.focus.iterm2 import focuser as _iterm2
 from ring.focus.linux_wm import focuser as _linux_wm
+from ring.focus.neovim import focuser as _neovim
 from ring.focus.terminal import focuser as _terminal
 from ring.focus.tmux import focuser as _tmux
 from ring.i18n import gettext as _
 from ring.registry import Session, Status
 
-# 內建 focuser。順序可由 config 的 `focusers` 覆寫。tmux 跨平台、最快，排最前；
-# macOS app 在非 macOS 會自己 return None；linux-wm 殿後當 X11 fallback。
+# 內建 focuser。順序可由 config 的 `focusers` 覆寫。Neovim 先切內層 terminal buffer，
+# 再由 tmux / macOS app / linux-wm 把外層帶到前景。
 _BUILTIN: dict[str, Focuser] = {
+    "Neovim": _neovim,
     "tmux": _tmux,
     "iTerm2": _iterm2,
     "Terminal": _terminal,
@@ -55,14 +57,24 @@ def jump(session: Session) -> tuple[bool, str]:
     if session.status is Status.ENDED:
         return False, _("已離場的 session 無法跳轉")
     failures: list[str] = []
+    preparations: list[str] = []
     for focuser in _FOCUSERS:
         result = focuser.try_focus(session)
         if result is None:
             continue
         ok, msg = result
         if ok:
+            if getattr(focuser, "continue_after_success", False):
+                preparations.append(msg)
+                continue
+            if preparations:
+                return True, "; ".join([*preparations, msg])
             return True, msg
         failures.append(f"{focuser.name}: {msg}")
+    if preparations and failures:
+        return False, "; ".join([*preparations, *failures])
+    if preparations:
+        return True, "; ".join(preparations)
     if failures:
         return False, "; ".join(failures)
     if session.tty:

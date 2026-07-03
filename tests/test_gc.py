@@ -8,6 +8,13 @@ import ring.gc as gc
 import ring.registry as registry
 
 
+@pytest.fixture(autouse=True)
+def _isolate_ipc_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """GC tests must never inspect or delete the developer/runner's real RiNG state."""
+    monkeypatch.setattr(gc, "_FOCUS_REQUEST_PATH", tmp_path / "focus-request")
+    monkeypatch.setattr(gc, "_PRESENCE_PATH", tmp_path / "tui-presence")
+
+
 def _write_session(path: Path, sid: str, *, last_active: float, provider: str = "claude-code") -> Path:
     path.mkdir(parents=True, exist_ok=True)
     f = path / f"{sid}.json"

@@ -4,11 +4,18 @@ from collections.abc import Iterator
 import pytest
 
 import ring.focus as focus
+from ring.focus import neovim
 from ring.registry import Session, Status
 
 
 def _sess(tmux_target: str | None = None, tty: str | None = None) -> Session:
     return Session("a", "/x", Status.WAITING, 0.0, "-", "scan", tmux_target=tmux_target, tty=tty)
+
+
+@pytest.fixture(autouse=True)
+def _disable_host_neovim(monkeypatch: pytest.MonkeyPatch) -> None:
+    """既有 focuser tests 不應取決於執行測試的機器是否裝了 nvim。"""
+    monkeypatch.setattr("ring.focus.neovim.which", lambda _name: None)
 
 
 def test_jump_no_target_reports_reason() -> None:
@@ -38,6 +45,91 @@ def test_tmux_focuser(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("ring.focus.tmux.subprocess.run", fake_run)
     assert focus.jump(_sess(tmux_target="main:1.0")) == (True, "tmux main:1.0")
     assert ["tmux", "switch-client", "-t", "main"] in calls
+
+
+# --- Neovim :terminal focuser ---
+
+
+def test_neovim_registered_before_outer_focusers() -> None:
+    assert list(focus._BUILTIN).index("Neovim") < list(focus._BUILTIN).index("tmux")
+
+
+def test_neovim_skips_without_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("ring.focus.neovim.which", lambda _name: "/usr/bin/nvim")
+    assert neovim.focuser.try_focus(_sess()) is None
+
+
+def test_neovim_switches_buffer_and_retargets_outer_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+    session = _sess(tty="/dev/ttys009")
+    monkeypatch.setattr("ring.focus.neovim.which", lambda _name: "/usr/bin/nvim")
+    monkeypatch.setattr("ring.focus.neovim._find_neovim", lambda _tty: ("/tmp/nvim.sock", 42))
+    monkeypatch.setattr("ring.focus.neovim._pid_tty", lambda _pid: "/dev/ttys001")
+
+    def fake_run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="7\n", stderr="")
+
+    monkeypatch.setattr("ring.focus.neovim._run", fake_run)
+
+    assert neovim.focuser.try_focus(session) == (True, "Neovim buffer 7")
+    assert session.tty == "/dev/ttys001"
+    assert calls[0][:4] == ["/usr/bin/nvim", "--server", "/tmp/nvim.sock", "--remote-expr"]
+    assert "/dev/ttys009" in calls[0][4]
+
+
+def test_neovim_reports_missing_terminal_buffer(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("ring.focus.neovim.which", lambda _name: "/usr/bin/nvim")
+    monkeypatch.setattr("ring.focus.neovim._find_neovim", lambda _tty: ("/tmp/nvim.sock", 42))
+    monkeypatch.setattr(
+        "ring.focus.neovim._run",
+        lambda cmd: subprocess.CompletedProcess(cmd, 0, stdout="0\n", stderr=""),
+    )
+    assert neovim.focuser.try_focus(_sess(tty="/dev/ttys009")) == (
+        False,
+        "terminal buffer for /dev/ttys009 not found",
+    )
+
+
+def test_jump_continues_from_neovim_to_outer_focuser(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Inner:
+        name = "Neovim"
+        continue_after_success = True
+
+        def try_focus(self, session: Session) -> tuple[bool, str]:
+            session.tty = "/dev/ttys001"
+            return True, "Neovim buffer 7"
+
+    class Outer:
+        name = "outer"
+
+        def try_focus(self, session: Session) -> tuple[bool, str]:
+            assert session.tty == "/dev/ttys001"
+            return True, "outer terminal"
+
+    monkeypatch.setattr("ring.focus._FOCUSERS", [Inner(), Outer()])
+    assert focus.jump(_sess(tty="/dev/ttys009")) == (True, "Neovim buffer 7; outer terminal")
+
+
+def test_jump_reports_outer_failure_after_neovim_preparation(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Inner:
+        name = "Neovim"
+        continue_after_success = True
+
+        def try_focus(self, _session: Session) -> tuple[bool, str]:
+            return True, "Neovim buffer 7"
+
+    class Outer:
+        name = "outer"
+
+        def try_focus(self, _session: Session) -> tuple[bool, str]:
+            return False, "activation denied"
+
+    monkeypatch.setattr("ring.focus._FOCUSERS", [Inner(), Outer()])
+    assert focus.jump(_sess(tty="/dev/ttys009")) == (
+        False,
+        "Neovim buffer 7; outer: activation denied",
+    )
 
 
 def test_iterm2_focuser_success(monkeypatch: pytest.MonkeyPatch) -> None:

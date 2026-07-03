@@ -382,6 +382,9 @@ msgstr "all unavailable"
 msgid "聚焦終端（focuser）"
 msgstr "Terminal Focuser"
 
+msgid "不可用（nvim 不在 PATH）"
+msgstr "unavailable (nvim not in PATH)"
+
 msgid "不可用（tmux 不在 PATH）"
 msgstr "unavailable (tmux not in PATH)"
 

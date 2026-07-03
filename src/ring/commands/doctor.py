@@ -87,7 +87,10 @@ def run_doctor(args: list[str]) -> int:
     width_f = max(len(f.name) for f in focuser_list) if focuser_list else 10
     for f in focuser_list:
         name_lower = f.name.lower()
-        if name_lower == "tmux":
+        if name_lower == "neovim":
+            avail = shutil.which("nvim") is not None
+            avail_str = _("可用") if avail else _("不可用（nvim 不在 PATH）")
+        elif name_lower == "tmux":
             avail = shutil.which("tmux") is not None
             avail_str = _("可用") if avail else _("不可用（tmux 不在 PATH）")
         elif shutil.which("osascript") is None:

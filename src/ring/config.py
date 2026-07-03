@@ -23,7 +23,7 @@
     notify_ntfy_url = "https://ntfy.sh/my-topic"   # 設了才啟用 ntfy 後端（推到手機）
     notify_webhook_url = "https://example.com/hook"  # 設了才啟用 webhook 後端（JSON POST）
     notify_also = ["ntfy"]            # 主後端之外「加發」的後端（例如桌面通知＋手機各一份）
-    focusers = ["tmux", "iTerm2", "Terminal", "linux-wm"]  # 跳轉嘗試順序；省略＝內建預設
+    focusers = ["Neovim", "tmux", "iTerm2", "Terminal", "linux-wm"]  # 跳轉嘗試順序；省略＝內建預設
     plugins = ["my_ring_plugin"]      # 啟動時 import 的外部 plugin 模組（自行 register_*）
 """
 

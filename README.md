@@ -383,7 +383,7 @@ notify_repeat_max = 3            # 重複提醒上限；0 = 不限
 notify_ntfy_url = ""             # 設完整 ntfy topic URL 啟用手機推播（如 https://ntfy.sh/my-topic）
 notify_webhook_url = ""          # 設 URL 啟用通用 webhook 後端（JSON POST）
 notify_also = []                 # 主後端之外「加發」的後端，如 ["ntfy"]（桌面＋手機各一份）
-focusers = ["tmux", "iTerm2", "Terminal", "linux-wm"]   # 跳轉嘗試順序
+focusers = ["Neovim", "tmux", "iTerm2", "Terminal", "linux-wm"]   # 跳轉嘗試順序
 plugins = []                     # 啟動時 import 的外部 plugin 模組（見「支援的工具與擴充」）
 
 [colors]                         # Rich 樣式字串，逐項覆寫（深淺底安全色為預設）
@@ -468,8 +468,10 @@ register_source(MyToolSource())
 ### 其他終端（`Focuser`）
 
 跳轉的終端整合也一樣——寫個符合 `Focuser` 協定的類別（`try_focus(session) ->
-(ok, msg) | None`），呼叫 `ring.focus.register_focuser(MyFocuser())`。內建 tmux /
-iTerm2 / Terminal.app / Linux X11 視窗（wmctrl），各自一個模組（`ring/focus/tmux.py` …）。
+(ok, msg) | None`），呼叫 `ring.focus.register_focuser(MyFocuser())`。內建 Neovim terminal / tmux /
+iTerm2 / Terminal.app / Linux X11 視窗（wmctrl），各自一個模組（`ring/focus/neovim.py`、
+`ring/focus/tmux.py` …）。Neovim focuser 會先透過 `$NVIM` server socket 切到承載該 session 的
+`:terminal` buffer，再交給外層 focuser 聚焦 pane 或視窗。
 要再加 Ghostty / Kitty / WezTerm，就照這個模式新增 focuser；嘗試順序也能用 config 的 `focusers` 調整。
 
 ### 其他通知後端（`Notifier`）
