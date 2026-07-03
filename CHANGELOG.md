@@ -1,3 +1,13 @@
+## 0.7.0 (2026-07-03)
+
+### Feat
+
+- focus Neovim terminal sessions
+
+### Fix
+
+- skip dead terminal buffers when focusing Neovim sessions
+
 ## 0.6.0 (2026-07-03)
 
 ### Feat
