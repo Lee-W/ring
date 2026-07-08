@@ -475,6 +475,38 @@ async def test_delete_session_hides_non_registry_source(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
+async def test_delete_session_refuses_synthetic_proc(monkeypatch: pytest.MonkeyPatch) -> None:
+    from textual.widgets import Static
+
+    sessions = [Session("synthetic:/x/live", "/x/live", Status.IDLE, 0.0, "—", "proc")]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [])
+
+    hidden: list[str] = []
+    deleted: list[str] = []
+    labels: list[tuple[str, str]] = []
+
+    def fake_delete(sid: str) -> bool:
+        deleted.append(sid)
+        return False
+
+    monkeypatch.setattr(tui, "hide_session", lambda sid: hidden.append(sid))
+    monkeypatch.setattr(tui, "delete_session_state", fake_delete)
+    monkeypatch.setattr(tui, "set_label", lambda sid, label, **kw: labels.append((sid, label)))
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("d")
+        await pilot.press("d")
+
+        assert hidden == []
+        assert deleted == []
+        assert labels == []
+        assert app.query_one(DataTable).row_count == 1
+        assert "process" in str(app.query_one("#status", Static).render())
+
+
+@pytest.mark.asyncio
 async def test_focused_highlight_clears_when_no_longer_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """通知指向的 session 回應後（離開 WAITING）→ 持續標記自動解除。"""
     from ring.ipc import write_focus_request
