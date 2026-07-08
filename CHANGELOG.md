@@ -1,3 +1,18 @@
+## 0.8.0 (2026-07-08)
+
+### Feat
+
+- notify when a session sits idle too long
+- add ring digest command
+- monitor hook heartbeat freshness
+- classify waiting sessions
+- polish ring focus command
+- improve session cleanup and targeting
+
+### Fix
+
+- refuse hiding synthetic process rows
+
 ## 0.7.0 (2026-07-03)
 
 ### Feat
