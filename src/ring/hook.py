@@ -36,6 +36,7 @@ from ring.registry import (
     Session,
     Status,
     _pid_tty,
+    unhide_session,
 )
 from ring.stats import log_transition
 from ring.transcript import _extract_todo, _latest_action, _tail_records
@@ -126,6 +127,14 @@ def _session_tty(process_names: tuple[str, ...]) -> str:
     return ""
 
 
+def _controlling_tty() -> str:
+    """hook process 自己的 controlling tty。非互動環境取不到時回空字串。"""
+    try:
+        return os.ttyname(sys.stdin.fileno())
+    except OSError:
+        return ""
+
+
 def run_hook(provider: str = "claude-code") -> int:
     """讀一次 stdin → 寫 RiNG registry 狀態（看板）→ 轉等你時就地發通知 →（可選）委派 agent-hooks。
 
@@ -158,6 +167,7 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
     if event is None:
         return
 
+    unhide_session(event.session_id)
     path = RING_REGISTRY / f"{quote(event.session_id, safe=':')}.json"
     prev_status = _previous_status(path)
     if event.status is Status.ENDED:
@@ -182,14 +192,18 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
         "status": event.status.value,
         "last_active": time.time(),
         "last_action": last_action,
+        "hook_pid": os.getpid(),
     }
+    tmux_pane = os.environ.get("TMUX_PANE", "").strip()
+    if tmux_pane:
+        payload["tmux_pane"] = tmux_pane
     if todo:
         payload["todo"] = list(todo)
     if event.waiting_for:
         payload["waiting_for"] = event.waiting_for
     if event.status is Status.WAITING and event.detail:
         payload["waiting_detail"] = event.detail
-    tty = event.tty or _session_tty(adapter.process_names)
+    tty = event.tty or _controlling_tty() or _session_tty(adapter.process_names)
     if tty:
         payload["tty"] = tty
 

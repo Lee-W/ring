@@ -45,6 +45,33 @@ def test_stop_writes_idle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     assert data["cwd"] == "/x"
 
 
+def test_hook_event_writes_tmux_binding_and_hook_pid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    monkeypatch.setenv("TMUX_PANE", "%42")
+    monkeypatch.setattr(hook, "_controlling_tty", lambda: "/dev/ttys042")
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "Stop", "cwd": "/x"})
+
+    assert hook.run_hook() == 0
+
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["tmux_pane"] == "%42"
+    assert data["tty"] == "/dev/ttys042"
+    assert isinstance(data["hook_pid"], int)
+
+
+def test_hook_event_unhides_manually_deleted_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    unhidden: list[str] = []
+    monkeypatch.setattr(hook, "unhide_session", lambda sid: unhidden.append(sid))
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "Stop", "cwd": "/x"})
+
+    assert hook.run_hook() == 0
+
+    assert unhidden == ["s1"]
+
+
 def test_stop_with_requires_action_writes_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
     _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "Stop", "cwd": "/x", "requires_action": True})

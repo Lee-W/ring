@@ -19,16 +19,20 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import sqlite3
 import subprocess
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from ring.config import get_config
 from ring.transcript import (
@@ -42,6 +46,7 @@ from ring.transcript import (
 
 CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
 RING_REGISTRY = Path.home() / ".config" / "ring" / "sessions"
+DELETED_SESSIONS = Path.home() / ".config" / "ring" / "deleted_sessions.json"
 CODEX_STATE = Path.home() / ".codex" / "state_5.sqlite"
 
 _CFG = get_config()
@@ -64,6 +69,181 @@ _PROVIDER_PROCS: dict[str, Callable[[], list[tuple[str, str]]]] = {}
 def _canonical_provider(provider: str) -> str:
     """把同義 provider 名收斂成偵測器註冊用的標準鍵。"""
     return _PROVIDER_ALIASES.get(provider, provider)
+
+
+def _session_registry_path(session_id: str) -> Path:
+    """RiNG hook registry 裡某 session 對應的狀態檔路徑。"""
+    return RING_REGISTRY / f"{quote(session_id, safe=':')}.json"
+
+
+def delete_session_state(session_id: str) -> bool:
+    """刪除 RiNG 自己保存的單一 session 狀態檔。
+
+    這只處理 ``~/.config/ring/sessions`` 底下由 hook 寫出的 registry；不碰
+    Claude Code JSONL、Codex SQLite state 或其他 provider 的原始資料。回傳值表示是否
+    真的刪到檔案。
+    """
+    direct = _session_registry_path(session_id)
+    try:
+        if direct.exists():
+            direct.unlink()
+            return True
+    except OSError:
+        return False
+
+    # 向後相容：若未來/舊版 filename quote 規則不同，仍用檔內 session_id 找一次。
+    if not RING_REGISTRY.is_dir():
+        return False
+    for path in RING_REGISTRY.glob("*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if str(data.get("session_id", "")) != session_id:
+            continue
+        try:
+            path.unlink()
+            return True
+        except OSError:
+            return False
+    return False
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _epoch_to_iso(ts: float) -> str:
+    return datetime.fromtimestamp(ts, UTC).isoformat()
+
+
+def _parse_hidden_at(value: object) -> float | None:
+    """把 deleted_sessions.json 裡一筆 hidden_at 轉成 epoch 秒，供跟 last_active 比較。"""
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value).timestamp()
+        except ValueError:
+            return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+@contextmanager
+def _hidden_sessions_lock(path: Path) -> Iterator[None]:
+    """跨 process 的 read-modify-write 臨界區，保護 deleted_sessions.json 不 lost-update。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(path.name + ".lock")
+    with open(lock_path, "w", encoding="utf-8") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
+def _read_hidden_sessions_locked(path: Path) -> dict[str, float]:
+    """讀 deleted_sessions.json，回傳 ``{session_id: hidden_at}``（epoch 秒）。
+
+    容忍舊格式（純 id 列表）：就地遷移成新格式（value 是遷移當下的 ISO
+    timestamp）並立刻寫回，之後都是新格式。呼叫端必須已持有 ``_hidden_sessions_lock``。
+    """
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+    if isinstance(raw, list):
+        migrated_iso = {str(sid): _now_iso() for sid in raw if isinstance(sid, str) and sid}
+        _write_hidden_sessions_locked(migrated_iso, path=path)
+        return {sid: _parse_hidden_at(ts) or 0.0 for sid, ts in migrated_iso.items()}
+
+    if not isinstance(raw, dict):
+        return {}
+
+    result: dict[str, float] = {}
+    for sid, value in raw.items():
+        if not isinstance(sid, str) or not sid:
+            continue
+        ts = _parse_hidden_at(value)
+        if ts is not None:
+            result[sid] = ts
+    return result
+
+
+def _write_hidden_sessions_locked(iso_by_id: dict[str, str], *, path: Path) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(iso_by_id, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        pass
+
+
+def hidden_sessions(*, path: Path | None = None) -> dict[str, float]:
+    """讀取手動隱藏的 session id 與隱藏時間（epoch 秒）。
+
+    給需要跟 ``Session.last_active`` 比較、判斷「有新活動就自動復活」的呼叫端用。
+    """
+    p = path or DELETED_SESSIONS
+    with _hidden_sessions_lock(p):
+        return _read_hidden_sessions_locked(p)
+
+
+def hidden_session_ids(*, path: Path | None = None) -> set[str]:
+    """讀取使用者手動從看板隱藏的 session id（只要 id 集合時用這個）。"""
+    return set(hidden_sessions(path=path).keys())
+
+
+def hide_session(session_id: str, *, path: Path | None = None) -> None:
+    """把 session 加入手動隱藏清單；用於 dashboard 的 ``dd``。"""
+    p = path or DELETED_SESSIONS
+    with _hidden_sessions_lock(p):
+        hidden = _read_hidden_sessions_locked(p)
+        hidden[session_id] = time.time()
+        _write_hidden_sessions_locked({sid: _epoch_to_iso(ts) for sid, ts in hidden.items()}, path=p)
+
+
+def unhide_session(session_id: str, *, path: Path | None = None) -> None:
+    """新的 hook 事件、或偵測到更新活動，代表 session 又活了，解除手動隱藏。"""
+    p = path or DELETED_SESSIONS
+    with _hidden_sessions_lock(p):
+        hidden = _read_hidden_sessions_locked(p)
+        if session_id not in hidden:
+            return
+        del hidden[session_id]
+        _write_hidden_sessions_locked({sid: _epoch_to_iso(ts) for sid, ts in hidden.items()}, path=p)
+
+
+def prune_hidden_sessions(
+    *,
+    known_ids: set[str] | None,
+    older_than: float,
+    now: float | None = None,
+    path: Path | None = None,
+) -> dict[str, float]:
+    """清掉隱藏清單裡「任何來源都找不到」或超過保留期的條目。供 ``ring gc`` 用。
+
+    ``known_ids`` 是目前所有來源仍找得到的 session id；``None`` 時只套用保留期，
+    不做「找不到」判斷。回傳被清掉的 ``{session_id: hidden_at}``（epoch 秒）。
+    """
+    current = time.time() if now is None else now
+    p = path or DELETED_SESSIONS
+    with _hidden_sessions_lock(p):
+        hidden = _read_hidden_sessions_locked(p)
+        stale: dict[str, float] = {}
+        keep: dict[str, float] = {}
+        for sid, hidden_at in hidden.items():
+            not_found = known_ids is not None and sid not in known_ids
+            too_old = current - hidden_at >= older_than
+            if not_found or too_old:
+                stale[sid] = hidden_at
+            else:
+                keep[sid] = hidden_at
+        if stale:
+            _write_hidden_sessions_locked({sid: _epoch_to_iso(ts) for sid, ts in keep.items()}, path=p)
+        return stale
 
 
 def register_provider_procs(provider: str, detector: Callable[[], list[tuple[str, str]]]) -> None:
@@ -106,7 +286,9 @@ class Session:
     last_action: str
     source: str  # "hook" | "scan" | "proc"
     tmux_target: str | None = None  # e.g. "main:1.0"
+    tmux_pane: str | None = None  # stable tmux pane id from hook, e.g. "%12"
     tty: str | None = None  # e.g. "/dev/ttys003"，給非-tmux 終端（iTerm2 等）聚焦用
+    hook_pid: int | None = None
     todo: tuple[int, int] | None = None  # (done, total)
     recent_actions: list[str] = field(default_factory=list)
     provider: str = ""
@@ -157,6 +339,53 @@ def _apply_waiting(
 
 
 _tmux_cache: tuple[float, dict[str, str]] = (-1.0, {})
+_tmux_panes_cache: tuple[float, list[TmuxPane]] = (-1.0, [])
+
+
+@dataclass(frozen=True)
+class TmuxPane:
+    pane_id: str
+    cwd: str
+    target: str
+    tty: str = ""
+    pane_pid: int | None = None
+
+
+def _tmux_panes() -> list[TmuxPane]:
+    """目前 tmux panes 的可聚焦座標。短快取。"""
+    global _tmux_panes_cache
+    now = time.monotonic()
+    if 0.0 <= now - _tmux_panes_cache[0] <= _SUBPROCESS_CACHE_TTL:
+        return _tmux_panes_cache[1]
+    panes: list[TmuxPane] = []
+    try:
+        out = subprocess.run(
+            [
+                "tmux",
+                "list-panes",
+                "-a",
+                "-F",
+                "#{pane_id}\t#{pane_current_path}\t#{session_name}:#{window_index}.#{pane_index}\t#{pane_tty}\t#{pane_pid}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if out.returncode == 0:
+            for line in out.stdout.splitlines():
+                parts = line.split("\t")
+                if len(parts) != 5:
+                    continue
+                pane_id, cwd, target, tty, pane_pid = parts
+                try:
+                    parsed_pid = int(pane_pid)
+                except ValueError:
+                    parsed_pid = None
+                panes.append(TmuxPane(pane_id=pane_id, cwd=cwd, target=target, tty=tty, pane_pid=parsed_pid))
+    except (OSError, subprocess.SubprocessError):
+        panes = []
+    _tmux_panes_cache = (now, panes)
+    return panes
 
 
 def _tmux_targets() -> dict[str, str]:
@@ -166,22 +395,91 @@ def _tmux_targets() -> dict[str, str]:
     if 0.0 <= now - _tmux_cache[0] <= _SUBPROCESS_CACHE_TTL:
         return _tmux_cache[1]
     mapping: dict[str, str] = {}
-    try:
-        out = subprocess.run(
-            ["tmux", "list-panes", "-a", "-F", "#{pane_current_path}\t#{session_name}:#{window_index}.#{pane_index}"],
-            capture_output=True,
-            text=True,
-            timeout=3,
-        )
-        if out.returncode == 0:
-            for line in out.stdout.splitlines():
-                if "\t" in line:
-                    path, target = line.split("\t", 1)
-                    mapping.setdefault(path, target)
-    except (OSError, subprocess.SubprocessError):
-        mapping = {}
+    for pane in _tmux_panes():
+        mapping.setdefault(pane.cwd, pane.target)
     _tmux_cache = (now, mapping)
     return mapping
+
+
+def _tmux_targets_by_cwd() -> dict[str, list[str]]:
+    """tmux pane current_path → 所有候選 target。供同 cwd fallback 依序分配。"""
+    mapping: dict[str, list[str]] = {}
+    for pane in _tmux_panes():
+        mapping.setdefault(pane.cwd, []).append(pane.target)
+    return mapping
+
+
+def _tmux_pane_targets() -> dict[str, str]:
+    """tmux pane id → target。pane 不存在時不會出現在結果裡，呼叫端自然 fallback。"""
+    return {pane.pane_id: pane.target for pane in _tmux_panes()}
+
+
+def _process_rows() -> dict[int, tuple[int, str]]:
+    """pid → (ppid, args)。給 scan-only tmux pane process-tree 消歧用。"""
+    try:
+        out = subprocess.run(["ps", "-Ao", "pid=,ppid=,args="], capture_output=True, text=True, timeout=3).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    rows: dict[int, tuple[int, str]] = {}
+    for line in out.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) < 2:
+            continue
+        try:
+            pid = int(parts[0])
+            ppid = int(parts[1])
+        except ValueError:
+            continue
+        rows[pid] = (ppid, parts[2] if len(parts) == 3 else "")
+    return rows
+
+
+def _descendant_pids(root_pid: int, rows: dict[int, tuple[int, str]]) -> set[int]:
+    children: dict[int, list[int]] = {}
+    for pid, (ppid, _args) in rows.items():
+        children.setdefault(ppid, []).append(pid)
+    found: set[int] = set()
+    stack = list(children.get(root_pid, []))
+    while stack:
+        pid = stack.pop()
+        if pid in found:
+            continue
+        found.add(pid)
+        stack.extend(children.get(pid, []))
+    return found
+
+
+def _tmux_process_tree_targets(sessions: list[Session]) -> dict[str, str]:
+    """scan-only 消歧：pane 子孫 process args 明確提到 session id 時，配到該 pane。
+
+    這是刻意保守的規則：只接受 process tree 內有 session id 這種強訊號；沒有就回空，
+    讓呼叫端走 cwd fallback，避免把同 cwd session 硬猜錯。
+    """
+    candidates = [s for s in sessions if not s.tmux_pane and s.session_id]
+    if not candidates:
+        return {}
+    rows = _process_rows()
+    if not rows:
+        return {}
+
+    result: dict[str, str] = {}
+    for pane in _tmux_panes():
+        if pane.pane_pid is None:
+            continue
+        pids = _descendant_pids(pane.pane_pid, rows)
+        if not pids:
+            continue
+        args_text = "\n".join(rows[pid][1] for pid in pids if pid in rows)
+        if not args_text:
+            continue
+        for s in candidates:
+            if s.session_id in result:
+                continue
+            if _real(s.cwd) != _real(pane.cwd):
+                continue
+            if s.session_id in args_text:
+                result[s.session_id] = pane.target
+    return result
 
 
 _pids_cache: tuple[float, list[int]] = (-1.0, [])
@@ -615,7 +913,9 @@ def _hook_sessions(
                     last_active=float(data.get("last_active", 0.0)),
                     last_action=str(data.get("last_action", "—")),
                     source="hook",
+                    tmux_pane=str(data.get("tmux_pane", "")) or None,
                     tty=str(data.get("tty", "")) or None,
+                    hook_pid=int(data["hook_pid"]) if str(data.get("hook_pid", "")).isdigit() else None,
                     todo=tuple(todo) if isinstance(todo, list) and len(todo) == 2 else None,
                     provider=provider,
                     waiting_detail=str(data.get("waiting_detail", "")),

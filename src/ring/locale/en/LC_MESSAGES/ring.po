@@ -101,6 +101,9 @@ msgstr "jump"
 msgid "命名"
 msgstr "name"
 
+msgid "隱藏"
+msgstr "hide"
+
 # ── TUI 命名浮層 ──
 msgid "為 {project} 命名（Enter 存、Esc 取消、清空移除）"
 msgstr "Name {project} (Enter to save, Esc to cancel, empty to clear)"
@@ -126,6 +129,15 @@ msgstr "→ {project} ({where})"
 
 msgid "{project}：{msg}"
 msgstr "{project}: {msg}"
+
+msgid "再按一次 d 隱藏 {project}（有新活動會自動重新出現）"
+msgstr "Press d again to hide {project} (it reappears once there's new activity)"
+
+msgid "已隱藏 {project}，並清掉 RiNG 狀態；有新活動會自動重新出現"
+msgstr "Hidden {project} and cleared its RiNG state; it reappears once there's new activity"
+
+msgid "已隱藏 {project}（沒有 RiNG registry 可清；有新活動會自動重新出現）"
+msgstr "Hidden {project} (no RiNG registry to clear; it reappears once there's new activity)"
 
 # ── 跳轉 ──
 msgid "已離場的 session 無法跳轉"
@@ -447,6 +459,18 @@ msgstr "would delete"
 
 msgid "已刪除"
 msgstr "deleted"
+
+msgid "將清掉"
+msgstr "would clear"
+
+msgid "已清掉"
+msgstr "cleared"
+
+msgid "隱藏清單：{action} {count} 筆過期／找不到的條目"
+msgstr "Hidden list: {action} {count} stale/unreachable entr(y/ies)"
+
+msgid "目前隱藏中：{count} 個 session"
+msgstr "Currently hidden: {count} session(s)"
 
 # ── doctor 維護節 ──
 msgid "維護"

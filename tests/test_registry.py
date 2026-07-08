@@ -1,15 +1,19 @@
 import json
 import sqlite3
+import threading
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+import ring.registry as registry
 from ring.registry import (
     ACTIVE_WINDOW_SECONDS,
     Session,
     Status,
+    TmuxPane,
     _apply_waiting,
     _codex_latest_action,
     _codex_tail_kind,
@@ -17,7 +21,12 @@ from ring.registry import (
     _hook_sessions,
     _scan_status,
     _synthetic_sessions,
+    _tmux_process_tree_targets,
+    delete_session_state,
+    hidden_session_ids,
+    hide_session,
     running_claude_pids,
+    unhide_session,
 )
 from ring.transcript import (
     _clean_text,
@@ -120,6 +129,124 @@ def test_running_claude_pids_ignores_daemon_and_bg_pty(monkeypatch: pytest.Monke
     monkeypatch.setattr("ring.registry.subprocess.run", lambda *args, **kwargs: Result())
 
     assert running_claude_pids() == [103]
+
+
+def test_delete_session_state_removes_hook_registry_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    registry_dir = tmp_path / "sessions"
+    registry_dir.mkdir()
+    target = registry_dir / "codex:thread-1.json"
+    target.write_text(
+        json.dumps({"session_id": "codex:thread-1", "provider": "codex", "cwd": "/work"}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+
+    assert delete_session_state("codex:thread-1") is True
+    assert not target.exists()
+    assert delete_session_state("codex:thread-1") is False
+
+
+def test_delete_session_state_falls_back_to_file_payload(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    registry_dir = tmp_path / "sessions"
+    registry_dir.mkdir()
+    target = registry_dir / "legacy-name.json"
+    target.write_text(
+        json.dumps({"session_id": "raw/id", "provider": "claude-code", "cwd": "/work"}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+
+    assert delete_session_state("raw/id") is True
+    assert not target.exists()
+
+
+def test_hide_and_unhide_session_ids(tmp_path: Path) -> None:
+    path = tmp_path / "deleted_sessions.json"
+
+    assert hidden_session_ids(path=path) == set()
+
+    hide_session("s1", path=path)
+    hide_session("s2", path=path)
+    hide_session("s1", path=path)
+    assert hidden_session_ids(path=path) == {"s1", "s2"}
+
+    unhide_session("s1", path=path)
+    assert hidden_session_ids(path=path) == {"s2"}
+
+
+def test_hide_session_writes_iso_timestamp(tmp_path: Path) -> None:
+    path = tmp_path / "deleted_sessions.json"
+
+    before = time.time()
+    hide_session("s1", path=path)
+    after = time.time()
+
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert isinstance(raw, dict)
+    hidden_at = datetime.fromisoformat(raw["s1"]).timestamp()
+    assert before - 1 <= hidden_at <= after + 1
+
+    hidden = registry.hidden_sessions(path=path)
+    assert hidden["s1"] == pytest.approx(hidden_at)
+
+
+def test_hidden_sessions_migrates_legacy_list_format(tmp_path: Path) -> None:
+    path = tmp_path / "deleted_sessions.json"
+    path.write_text(json.dumps(["legacy-1", "legacy-2"]), encoding="utf-8")
+
+    hidden = registry.hidden_sessions(path=path)
+
+    assert set(hidden.keys()) == {"legacy-1", "legacy-2"}
+    # 遷移後仍視為隱藏中：hidden_session_ids 不 crash、不掉資料。
+    assert hidden_session_ids(path=path) == {"legacy-1", "legacy-2"}
+
+    # 檔案已就地寫回新格式（dict，value 是 ISO timestamp）。
+    migrated_raw = json.loads(path.read_text(encoding="utf-8"))
+    assert isinstance(migrated_raw, dict)
+    for iso in migrated_raw.values():
+        datetime.fromisoformat(iso)  # 不丟例外即為合法 ISO
+
+
+def test_prune_hidden_sessions_removes_not_found_and_too_old(tmp_path: Path) -> None:
+    path = tmp_path / "deleted_sessions.json"
+    now = time.time()
+    path.write_text(
+        json.dumps(
+            {
+                "keep-1": datetime.fromtimestamp(now - 10, UTC).isoformat(),  # 找得到、夠新 → 留
+                "gone-1": datetime.fromtimestamp(now - 10, UTC).isoformat(),  # 找不到 → 清
+                "old-1": datetime.fromtimestamp(now - 1000, UTC).isoformat(),  # 找得到但太舊 → 清
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    removed = registry.prune_hidden_sessions(known_ids={"keep-1", "old-1"}, older_than=100, now=now, path=path)
+
+    assert set(removed.keys()) == {"gone-1", "old-1"}
+    assert registry.hidden_session_ids(path=path) == {"keep-1"}
+
+
+def test_hide_session_survives_concurrent_writes(tmp_path: Path) -> None:
+    """多個 thread（模擬多 process）同時 hide 不同 session，鎖要擋住 lost-update。"""
+    path = tmp_path / "deleted_sessions.json"
+    session_ids = [f"s{i}" for i in range(16)]
+
+    threads = [threading.Thread(target=hide_session, args=(sid,), kwargs={"path": path}) for sid in session_ids]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert hidden_session_ids(path=path) == set(session_ids)
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +373,37 @@ def test_tail_kind_only_noise_records_is_none() -> None:
 )
 def test_apply_waiting(status: Status, age: int, tail_kind: str, window: int, expected: Status) -> None:
     assert _apply_waiting(status, age, tail_kind, window) is expected
+
+
+# ---------------------------------------------------------------------------
+# tmux process-tree target disambiguation
+# ---------------------------------------------------------------------------
+
+
+def test_tmux_process_tree_targets_disambiguates_same_cwd_scan_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sessions = [
+        Session("session-a", "/work/app", Status.WORKING, 100.0, "—", "scan"),
+        Session("session-b", "/work/app", Status.WORKING, 90.0, "—", "scan"),
+    ]
+    panes = [
+        TmuxPane("%1", "/work/app", "main:1.0", pane_pid=10),
+        TmuxPane("%2", "/work/app", "main:1.1", pane_pid=20),
+    ]
+    rows = {
+        10: (1, "zsh"),
+        11: (10, "claude --resume session-a"),
+        20: (1, "zsh"),
+        21: (20, "claude --resume session-b"),
+    }
+    monkeypatch.setattr(registry, "_tmux_panes", lambda: panes)
+    monkeypatch.setattr(registry, "_process_rows", lambda: rows)
+
+    assert _tmux_process_tree_targets(sessions) == {
+        "session-a": "main:1.0",
+        "session-b": "main:1.1",
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -409,6 +409,72 @@ async def test_name_session_escape_does_not_save(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.asyncio
+async def test_delete_session_requires_dd_and_clears_label(monkeypatch: pytest.MonkeyPatch) -> None:
+    """按 d 只 arm；第二次 d 才刪 RiNG registry，並清掉該 session label。"""
+    state: dict[str, list[Session]] = {
+        "sessions": [Session("sess-1", "/x/maigo", Status.ENDED, 0.0, "—", "hook")]
+    }
+    monkeypatch.setattr(tui, "board", lambda show_all: state["sessions"])
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [])
+    monkeypatch.setattr(tui, "load_labels", lambda **kw: {"sess-1": "舊 session"})
+    monkeypatch.setattr(tui, "get_label", lambda sid, **kw: "舊 session")
+
+    deleted: list[str] = []
+    hidden: list[str] = []
+    labels: list[tuple[str, str]] = []
+
+    def _delete(sid: str) -> bool:
+        deleted.append(sid)
+        state["sessions"] = []
+        return True
+
+    monkeypatch.setattr(tui, "delete_session_state", _delete)
+    monkeypatch.setattr(tui, "hide_session", lambda sid: hidden.append(sid))
+    monkeypatch.setattr(tui, "set_label", lambda sid, label, **kw: labels.append((sid, label)))
+
+    app = tui.RingApp(lang="en", show_all=True)
+    async with app.run_test() as pilot:
+        table = app.query_one(DataTable)
+        assert table.row_count == 1
+
+        await pilot.press("d")
+        assert deleted == []
+        assert hidden == []
+        assert table.row_count == 1
+
+        await pilot.press("d")
+        assert deleted == ["sess-1"]
+        assert hidden == ["sess-1"]
+        assert labels == [("sess-1", "")]
+        assert table.row_count == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_session_hides_non_registry_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    """scan/Codex 原始來源沒有 RiNG registry 可刪時，仍寫 tombstone 讓列消失。"""
+    from textual.widgets import Static
+
+    hidden: set[str] = set()
+    sessions = [Session("scan-1", "/x/maigo", Status.IDLE, 0.0, "—", "scan")]
+    monkeypatch.setattr(tui, "board", lambda show_all: [s for s in sessions if s.session_id not in hidden])
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [])
+    monkeypatch.setattr(tui, "delete_session_state", lambda sid: False)
+    monkeypatch.setattr(tui, "hide_session", lambda sid: hidden.add(sid))
+
+    cleared: list[tuple[str, str]] = []
+    monkeypatch.setattr(tui, "set_label", lambda sid, label, **kw: cleared.append((sid, label)))
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("d")
+        await pilot.press("d")
+
+        assert app.query_one(DataTable).row_count == 0
+        assert cleared == [("scan-1", "")]
+        assert "Hidden" in str(app.query_one("#status", Static).render())
+
+
+@pytest.mark.asyncio
 async def test_focused_highlight_clears_when_no_longer_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """通知指向的 session 回應後（離開 WAITING）→ 持續標記自動解除。"""
     from ring.ipc import write_focus_request
