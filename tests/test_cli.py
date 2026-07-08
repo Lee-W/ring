@@ -258,8 +258,8 @@ def test_focus_tui_running_writes_request(tmp_path: Path) -> None:
     assert jump_called == [], "TUI 在跑時不應直接呼叫 focus_jump"
 
 
-def test_focus_silent_when_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
-    """focus <uuid> 查不到 → 安靜回 0，不拋例外。"""
+def test_focus_not_found_returns_error(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """focus <uuid> 查不到 → 清楚報錯並回 non-zero。"""
     jump_called: list[Session] = []
 
     def fake_get_by_id(sid: str) -> Session | None:
@@ -269,10 +269,71 @@ def test_focus_silent_when_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
         jump_called.append(s)
         return True, "jumped"
 
-    with patch("ring.sources.get_by_id", fake_get_by_id), patch("ring.focus.jump", fake_jump):
+    with (
+        patch("ring.sources.get_by_id", fake_get_by_id),
+        patch("ring.sources.discover_sessions", return_value=[]),
+        patch("ring.focus.jump", fake_jump),
+    ):
         rc = cli.main(["focus", "nonexistent-uuid"])
-    assert rc == 0
+    assert rc == 1
     assert jump_called == [], "查不到時不應呼叫 jump"
+    assert "nonexistent-uuid" in capsys.readouterr().err
+
+
+def test_focus_unique_prefix_matches_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    session = Session("abcdef", "/x/proj", Status.WAITING, 0.0, "→ Edit", "hook")
+    jumped: list[Session] = []
+
+    def fake_jump(s: Session) -> tuple[bool, str]:
+        jumped.append(s)
+        return True, "jumped"
+
+    with (
+        patch("ring.sources.get_by_id", return_value=None),
+        patch("ring.sources.discover_sessions", return_value=[session]),
+        patch("ring.ipc.read_tui_presence", return_value=None),
+        patch("ring.focus.jump", fake_jump),
+    ):
+        rc = cli.main(["focus", "abc"])
+
+    assert rc == 0
+    assert jumped == [session]
+
+
+def test_focus_ambiguous_prefix_returns_error(capsys: pytest.CaptureFixture[str]) -> None:
+    sessions = [
+        Session("abc111", "/x/one", Status.WAITING, 0.0, "→ Edit", "hook"),
+        Session("abc222", "/x/two", Status.WAITING, 0.0, "→ Edit", "hook"),
+    ]
+
+    with (
+        patch("ring.sources.get_by_id", return_value=None),
+        patch("ring.sources.discover_sessions", return_value=sessions),
+    ):
+        rc = cli.main(["focus", "abc"])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "abc111" in err
+    assert "abc222" in err
+
+
+def test_focus_missing_arg_returns_usage(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["focus"]) == 2
+    assert "ring focus SESSION_ID" in capsys.readouterr().err
+
+
+def test_focus_jump_failure_returns_error(capsys: pytest.CaptureFixture[str]) -> None:
+    session = Session("test-uuid", "/x/proj", Status.WAITING, 0.0, "→ Edit", "hook")
+    with (
+        patch("ring.sources.get_by_id", return_value=session),
+        patch("ring.ipc.read_tui_presence", return_value=None),
+        patch("ring.focus.jump", return_value=(False, "no focuser")),
+    ):
+        rc = cli.main(["focus", "test-uuid"])
+
+    assert rc == 1
+    assert "no focuser" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -717,6 +778,7 @@ def test_completion_zsh_script(capsys: pytest.CaptureFixture[str]) -> None:
     assert rc == 0
     assert "compdef _ring ring" in out
     assert "install-hooks" in out
+    assert "session id or unique prefix" in out
     assert "notify_backend" in out  # config 鍵動態帶入
 
 
@@ -726,6 +788,7 @@ def test_completion_bash_script(capsys: pytest.CaptureFixture[str]) -> None:
     assert rc == 0
     assert "complete -F _ring_completion ring" in out
     assert "--format" in out
+    assert "focus) COMPREPLY=()" in out
     assert "notify_backend" in out
 
 

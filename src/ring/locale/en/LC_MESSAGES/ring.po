@@ -515,6 +515,19 @@ msgstr "usage: ring completion zsh|bash"
 msgid "不支援的 shell：{shell}（目前支援 zsh / bash）"
 msgstr "unsupported shell: {shell} (zsh / bash supported)"
 
+# ── focus ──
+msgid " 等 {n} 筆"
+msgstr " and {n} total"
+
+msgid "session id 前綴不唯一：{query}（符合：{matches}{more}）"
+msgstr "session id prefix is ambiguous: {query} (matches: {matches}{more})"
+
+msgid "找不到 session：{query}"
+msgstr "session not found: {query}"
+
+msgid "用法：ring focus SESSION_ID"
+msgstr "usage: ring focus SESSION_ID"
+
 # ── stats ──
 msgid ""
 "usage: ring stats [--since DURATION]\n"

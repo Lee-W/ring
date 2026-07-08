@@ -93,7 +93,7 @@ hook 只對新開的 session 生效，所以裝完要重開 Claude Code / Codex 
 | `ring --all` | 顯示已離場 session |
 | `ring --no-legend` | 隱藏圖例 |
 | `ring --lang en` | 切英文 UI |
-| `ring focus SESSION_ID` | 聚焦指定 session |
+| `ring focus SESSION_ID` | 聚焦指定 session；可用唯一前綴 |
 | `ring config` | 顯示設定檔路徑與生效設定 |
 | `ring config set KEY VALUE` | 寫入單一設定 |
 | `ring doctor` | 唯讀環境診斷 |
@@ -124,7 +124,7 @@ eval "$(ring completion zsh)"
 eval "$(ring completion bash)"
 ```
 
-子命令、旗標、`config set` 的鍵都補得到。
+子命令、旗標、`config set` 的鍵都補得到；`ring focus` 會提示 session id / 唯一前綴參數。
 
 ### `--watch` 的兩種樣子
 
@@ -134,11 +134,12 @@ eval "$(ring completion bash)"
   選中 🔴 等你的列時，表格下方會多一行顯示**它具體在等什麼**（要跑的指令、問的問題；hook 模式才有）。
 - 否則 → **Rich poll**（清除畫面重畫）；連 Rich 都沒有就純文字。三層優雅降級。
 
-### 跳到 session（`Enter` / `Space`）
+### 跳到 session（`Enter` / `Space` / `ring focus`）
 
 > 這裡的 `Space` 是鍵盤上的空白鍵，不是 BanG Dream! 裡的場館「SPACE」。
 
-選一個 session 按 `Enter`，RiNG 把焦點帶到它真正所在的終端。目前內建支援：
+選一個 session 按 `Enter`，或用 `ring focus SESSION_ID`（完整 id 或唯一前綴），RiNG 把焦點帶到它真正所在的終端。
+如果 TUI 正在跑，`ring focus` 會先把請求交給 TUI，讓游標選中該 session；沒有 TUI 時才直接跳終端。目前內建支援：
 
 - **tmux**：`switch-client` 直接切到那個 pane（你跟它要在同一個 tmux server）。
 - **iTerm2 / Terminal.app**（macOS）：用 session 的 `tty` 透過 AppleScript 聚焦對應分頁，

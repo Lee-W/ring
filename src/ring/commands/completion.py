@@ -76,6 +76,9 @@ _ring() {{
   fi
 
   case $words[2] in
+    focus)
+      _message 'session id or unique prefix'
+      ;;
     hook)
       _arguments '--provider[provider name]:provider:(claude-code codex)'
       ;;
@@ -126,6 +129,7 @@ _ring_completion() {{
   esac
 
   case "${{COMP_WORDS[1]}}" in
+    focus) COMPREPLY=() ;;
     hook) COMPREPLY=( $(compgen -W "--provider" -- "$cur") ) ;;
     install-hooks|remove-hooks) COMPREPLY=( $(compgen -W "--dry-run" -- "$cur") ) ;;
     gc) COMPREPLY=( $(compgen -W "--dry-run --older-than --all-ended" -- "$cur") ) ;;
