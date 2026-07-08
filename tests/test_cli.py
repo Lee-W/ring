@@ -429,6 +429,7 @@ def test_doctor_returns_zero_and_shows_sections(
     assert "RiNG 環境診斷" in out
     assert "Session 來源" in out
     assert "Hook 安裝" in out
+    assert "Hook 心跳偵測" in out
     assert "通知後端" in out
     assert "聚焦終端" in out
     assert "維護" in out
@@ -526,6 +527,30 @@ def test_doctor_reports_hook_status(monkeypatch: pytest.MonkeyPatch, capsys: pyt
     assert rc2 == 0
     assert "未安裝" in out2
     assert "ring install-hooks" in out2
+
+
+def test_doctor_reports_hook_heartbeat_stale(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake_src = _make_fake_source("hook", [])
+    monkeypatch.setattr("ring.sources._SOURCES", [fake_src])
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [_make_fake_notifier("terminal-notifier", True, True)])
+    monkeypatch.setattr("ring.focus._FOCUSERS", [_make_fake_focuser("tmux")])
+    monkeypatch.setattr("ring.hook.hook_status", lambda: _make_fake_hook_status(), raising=False)
+    monkeypatch.setattr(
+        "ring.commands.doctor.discover_sessions",
+        lambda: [Session("stale", "/work/app", Status.WORKING, 0.0, "→ Edit", "hook", hook_stale=True)],
+    )
+
+    with monkeypatch.context() as m:
+        m.setattr("shutil.which", lambda name: None)
+        rc = cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "Hook 心跳偵測" in out
+    assert "可能失效" in out
+    assert "app" in out
 
 
 def test_doctor_selected_notify_backend(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -724,6 +749,8 @@ def _format_sessions() -> list[Session]:
             "hook",
             provider="claude-code",
             waiting_kind="permission",
+            heartbeat_at=123.0,
+            hook_stale=True,
         ),
         Session("a", "/x/maigo", Status.WORKING, 0.0, "→ Edit", "scan", provider="claude-code", todo=(2, 5)),
         Session("b", "/y/blog", Status.IDLE, 0.0, "—", "codex", provider="codex"),
@@ -749,6 +776,8 @@ def test_format_json_outputs_machine_readable_board(
     assert by_id["w"]["marker"] == "🔴"
     assert by_id["w"]["waiting_kind"] == "permission"
     assert by_id["w"]["waiting_icon"] == "🔐"
+    assert by_id["w"]["heartbeat_at"] == 123.0
+    assert by_id["w"]["hook_stale"] is True
     assert by_id["a"]["todo"] == {"done": 2, "total": 5}
     assert by_id["b"]["todo"] is None
     assert by_id["a"]["project"] == "maigo"

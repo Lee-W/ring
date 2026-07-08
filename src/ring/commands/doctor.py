@@ -10,7 +10,7 @@ from ring.config import CONFIG_PATH, get_config
 from ring.gc import DEFAULT_OLDER_THAN_SECONDS
 from ring.gc import collect_candidates as gc_collect_candidates
 from ring.i18n import gettext as _
-from ring.sources import sources
+from ring.sources import discover_sessions, sources
 
 
 def run_doctor(args: list[str]) -> int:
@@ -58,6 +58,18 @@ def run_doctor(args: list[str]) -> int:
         else:
             msg = _("未安裝（執行 ring install-hooks）")
         print(f"  {label:<{width_hook}}  {msg}")
+    print()
+
+    print(_("Hook 心跳偵測"))
+    try:
+        stale_hooks = [s for s in discover_sessions() if s.hook_stale]
+        if stale_hooks:
+            sample = ", ".join(s.project for s in stale_hooks[:3])
+            print(f"  {_('狀態')}：{_('可能失效')}（{_('{n} 個 session', n=len(stale_hooks))}：{sample}）")
+        else:
+            print(f"  {_('狀態')}：{_('正常')}")
+    except Exception:
+        print(f"  {_('狀態')}：{_('偵測失敗')}")
     print()
 
     print(_("通知後端"))

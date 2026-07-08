@@ -270,6 +270,8 @@ def render_json(sessions: list[Session]) -> str:
                 "marker": s.status.marker,
                 "waiting_kind": s.waiting_kind,
                 "waiting_icon": s.waiting_icon,
+                "hook_stale": s.hook_stale,
+                "heartbeat_at": s.heartbeat_at,
                 "cwd": s.cwd,
                 "location": s.location,
                 "tmux_target": s.tmux_target,
