@@ -95,6 +95,7 @@ Hooks only apply to new sessions, so restart Claude Code / Codex sessions after 
 | `ring config` | Show config path and effective settings |
 | `ring config set KEY VALUE` | Write one config value |
 | `ring doctor` | Read-only environment diagnosis |
+| `ring digest --since 4h` | Away summary: recent session state and wait stats |
 | `ring gc --dry-run` | Preview RiNG-owned stale state cleanup |
 | `ring gc` | Clean RiNG-owned stale state files |
 | `ring --format json` | Machine-readable board snapshot (for jq / scripts) |

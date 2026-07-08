@@ -20,6 +20,7 @@ from typing import Any
 from ring import __version__
 from ring.commands._args import strip_lang as _strip_lang
 from ring.commands.completion import run_completion
+from ring.commands.digest import run_digest
 from ring.commands.doctor import run_doctor
 from ring.commands.focus import run_focus
 from ring.commands.gc import run_gc
@@ -457,6 +458,7 @@ commands:
   focus SESSION_ID             聚焦指定 session；TUI 在跑時會回到 RiNG 並選中該列
   gc [--dry-run]               清理 RiNG 自己的 stale 狀態檔
   doctor                       顯示環境診斷（唯讀）——hook、通知、focuser、維護提示
+  digest [--since 4h]          離席摘要：彙整最近 session 狀態
   stats [--since 7d]           等待統計：你讓 agent 🔴 等了多久（hook 模式）
   completion SHELL             印出 shell 補全腳本（zsh / bash）
 """
@@ -515,6 +517,16 @@ options:
 不寫任何檔案、不安裝、不發通知；固定回傳 0。
 """
         ),
+        "digest": _(
+            """usage: ring digest [--since DURATION] [--format text|json]
+
+離席摘要：彙整最近一段時間的 session 狀態與等待統計。
+
+options:
+  --since DURATION  摘要時間窗（例如 30m、4h、1d；預設 4h）
+  --format text|json  輸出格式
+"""
+        ),
         "stats": _(
             """usage: ring stats [--since DURATION]
 
@@ -544,7 +556,18 @@ def main(argv: list[str] | None = None) -> int:
     if (
         raw
         and raw[0]
-        in {"hook", "install-hooks", "remove-hooks", "config", "focus", "gc", "doctor", "stats", "completion"}
+        in {
+            "hook",
+            "install-hooks",
+            "remove-hooks",
+            "config",
+            "focus",
+            "gc",
+            "doctor",
+            "digest",
+            "stats",
+            "completion",
+        }
         and any(arg in {"-h", "--help"} for arg in raw[1:])
     ):
         print(_subcommand_help(raw[0]), end="")
@@ -562,6 +585,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_gc(raw[1:])
     if raw and raw[0] == "doctor":
         return run_doctor(raw[1:])
+    if raw and raw[0] == "digest":
+        return run_digest(raw[1:])
     if raw and raw[0] == "stats":
         return run_stats(raw[1:])
     if raw and raw[0] == "completion":
