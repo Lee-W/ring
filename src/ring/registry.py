@@ -64,6 +64,7 @@ WAITING_KIND_ICONS = {
     "plan": "🧭",
     "idle": "⏸",
 }
+HOOK_HEARTBEAT_STALE_GRACE_SECONDS = 60.0
 
 # Provider → 「當下 live process 的 (cwd, tty) 清單」偵測器。core 不認識任何具體工具：
 # 要支援新工具的存活偵測＝註冊一個偵測器，_hook_sessions / sources 零改動。
@@ -295,6 +296,9 @@ class Session:
     tmux_pane: str | None = None  # stable tmux pane id from hook, e.g. "%12"
     tty: str | None = None  # e.g. "/dev/ttys003"，給非-tmux 終端（iTerm2 等）聚焦用
     hook_pid: int | None = None
+    heartbeat_at: float = 0.0
+    source_path: str = ""
+    hook_stale: bool = False
     todo: tuple[int, int] | None = None  # (done, total)
     recent_actions: list[str] = field(default_factory=list)
     provider: str = ""
@@ -347,6 +351,25 @@ def _apply_waiting(
     if status in {Status.WORKING, Status.IDLE} and tail_kind == "waiting" and idle_seconds < waiting_window:
         return Status.IDLE
     return status
+
+
+def _hook_heartbeat_stale(
+    source_path: str,
+    heartbeat_at: float,
+    status: Status,
+    *,
+    grace_seconds: float = HOOK_HEARTBEAT_STALE_GRACE_SECONDS,
+) -> bool:
+    """來源檔有更新但 hook heartbeat 沒跟上時，才視為 hook 可能失效。"""
+    if status not in {Status.WAITING, Status.WORKING}:
+        return False
+    if not source_path or heartbeat_at <= 0:
+        return False
+    try:
+        source_mtime = Path(source_path).stat().st_mtime
+    except OSError:
+        return False
+    return source_mtime - heartbeat_at > grace_seconds
 
 
 _tmux_cache: tuple[float, dict[str, str]] = (-1.0, {})
@@ -927,6 +950,8 @@ def _hook_sessions(
                     tmux_pane=str(data.get("tmux_pane", "")) or None,
                     tty=str(data.get("tty", "")) or None,
                     hook_pid=int(data["hook_pid"]) if str(data.get("hook_pid", "")).isdigit() else None,
+                    heartbeat_at=float(data.get("heartbeat_at", data.get("last_active", 0.0))),
+                    source_path=str(data.get("source_path", "")),
                     todo=tuple(todo) if isinstance(todo, list) and len(todo) == 2 else None,
                     provider=provider,
                     waiting_kind=str(data.get("waiting_kind", "")),
@@ -936,6 +961,9 @@ def _hook_sessions(
             )
         except (KeyError, ValueError):
             continue
+    for s in out:
+        if s.source == "hook":
+            s.hook_stale = _hook_heartbeat_stale(s.source_path, s.heartbeat_at, s.status)
     # SessionEnd 沒觸發（crash）會留下幽靈檔。判定離場：
     #   1. 該 cwd 完全沒有 live proc → 一定離場。
     #   2. 該 cwd 的 hook row 數「多於」live proc 數（真的有多餘列要修剪）時，才用 tty

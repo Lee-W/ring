@@ -305,6 +305,8 @@ class RingApp(App[None]):
             marker = "👉 " if focused else ""
             style = f"reverse {_STATUS_STYLE[s.status]}" if focused else _STATUS_STYLE[s.status]
             suffix = f" {s.waiting_icon}" if s.status is Status.WAITING and s.waiting_icon else ""
+            if s.hook_stale:
+                suffix += " ⚠"
             status_cell = Text(f"{marker}{s.status.marker} {status_label(s.status)}{suffix}", style=style)
             progress = f"{s.todo[0]}/{s.todo[1]}" if s.todo else "·"
             loc_cell = f"📍{_middle_truncate(s.location, _LOC_MAX)}"
@@ -326,6 +328,9 @@ class RingApp(App[None]):
         """
         s = self._selected()
         widget = self.query_one("#detail", Static)
+        if s is not None and s.hook_stale:
+            widget.update(Text(_("  ⚠ hook 可能失效：來源檔有更新但沒有 heartbeat"), style="yellow"))
+            return
         if s is not None and s.status is Status.WAITING and s.waiting_detail:
             icon = s.waiting_icon or "🔴"
             widget.update(Text(f"  {icon} {s.waiting_detail}", style=_STATUS_STYLE[Status.WAITING]))

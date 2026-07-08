@@ -536,6 +536,21 @@ async def test_detail_row_shows_waiting_detail(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.asyncio
+async def test_detail_row_shows_hook_stale_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    from textual.widgets import Static
+
+    session = Session("stale", "/x/proj", Status.WORKING, 0.0, "→ Edit", "hook", hook_stale=True)
+    monkeypatch.setattr(tui, "board", lambda show_all: [session])
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test():
+        detail = str(app.query_one("#detail", Static).render())
+        assert "heartbeat" in detail
+        assert "hook" in detail
+
+
+@pytest.mark.asyncio
 async def test_jump_oldest_waiting_hotkey(monkeypatch: pytest.MonkeyPatch) -> None:
     sessions = [
         Session("newer", "/x/new", Status.WAITING, 200.0, "→ newer", "hook"),

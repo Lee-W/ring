@@ -184,16 +184,20 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
             last_action = _latest_action(records)
             todo = _extract_todo(records)
 
+    now = time.time()
     payload: dict[str, Any] = {
         "session_id": event.session_id,
         "provider": event.provider,
         "cwd": event.cwd,
         "origin_cwd": event.cwd,
         "status": event.status.value,
-        "last_active": time.time(),
+        "last_active": now,
+        "heartbeat_at": now,
         "last_action": last_action,
         "hook_pid": os.getpid(),
     }
+    if tp:
+        payload["source_path"] = tp
     tmux_pane = os.environ.get("TMUX_PANE", "").strip()
     if tmux_pane:
         payload["tmux_pane"] = tmux_pane

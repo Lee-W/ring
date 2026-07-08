@@ -18,6 +18,7 @@ from ring.registry import (
     _codex_latest_action,
     _codex_tail_kind,
     _codex_threads,
+    _hook_heartbeat_stale,
     _hook_sessions,
     _scan_status,
     _synthetic_sessions,
@@ -373,6 +374,27 @@ def test_tail_kind_only_noise_records_is_none() -> None:
 )
 def test_apply_waiting(status: Status, age: int, tail_kind: str, window: int, expected: Status) -> None:
     assert _apply_waiting(status, age, tail_kind, window) is expected
+
+
+# ---------------------------------------------------------------------------
+# hook heartbeat stale detection
+# ---------------------------------------------------------------------------
+
+
+def test_hook_heartbeat_stale_requires_newer_source_file(tmp_path: Path) -> None:
+    source = tmp_path / "session.jsonl"
+    source.write_text("new activity\n")
+    heartbeat_at = source.stat().st_mtime - 120
+
+    assert _hook_heartbeat_stale(str(source), heartbeat_at, Status.WAITING, grace_seconds=60)
+
+
+def test_hook_heartbeat_stale_does_not_flag_long_task_without_source_update(tmp_path: Path) -> None:
+    source = tmp_path / "session.jsonl"
+    source.write_text("old activity\n")
+    heartbeat_at = source.stat().st_mtime + 300
+
+    assert not _hook_heartbeat_stale(str(source), heartbeat_at, Status.WORKING, grace_seconds=60)
 
 
 # ---------------------------------------------------------------------------

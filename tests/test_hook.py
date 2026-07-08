@@ -61,6 +61,29 @@ def test_hook_event_writes_tmux_binding_and_hook_pid(
     assert isinstance(data["hook_pid"], int)
 
 
+def test_hook_event_writes_heartbeat_and_source_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text("", encoding="utf-8")
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path / "registry")
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "Stop",
+            "cwd": "/x",
+            "transcript_path": str(transcript),
+        },
+    )
+
+    assert hook.run_hook() == 0
+
+    data = json.loads((tmp_path / "registry" / "s1.json").read_text())
+    assert data["heartbeat_at"] == data["last_active"]
+    assert data["source_path"] == str(transcript)
+
+
 def test_hook_event_unhides_manually_deleted_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
     unhidden: list[str] = []

@@ -136,6 +136,9 @@ msgstr "{project}: {msg}"
 msgid "（沒有正在等待的 session）"
 msgstr "(no waiting sessions)"
 
+msgid "  ⚠ hook 可能失效：來源檔有更新但沒有 heartbeat"
+msgstr "  ⚠ hook may be stale: source file changed but heartbeat did not update"
+
 msgid "再按一次 d 隱藏 {project}（有新活動會自動重新出現）"
 msgstr "Press d again to hide {project} (it reappears once there's new activity)"
 
@@ -399,6 +402,18 @@ msgstr "all unavailable"
 
 msgid "聚焦終端（focuser）"
 msgstr "Terminal Focuser"
+
+msgid "Hook 心跳偵測"
+msgstr "Hook Heartbeat"
+
+msgid "可能失效"
+msgstr "possibly stale"
+
+msgid "{n} 個 session"
+msgstr "{n} session(s)"
+
+msgid "正常"
+msgstr "normal"
 
 msgid "不可用（nvim 不在 PATH）"
 msgstr "unavailable (nvim not in PATH)"
