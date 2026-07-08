@@ -411,9 +411,7 @@ async def test_name_session_escape_does_not_save(monkeypatch: pytest.MonkeyPatch
 @pytest.mark.asyncio
 async def test_delete_session_requires_dd_and_clears_label(monkeypatch: pytest.MonkeyPatch) -> None:
     """按 d 只 arm；第二次 d 才刪 RiNG registry，並清掉該 session label。"""
-    state: dict[str, list[Session]] = {
-        "sessions": [Session("sess-1", "/x/maigo", Status.ENDED, 0.0, "—", "hook")]
-    }
+    state: dict[str, list[Session]] = {"sessions": [Session("sess-1", "/x/maigo", Status.ENDED, 0.0, "—", "hook")]}
     monkeypatch.setattr(tui, "board", lambda show_all: state["sessions"])
     monkeypatch.setattr(tui, "running_agent_pids", lambda: [])
     monkeypatch.setattr(tui, "load_labels", lambda **kw: {"sess-1": "舊 session"})

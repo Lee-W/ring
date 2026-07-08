@@ -79,9 +79,7 @@ def render_text(digest: Digest) -> str:
         lines.append(_("  ⚫ 已離場：{n}", n=len(digest.ended)))
         lines.extend(f"    - {_session_line(s)}" for s in digest.ended[:5])
     if digest.waits:
-        lines.append(
-            _("  等待統計：{n} 次，共 {duration}", n=digest.waits, duration=_rel(digest.wait_seconds))
-        )
+        lines.append(_("  等待統計：{n} 次，共 {duration}", n=digest.waits, duration=_rel(digest.wait_seconds)))
         if digest.ongoing_waits:
             lines.append(_("  其中 {n} 段還在等你。", n=digest.ongoing_waits))
     return "\n".join(lines)
