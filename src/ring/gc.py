@@ -81,9 +81,7 @@ def run_gc(
     # 隱藏清單本來就空時，不必為了「找不到就清」去掃全部 source（省掉一輪 process/檔案掃描）。
     known_ids = _known_session_ids() if hidden_now else set()
     hidden_stale_preview = {
-        sid: hidden_at
-        for sid, hidden_at in hidden_now.items()
-        if sid not in known_ids or now - hidden_at >= older_than
+        sid: hidden_at for sid, hidden_at in hidden_now.items() if sid not in known_ids or now - hidden_at >= older_than
     }
 
     if dry_run:

@@ -45,9 +45,7 @@ def test_stop_writes_idle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     assert data["cwd"] == "/x"
 
 
-def test_hook_event_writes_tmux_binding_and_hook_pid(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_hook_event_writes_tmux_binding_and_hook_pid(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
     monkeypatch.setenv("TMUX_PANE", "%42")
     monkeypatch.setattr(hook, "_controlling_tty", lambda: "/dev/ttys042")
@@ -61,9 +59,7 @@ def test_hook_event_writes_tmux_binding_and_hook_pid(
     assert isinstance(data["hook_pid"], int)
 
 
-def test_hook_event_writes_heartbeat_and_source_path(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_hook_event_writes_heartbeat_and_source_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     transcript = tmp_path / "session.jsonl"
     transcript.write_text("", encoding="utf-8")
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path / "registry")
