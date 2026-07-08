@@ -420,6 +420,9 @@ class RingApp(App[None]):
             return
 
         self._clear_delete_armed()
+        if s.source == "proc" and s.session_id.startswith("synthetic:"):
+            self._set_status(_("{project} 是仍在執行的 process，無法隱藏；請跳過去結束它", project=name))
+            return
         hide_session(s.session_id)
         deleted = delete_session_state(s.session_id)
         set_label(s.session_id, "")
