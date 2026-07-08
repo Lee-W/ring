@@ -97,6 +97,7 @@ hook 只對新開的 session 生效，所以裝完要重開 Claude Code / Codex 
 | `ring config` | 顯示設定檔路徑與生效設定 |
 | `ring config set KEY VALUE` | 寫入單一設定 |
 | `ring doctor` | 唯讀環境診斷 |
+| `ring digest --since 4h` | 離席摘要：最近 session 狀態與等待統計 |
 | `ring gc --dry-run` | 預覽 RiNG 自己的 stale 狀態檔清理 |
 | `ring gc` | 清理 RiNG 自己的 stale 狀態檔 |
 | `ring --format json` | 整個看板的機器可讀快照（給 jq / 腳本） |

@@ -60,6 +60,7 @@ def test_help_lists_hidden_commands(capsys: pytest.CaptureFixture[str]) -> None:
     assert "focus SESSION_ID" in out
     assert "gc" in out
     assert "doctor" in out
+    assert "digest" in out
 
 
 def test_config_shows_path_and_settings(capsys: pytest.CaptureFixture[str]) -> None:
@@ -818,6 +819,7 @@ def test_completion_zsh_script(capsys: pytest.CaptureFixture[str]) -> None:
     assert rc == 0
     assert "compdef _ring ring" in out
     assert "install-hooks" in out
+    assert "digest:away summary" in out
     assert "session id or unique prefix" in out
     assert "notify_backend" in out  # config 鍵動態帶入
 
@@ -828,6 +830,7 @@ def test_completion_bash_script(capsys: pytest.CaptureFixture[str]) -> None:
     assert rc == 0
     assert "complete -F _ring_completion ring" in out
     assert "--format" in out
+    assert "digest) COMPREPLY" in out
     assert "focus) COMPREPLY=()" in out
     assert "notify_backend" in out
 
@@ -848,6 +851,80 @@ def test_completion_help_does_not_print_script(capsys: pytest.CaptureFixture[str
     assert rc == 0
     assert "usage: ring completion" in out
     assert "compdef" not in out
+
+
+# ---------------------------------------------------------------------------
+# digest 子命令
+# ---------------------------------------------------------------------------
+
+
+def test_digest_prints_mixed_summary(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    import time
+
+    from ring.stats import WaitSpan
+
+    now = time.time()
+    sessions = [
+        Session(
+            "w",
+            "/x/maigo",
+            Status.WAITING,
+            now - 600,
+            "→ Permission",
+            "hook",
+            waiting_kind="permission",
+            waiting_detail="Bash: npm test",
+        ),
+        Session("i", "/x/blog", Status.IDLE, now - 500, "—", "hook"),
+        Session("e", "/x/old", Status.ENDED, now - 400, "—", "hook"),
+    ]
+    monkeypatch.setattr("ring.commands.digest.discover_sessions", lambda: sessions)
+    monkeypatch.setattr(
+        "ring.commands.digest.collect_waits",
+        lambda since, now=None: [WaitSpan("w", "maigo", 100.0, 30.0, True)],
+    )
+
+    rc = cli.main(["digest", "--since", "1h"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "RiNG digest" in out
+    assert "正在等你" in out
+    assert "Bash: npm test" in out
+    assert "已停著" in out
+    assert "已離場" in out
+    assert "等待統計" in out
+
+
+def test_digest_json_schema(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    import json
+
+    sessions = [Session("w", "/x/maigo", Status.WAITING, 100.0, "→ Permission", "hook")]
+    monkeypatch.setattr("ring.commands.digest.discover_sessions", lambda: sessions)
+    monkeypatch.setattr("ring.commands.digest.collect_waits", lambda since, now=None: [])
+
+    rc = cli.main(["digest", "--format", "json"])
+    data = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert data["since"] == "4h"
+    assert data["waiting"][0]["session_id"] == "w"
+    assert data["idle"] == []
+    assert data["ended"] == []
+    assert data["waits"] == {"count": 0, "total_seconds": 0, "ongoing": 0}
+
+
+def test_digest_empty_state(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr("ring.commands.digest.discover_sessions", lambda: [])
+    monkeypatch.setattr("ring.commands.digest.collect_waits", lambda since, now=None: [])
+
+    assert cli.main(["digest"]) == 0
+    assert "沒有 session 活動" in capsys.readouterr().out
+
+
+def test_digest_bad_since_returns_two(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["digest", "--since", "bad"]) == 2
+    assert "bad" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------

@@ -265,6 +265,7 @@ msgid ""
 "  focus SESSION_ID             聚焦指定 session；TUI 在跑時會回到 RiNG 並選中該列\n"
 "  gc [--dry-run]               清理 RiNG 自己的 stale 狀態檔\n"
 "  doctor                       顯示環境診斷（唯讀）——hook、通知、focuser、維護提示\n"
+"  digest [--since 4h]          離席摘要：彙整最近 session 狀態\n"
 "  stats [--since 7d]           等待統計：你讓 agent 🔴 等了多久（hook 模式）\n"
 "  completion SHELL             印出 shell 補全腳本（zsh / bash）\n"
 msgstr ""
@@ -280,6 +281,7 @@ msgstr ""
 "  focus SESSION_ID             focus a session; if TUI is running, returns to RiNG and selects the row\n"
 "  gc [--dry-run]               clean RiNG's own stale state files\n"
 "  doctor                       show environment diagnosis (read-only) — hooks, notify, focuser, maintenance hints\n"
+"  digest [--since 4h]          away summary: recent session state\n"
 "  stats [--since 7d]           waiting stats: how long you kept agents 🔴 waiting (hook mode)\n"
 "  completion SHELL             print shell completion script (zsh / bash)\n"
 
@@ -551,6 +553,54 @@ msgstr "session not found: {query}"
 
 msgid "用法：ring focus SESSION_ID"
 msgstr "usage: ring focus SESSION_ID"
+
+# ── digest ──
+msgid ""
+"usage: ring digest [--since DURATION] [--format text|json]\n"
+"\n"
+"離席摘要：彙整最近一段時間的 session 狀態與等待統計。\n"
+"\n"
+"options:\n"
+"  --since DURATION  摘要時間窗（例如 30m、4h、1d；預設 4h）\n"
+"  --format text|json  輸出格式\n"
+msgstr ""
+"usage: ring digest [--since DURATION] [--format text|json]\n"
+"\n"
+"Away summary: recent session state and wait stats.\n"
+"\n"
+"options:\n"
+"  --since DURATION  summary window (e.g. 30m, 4h, 1d; default 4h)\n"
+"  --format text|json  output format\n"
+
+msgid "🎤 RiNG digest — 最近 {since}"
+msgstr "🎤 RiNG digest — last {since}"
+
+msgid "  （這段時間沒有 session 活動。）"
+msgstr "  (no session activity in this window.)"
+
+msgid "  🔴 正在等你：{n}"
+msgstr "  🔴 waiting for you: {n}"
+
+msgid "  🟡 已停著：{n}"
+msgstr "  🟡 idle: {n}"
+
+msgid "  ⚫ 已離場：{n}"
+msgstr "  ⚫ ended: {n}"
+
+msgid "  等待統計：{n} 次，共 {duration}"
+msgstr "  wait stats: {n} waits, {duration} total"
+
+msgid "  其中 {n} 段還在等你。"
+msgstr "  {n} of these are still waiting."
+
+msgid "離席摘要：彙整最近一段時間的 session 狀態。"
+msgstr "Away summary: recent session state."
+
+msgid "摘要時間窗（例如 30m、4h、1d；預設 4h）"
+msgstr "summary window (e.g. 30m, 4h, 1d; default 4h)"
+
+msgid "輸出格式：text / json"
+msgstr "output format: text / json"
 
 # ── stats ──
 msgid ""

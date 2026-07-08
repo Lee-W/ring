@@ -28,6 +28,7 @@ _COMMANDS = (
     "focus",
     "gc",
     "doctor",
+    "digest",
     "stats",
     "completion",
 )
@@ -56,6 +57,7 @@ _ring() {{
     'focus:focus a session by id'
     'gc:clean stale RiNG state files'
     'doctor:read-only environment diagnosis'
+    'digest:away summary'
     'stats:waiting-time statistics'
     'completion:print shell completion script'
   )
@@ -91,6 +93,11 @@ _ring() {{
         '--older-than[age threshold, e.g. 30m / 2h / 7d]:duration:' \\
         '--all-ended[remove every ended registry]'
       ;;
+    digest)
+      _arguments \\
+        '--since[summary window, e.g. 30m / 4h / 1d]:duration:' \\
+        '--format[output format]:format:(text json)'
+      ;;
     completion)
       (( CURRENT == 3 )) && _values 'shell' zsh bash
       ;;
@@ -123,7 +130,7 @@ _ring_completion() {{
   fi
 
   case "$prev" in
-    --format) COMPREPLY=( $(compgen -W "table json oneline" -- "$cur") ); return ;;
+    --format) COMPREPLY=( $(compgen -W "table json oneline text" -- "$cur") ); return ;;
     --lang) COMPREPLY=( $(compgen -W "en zh-Hant" -- "$cur") ); return ;;
     --provider) COMPREPLY=( $(compgen -W "claude-code codex" -- "$cur") ); return ;;
   esac
@@ -133,6 +140,7 @@ _ring_completion() {{
     hook) COMPREPLY=( $(compgen -W "--provider" -- "$cur") ) ;;
     install-hooks|remove-hooks) COMPREPLY=( $(compgen -W "--dry-run" -- "$cur") ) ;;
     gc) COMPREPLY=( $(compgen -W "--dry-run --older-than --all-ended" -- "$cur") ) ;;
+    digest) COMPREPLY=( $(compgen -W "--since --format" -- "$cur") ) ;;
     completion) [[ $COMP_CWORD -eq 2 ]] && COMPREPLY=( $(compgen -W "zsh bash" -- "$cur") ) ;;
     config)
       if [[ $COMP_CWORD -eq 2 ]]; then
