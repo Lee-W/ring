@@ -201,6 +201,8 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
         payload["todo"] = list(todo)
     if event.waiting_for:
         payload["waiting_for"] = event.waiting_for
+    if event.status is Status.WAITING and event.waiting_kind:
+        payload["waiting_kind"] = event.waiting_kind
     if event.status is Status.WAITING and event.detail:
         payload["waiting_detail"] = event.detail
     tty = event.tty or _controlling_tty() or _session_tty(adapter.process_names)
@@ -251,6 +253,7 @@ def _ring_waiting_now(event: Any, payload: dict[str, Any], last_action: str) -> 
                     source="hook",
                     tty=payload.get("tty"),
                     provider=event.provider,
+                    waiting_kind=str(payload.get("waiting_kind", "")),
                     waiting_detail=str(payload.get("waiting_detail", "")),
                     origin_cwd=event.cwd,
                 )

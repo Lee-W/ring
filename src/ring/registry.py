@@ -58,6 +58,12 @@ _SUBPROCESS_CACHE_TTL = 1.0  # ps / tmux 結果的短快取，省掉同一次刷
 # Claude Code SessionStart payload 的 source 值（不是 provider）。舊版 bug 曾把它誤當
 # provider 寫進 registry，留下接不住的幽靈列；載入時據此辨識並清掉這種腐壞檔。
 _SESSION_START_SOURCES = {"startup", "resume", "clear", "compact"}
+WAITING_KIND_ICONS = {
+    "permission": "🔐",
+    "question": "❓",
+    "plan": "🧭",
+    "idle": "⏸",
+}
 
 # Provider → 「當下 live process 的 (cwd, tty) 清單」偵測器。core 不認識任何具體工具：
 # 要支援新工具的存活偵測＝註冊一個偵測器，_hook_sessions / sources 零改動。
@@ -292,6 +298,7 @@ class Session:
     todo: tuple[int, int] | None = None  # (done, total)
     recent_actions: list[str] = field(default_factory=list)
     provider: str = ""
+    waiting_kind: str = ""  # permission | question | plan | idle；空代表非 WAITING 或舊 registry
     waiting_detail: str = ""  # 🔴 等你時「到底在等什麼」（權限指令 / 問題內容；hook 模式才有）
     _tail_kind: str = field(default="none", repr=False, compare=False)  # 內部：scan 路徑暫存對話尾判定
     origin_cwd: str = ""  # 開場 cwd（session 第一筆帶 cwd 紀錄），用於歸屬；空時 fallback 到 cwd
@@ -318,6 +325,10 @@ class Session:
             return self.tmux_target
         home = str(Path.home())
         return self.cwd.replace(home, "~", 1) if self.cwd.startswith(home) else self.cwd
+
+    @property
+    def waiting_icon(self) -> str:
+        return WAITING_KIND_ICONS.get(self.waiting_kind, "")
 
 
 def _apply_waiting(
@@ -918,6 +929,7 @@ def _hook_sessions(
                     hook_pid=int(data["hook_pid"]) if str(data.get("hook_pid", "")).isdigit() else None,
                     todo=tuple(todo) if isinstance(todo, list) and len(todo) == 2 else None,
                     provider=provider,
+                    waiting_kind=str(data.get("waiting_kind", "")),
                     waiting_detail=str(data.get("waiting_detail", "")),
                     origin_cwd=str(data.get("origin_cwd", "")),
                 )

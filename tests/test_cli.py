@@ -715,7 +715,16 @@ def test_gc_bad_duration_returns_two(capsys: pytest.CaptureFixture[str]) -> None
 
 def _format_sessions() -> list[Session]:
     return [
-        Session("w", "/x/maigo", Status.WAITING, 0.0, "→ 等你確認權限", "hook", provider="claude-code"),
+        Session(
+            "w",
+            "/x/maigo",
+            Status.WAITING,
+            0.0,
+            "→ 等你確認權限",
+            "hook",
+            provider="claude-code",
+            waiting_kind="permission",
+        ),
         Session("a", "/x/maigo", Status.WORKING, 0.0, "→ Edit", "scan", provider="claude-code", todo=(2, 5)),
         Session("b", "/y/blog", Status.IDLE, 0.0, "—", "codex", provider="codex"),
     ]
@@ -738,6 +747,8 @@ def test_format_json_outputs_machine_readable_board(
     assert by_id["w"]["label"] == "重構登入"
     assert by_id["w"]["status"] == "waiting"
     assert by_id["w"]["marker"] == "🔴"
+    assert by_id["w"]["waiting_kind"] == "permission"
+    assert by_id["w"]["waiting_icon"] == "🔐"
     assert by_id["a"]["todo"] == {"done": 2, "total": 5}
     assert by_id["b"]["todo"] is None
     assert by_id["a"]["project"] == "maigo"

@@ -104,6 +104,9 @@ msgstr "name"
 msgid "隱藏"
 msgstr "hide"
 
+msgid "最久等待"
+msgstr "oldest wait"
+
 # ── TUI 命名浮層 ──
 msgid "為 {project} 命名（Enter 存、Esc 取消、清空移除）"
 msgstr "Name {project} (Enter to save, Esc to cancel, empty to clear)"
@@ -129,6 +132,9 @@ msgstr "→ {project} ({where})"
 
 msgid "{project}：{msg}"
 msgstr "{project}: {msg}"
+
+msgid "（沒有正在等待的 session）"
+msgstr "(no waiting sessions)"
 
 msgid "再按一次 d 隱藏 {project}（有新活動會自動重新出現）"
 msgstr "Press d again to hide {project} (it reappears once there's new activity)"

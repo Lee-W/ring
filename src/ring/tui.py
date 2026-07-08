@@ -108,6 +108,7 @@ class RingApp(App[None]):
         Binding("a", "toggle_all", _("含已離場")),
         Binding("n", "name_session", _("命名")),
         Binding("d", "delete_session", _("隱藏"), key_display="dd"),
+        Binding("w", "jump_oldest_waiting", _("最久等待")),
         Binding("enter", "jump", _("跳過去")),
         Binding("space", "jump", _("跳過去"), show=False),
     ]
@@ -303,7 +304,8 @@ class RingApp(App[None]):
             focused = s.session_id == self._focused_sid
             marker = "👉 " if focused else ""
             style = f"reverse {_STATUS_STYLE[s.status]}" if focused else _STATUS_STYLE[s.status]
-            status_cell = Text(f"{marker}{s.status.marker} {status_label(s.status)}", style=style)
+            suffix = f" {s.waiting_icon}" if s.status is Status.WAITING and s.waiting_icon else ""
+            status_cell = Text(f"{marker}{s.status.marker} {status_label(s.status)}{suffix}", style=style)
             progress = f"{s.todo[0]}/{s.todo[1]}" if s.todo else "·"
             loc_cell = f"📍{_middle_truncate(s.location, _LOC_MAX)}"
             project_cell = labeled_project(s.project, labels.get(s.session_id, ""))
@@ -325,7 +327,8 @@ class RingApp(App[None]):
         s = self._selected()
         widget = self.query_one("#detail", Static)
         if s is not None and s.status is Status.WAITING and s.waiting_detail:
-            widget.update(Text(f"  🔴 {s.waiting_detail}", style=_STATUS_STYLE[Status.WAITING]))
+            icon = s.waiting_icon or "🔴"
+            widget.update(Text(f"  {icon} {s.waiting_detail}", style=_STATUS_STYLE[Status.WAITING]))
         else:
             widget.update("")
 
@@ -386,6 +389,16 @@ class RingApp(App[None]):
             text = _("{project}：{msg}", project=name, msg=msg)
         self._set_status(text)
         self.notify(text, severity="information" if ok else "warning", timeout=10)
+
+    def action_jump_oldest_waiting(self) -> None:
+        self._clear_delete_armed()
+        candidates = [(idx, s) for idx, s in enumerate(self._sessions) if s.status is Status.WAITING]
+        if not candidates:
+            self._set_status(_("（沒有正在等待的 session）"))
+            return
+        idx, _session = max(candidates, key=lambda item: item[1].idle_for)
+        self.query_one(DataTable).move_cursor(row=idx)
+        self.action_jump()
 
     def action_delete_session(self) -> None:
         s = self._selected()
