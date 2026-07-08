@@ -154,6 +154,13 @@ and sends a system notification right then — **no RiNG board needs to be open*
 after you close the terminal (notifications are event-driven, not polled). While a TUI is open, it
 also nudges you again in-app at 30s / 120s / 300s if the session keeps waiting.
 
+A second kind of reminder is 🟡 **idle for too long** (`idle_threshold_seconds`, default 2h): once a
+session has sat idle past the threshold, it notifies once. Unlike waiting, idle is time-based — there
+is no event to hang a hook on, so it can only be detected by polling. That means it **fires only while
+`ring watch` or a TUI is open** (and when both are open, only one of them fires it, never twice). Close
+every board and idle reminders go silent — waiting still rings you, since that path runs off the hook.
+This is a deliberate trade-off: idle is a secondary signal, not worth a resident background process.
+
 For clickable notifications on macOS, install `terminal-notifier`:
 
 ```sh
@@ -341,6 +348,7 @@ legend = true
 active_window_seconds = 21600
 working_threshold_seconds = 90
 waiting_window_seconds = 1800
+idle_threshold_seconds = 7200    # 🟡 remind once idle for this long (default 2h; 0 = off)
 notify_sound = true
 notify_sound_name = "Glass"
 notify_ignore_dnd = false
