@@ -515,6 +515,7 @@ async def test_detail_row_shows_waiting_detail(monkeypatch: pytest.MonkeyPatch) 
             0.0,
             "→ 等你",
             "hook",
+            waiting_kind="permission",
             waiting_detail="Bash: rm -rf node_modules",
         ),
         Session("b", "/y/blog", Status.WORKING, 0.0, "→ Edit", "hook"),
@@ -526,8 +527,47 @@ async def test_detail_row_shows_waiting_detail(monkeypatch: pytest.MonkeyPatch) 
     async with app.run_test() as pilot:
         detail = app.query_one("#detail", Static)
         # WAITING 排最上面，游標預設在第 0 列 → 顯示 detail
+        assert "🔐" in str(detail.render())
         assert "rm -rf node_modules" in str(detail.render())
         # 移到沒有 detail 的列 → 清空
         app.query_one(DataTable).move_cursor(row=1)
         await pilot.pause()
         assert str(detail.render()) == ""
+
+
+@pytest.mark.asyncio
+async def test_jump_oldest_waiting_hotkey(monkeypatch: pytest.MonkeyPatch) -> None:
+    sessions = [
+        Session("newer", "/x/new", Status.WAITING, 200.0, "→ newer", "hook"),
+        Session("older", "/x/old", Status.WAITING, 100.0, "→ older", "hook"),
+        Session("idle", "/x/idle", Status.IDLE, 50.0, "—", "hook"),
+    ]
+    jumped: list[str] = []
+
+    def fake_focus_jump(s: Session) -> tuple[bool, str]:
+        jumped.append(s.session_id)
+        return True, "jumped"
+
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+    monkeypatch.setattr(tui, "focus_jump", fake_focus_jump)
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("w")
+        assert jumped == ["older"]
+        assert app.query_one(DataTable).cursor_row == 1
+
+
+@pytest.mark.asyncio
+async def test_jump_oldest_waiting_hotkey_without_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
+    from textual.widgets import Static
+
+    sessions = [Session("idle", "/x/idle", Status.IDLE, 50.0, "—", "hook")]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("w")
+        assert "session" in str(app.query_one("#status", Static).render()).lower()

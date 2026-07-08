@@ -165,6 +165,11 @@ def _rich_legend() -> Text:
     return Text.assemble(*[(p.plain, p.style) for p in parts])
 
 
+def _status_text(s: Session) -> str:
+    suffix = f" {s.waiting_icon}" if s.status is Status.WAITING and s.waiting_icon else ""
+    return f"{s.status.marker} {status_label(s.status)}{suffix}"
+
+
 def _rich_renderable(sessions: list[Session], show_legend: bool, show_tool: bool = True) -> Group:
     pids = running_agent_pids()
     blocks: list[Any] = [Text(_header(len(sessions), len(pids)), style="bold")]
@@ -187,7 +192,7 @@ def _rich_renderable(sessions: list[Session], show_legend: bool, show_tool: bool
 
     labels = load_labels()
     for s in sessions:
-        status_cell = Text(f"{s.status.marker} {status_label(s.status)}", style=_STATUS_STYLE[s.status])
+        status_cell = Text(_status_text(s), style=_STATUS_STYLE[s.status])
         progress = f"{s.todo[0]}/{s.todo[1]}" if s.todo else "·"
         loc_cell = f"📍{_middle_truncate(s.location, _LOC_MAX)}"
         project_cell = labeled_project(s.project, labels.get(s.session_id, ""))
@@ -216,6 +221,7 @@ def _render_plain(sessions: list[Session], show_legend: bool, show_tool: bool = 
     rows = [
         (
             s.status.marker,
+            s.waiting_icon if s.status is Status.WAITING else "",
             provider_label(s.provider),
             labeled_project(s.project, labels.get(s.session_id, "")),
             f"{s.todo[0]}/{s.todo[1]}" if s.todo else "·",
@@ -226,18 +232,19 @@ def _render_plain(sessions: list[Session], show_legend: bool, show_tool: bool = 
         for s in sessions
     ]
     c_tool, c_proj, c_prog, c_idle, c_loc, c_act = _("工具"), _("專案"), _("進度"), _("閒置"), _("去哪"), _("動作")
-    w_tool = max(len(c_tool), *(len(r[1]) for r in rows))
-    w_proj = max(len(c_proj), *(len(r[2]) for r in rows))
-    w_prog = max(len(c_prog), *(len(r[3]) for r in rows))
-    w_ago = max(len(c_idle), 3, *(len(r[4]) for r in rows))
-    w_loc = max(len(c_loc), *(len(r[5]) for r in rows))
+    w_tool = max(len(c_tool), *(len(r[2]) for r in rows))
+    w_proj = max(len(c_proj), *(len(r[3]) for r in rows))
+    w_prog = max(len(c_prog), *(len(r[4]) for r in rows))
+    w_ago = max(len(c_idle), 3, *(len(r[5]) for r in rows))
+    w_loc = max(len(c_loc), *(len(r[6]) for r in rows))
     tool_h = f"{c_tool:<{w_tool}}  " if show_tool else ""
     header = f"     {tool_h}{c_proj:<{w_proj}}  {c_prog:>{w_prog}}  {c_idle:>{w_ago}}    {c_loc:<{w_loc}}  {c_act}"
     lines += ["", header]
-    for marker, tool, project, prog, ago, loc, action in rows:
+    for marker, kind_icon, tool, project, prog, ago, loc, action in rows:
         tool_c = f"{tool:<{w_tool}}  " if show_tool else ""
+        marker_c = f"{marker}{kind_icon}"
         lines.append(
-            f"  {marker} {tool_c}{project:<{w_proj}}  {prog:>{w_prog}}  {ago:>{w_ago}}  📍{loc:<{w_loc}}  {action}"
+            f"  {marker_c:<2} {tool_c}{project:<{w_proj}}  {prog:>{w_prog}}  {ago:>{w_ago}}  📍{loc:<{w_loc}}  {action}"
         )
     return "\n".join(lines)
 
@@ -261,6 +268,8 @@ def render_json(sessions: list[Session]) -> str:
                 "label": labels.get(s.session_id, ""),
                 "status": s.status.value,
                 "marker": s.status.marker,
+                "waiting_kind": s.waiting_kind,
+                "waiting_icon": s.waiting_icon,
                 "cwd": s.cwd,
                 "location": s.location,
                 "tmux_target": s.tmux_target,

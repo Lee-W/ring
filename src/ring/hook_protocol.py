@@ -35,6 +35,7 @@ class NormalizedHookEvent:
     tty: str = ""
     last_action: str = ""
     waiting_for: str = ""
+    waiting_kind: str = ""
     detail: str = ""  # 需要你決策的具體內容（要跑的指令 / 問的問題），給 TUI detail 與通知內文
 
 
@@ -127,6 +128,7 @@ class CommonHookAdapter:
             tty=_first_str(data, "tty"),
             last_action=_first_str(data, "last_action", "lastAction", "message", "title"),
             waiting_for=_waiting_for(data),
+            waiting_kind=_waiting_kind(data, event, status),
             detail=_action_detail(data),
         )
 
@@ -213,6 +215,48 @@ def _is_action_required_payload(data: Mapping[str, Any]) -> bool:
         if isinstance(value, list) and value:
             return True
     return False
+
+
+def _waiting_kind(data: Mapping[str, Any], event: str, status: Status) -> str:
+    """把 WAITING payload 分成使用者可掃讀的幾種等待原因。"""
+    if status is not Status.WAITING:
+        return ""
+
+    waiting_for = _waiting_for(data)
+    tool_name = _normalize_token(_first_str(data, "tool_name", "toolName", "tool"))
+    notification_type = _normalize_token(
+        _first_str(data, "notification_type", "notificationType", "raw_notification_type", "rawNotificationType")
+    )
+    detail = _action_detail(data).lower()
+
+    if "plan" in waiting_for or "plan" in tool_name or "plan" in detail:
+        return "plan"
+    if event == "PermissionRequest" or notification_type == "permission_prompt":
+        return "permission"
+    if waiting_for in {"approval", "permission"}:
+        return "permission"
+    if tool_name == "askuserquestion":
+        return "question"
+    if waiting_for in {
+        "choice",
+        "choices",
+        "elicitation",
+        "input",
+        "option",
+        "options",
+        "question",
+        "questions",
+        "selection",
+        "user_input",
+    }:
+        return "question"
+    tool_input = data.get("tool_input") or data.get("toolInput") or data.get("input")
+    if isinstance(tool_input, Mapping):
+        for key in ("questions", "options", "choices"):
+            value = tool_input.get(key)
+            if isinstance(value, list) and value:
+                return "question"
+    return "idle"
 
 
 # tool_input 裡最能代表「這次要動什麼」的欄位，依序取第一個非空字串。

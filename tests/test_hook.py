@@ -734,6 +734,7 @@ def test_waiting_detail_captures_bash_command(monkeypatch: pytest.MonkeyPatch, t
     data = json.loads((tmp_path / "s1.json").read_text())
     assert data["status"] == Status.WAITING.value
     assert data["waiting_detail"] == "Bash: rm -rf node_modules"
+    assert data["waiting_kind"] == "permission"
 
 
 def test_waiting_detail_captures_question_text(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -754,6 +755,26 @@ def test_waiting_detail_captures_question_text(monkeypatch: pytest.MonkeyPatch, 
     assert data["status"] == Status.WAITING.value
     assert "要用哪個 auth 方案" in data["waiting_detail"]
     assert data["waiting_detail"].startswith("AskUserQuestion: ")
+    assert data["waiting_kind"] == "question"
+
+
+def test_waiting_kind_detects_plan_approval(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "Notification",
+            "cwd": "/x",
+            "requires_action": True,
+            "waiting_for": "plan_approval",
+            "message": "Please approve the plan",
+        },
+    )
+    assert hook.run_hook() == 0
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WAITING.value
+    assert data["waiting_kind"] == "plan"
 
 
 def test_waiting_detail_collapses_multiline_and_truncates(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -811,3 +832,4 @@ def test_notification_message_used_as_waiting_detail(monkeypatch: pytest.MonkeyP
     data = json.loads((tmp_path / "s1.json").read_text())
     assert data["status"] == Status.WAITING.value
     assert data["waiting_detail"] == "Claude needs your permission to use Edit"
+    assert data["waiting_kind"] == "permission"

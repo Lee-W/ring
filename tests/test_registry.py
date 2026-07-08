@@ -842,6 +842,7 @@ def test_hook_sessions_loads_waiting_detail(monkeypatch: pytest.MonkeyPatch, tmp
                 "status": "waiting",
                 "last_active": 123.0,
                 "last_action": "—",
+                "waiting_kind": "permission",
                 "waiting_detail": "Bash: rm -rf node_modules",
             }
         )
@@ -849,5 +850,9 @@ def test_hook_sessions_loads_waiting_detail(monkeypatch: pytest.MonkeyPatch, tmp
     _write_hook_session(tmp_path, "s2", "/work/app", "")
 
     by_id = {s.session_id: s for s in _hook_sessions([("/work/app", "")])}
+    assert by_id["s1"].waiting_kind == "permission"
+    assert by_id["s1"].waiting_icon == "🔐"
     assert by_id["s1"].waiting_detail == "Bash: rm -rf node_modules"
+    assert by_id["s2"].waiting_kind == ""
+    assert by_id["s2"].waiting_icon == ""
     assert by_id["s2"].waiting_detail == ""
