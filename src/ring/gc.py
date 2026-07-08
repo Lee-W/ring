@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ring.ipc import _FOCUS_REQUEST_PATH, _PRESENCE_PATH, _PRESENCE_TTL, _REQUEST_TTL
@@ -18,6 +18,8 @@ from ring.registry import (
     Status,
     _hook_sessions,
     collect_provider_procs,
+    hidden_sessions,
+    prune_hidden_sessions,
 )
 
 DEFAULT_OLDER_THAN_SECONDS = 7 * 24 * 60 * 60
@@ -35,6 +37,8 @@ class GcResult:
     deleted: list[GcCandidate]
     errors: list[tuple[GcCandidate, str]]
     dry_run: bool
+    hidden_stale: list[str] = field(default_factory=list)  # 已（或將）清掉的隱藏清單條目 id
+    hidden_remaining: int = 0  # 清完之後，目前隱藏中的 session 數
 
 
 def parse_duration(raw: str) -> float:
@@ -72,18 +76,59 @@ def run_gc(
     *, older_than: float = DEFAULT_OLDER_THAN_SECONDS, all_ended: bool = False, dry_run: bool = False
 ) -> GcResult:
     candidates = collect_candidates(older_than=older_than, all_ended=all_ended)
+    now = time.time()
+    hidden_now = hidden_sessions()
+    # 隱藏清單本來就空時，不必為了「找不到就清」去掃全部 source（省掉一輪 process/檔案掃描）。
+    known_ids = _known_session_ids() if hidden_now else set()
+    hidden_stale_preview = {
+        sid: hidden_at
+        for sid, hidden_at in hidden_now.items()
+        if sid not in known_ids or now - hidden_at >= older_than
+    }
+
+    if dry_run:
+        return GcResult(
+            candidates=candidates,
+            deleted=[],
+            errors=[],
+            dry_run=True,
+            hidden_stale=sorted(hidden_stale_preview),
+            hidden_remaining=len(hidden_now) - len(hidden_stale_preview),
+        )
+
     deleted: list[GcCandidate] = []
     errors: list[tuple[GcCandidate, str]] = []
-    if dry_run:
-        return GcResult(candidates=candidates, deleted=deleted, errors=errors, dry_run=True)
-
     for candidate in candidates:
         try:
             candidate.path.unlink(missing_ok=True)
             deleted.append(candidate)
         except OSError as e:
             errors.append((candidate, str(e)))
-    return GcResult(candidates=candidates, deleted=deleted, errors=errors, dry_run=False)
+
+    removed = prune_hidden_sessions(known_ids=known_ids, older_than=older_than, now=now) if hidden_stale_preview else {}
+    return GcResult(
+        candidates=candidates,
+        deleted=deleted,
+        errors=errors,
+        dry_run=False,
+        hidden_stale=sorted(removed),
+        hidden_remaining=len(hidden_sessions()),
+    )
+
+
+def _known_session_ids() -> set[str]:
+    """目前任何已註冊來源（不管有沒有被手動隱藏）找得到的 session id。
+
+    只用來判斷隱藏清單裡的條目是不是「哪裡都找不到了」；不碰、不引用
+    ``discover_sessions()`` 的 merge / tmux 配對邏輯。
+    """
+    from ring.sources import sources as _registered_sources
+
+    ids: set[str] = set()
+    for source in _registered_sources():
+        for s in source.discover():
+            ids.add(s.session_id)
+    return ids
 
 
 def _registry_candidates(*, older_than: float, all_ended: bool, now: float) -> list[GcCandidate]:

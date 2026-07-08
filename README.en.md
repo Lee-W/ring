@@ -127,7 +127,7 @@ Completes subcommands, flags, and `config set` keys.
 ## Watch Mode
 
 - With **Textual** (`[tui]` extra) in a real terminal: interactive TUI.
-  Use `↑/↓` to select, `Enter` / `Space` to jump, `n` to name a session, `a` to toggle ended sessions, `r` to refresh, and `q` to quit.
+  Use `↑/↓` to select, `Enter` / `Space` to jump, `n` to name a session, `a` to toggle ended sessions, `dd` to hide a session (it reappears automatically once it has new activity), `r` to refresh, and `q` to quit.
   If you have vim muscle memory like I do, `j/k` move up/down and `g/G` jump to the first/last row.
   When the selected row is 🔴 waiting, a line under the table shows **what it is concretely waiting for** (the command to run, the question asked; hook mode only).
 - Otherwise: Rich polling; without Rich, plain text.

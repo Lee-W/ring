@@ -8,7 +8,7 @@ from ring.i18n import set_lang
 
 
 @pytest.fixture(autouse=True)
-def _reset_lang(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def _reset_lang(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     """每個 test 清掉 RING_LANG / LANG 並重設語言。
 
     這樣預設確定是台灣漢語、與執行環境的 locale 無關（CI runner 常設 LANG=en_US，
@@ -17,6 +17,7 @@ def _reset_lang(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv("RING_LANG", raising=False)
     monkeypatch.delenv("LANG", raising=False)
     monkeypatch.setattr(registry, "CODEX_STATE", Path("/nonexistent/ring-test-codex-state.sqlite"))
+    monkeypatch.setattr(registry, "DELETED_SESSIONS", tmp_path / "deleted_sessions.json")
     set_lang(None)
     yield
     set_lang(None)

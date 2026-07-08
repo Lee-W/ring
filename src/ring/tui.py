@@ -3,12 +3,13 @@
 需要 textual（``pip install 'ring[tui]'``）。沒裝時 CLI 會自動退回 Rich poll。
 
 鍵：↑/↓（或 vim 的 j/k、g/G 跳頭尾）選 session、Enter/Space 跳到它所在的終端、
-a 切換是否顯示已離場、r 刷新、q 離場。
+a 切換是否顯示已離場、dd 隱藏 session（有新活動會自動重新出現）、r 刷新、q 離場。
 """
 
 from __future__ import annotations
 
 import os
+import time
 from typing import ClassVar
 
 from rich.text import Text
@@ -36,7 +37,7 @@ from ring.i18n import gettext as _
 from ring.i18n import set_lang
 from ring.ipc import clear_tui_presence, read_focus_request, write_tui_presence
 from ring.labels import get_label, load_labels, set_label
-from ring.registry import Session, Status, running_agent_pids
+from ring.registry import Session, Status, delete_session_state, hide_session, running_agent_pids
 from ring.watcher import WaitingAlertScheduler
 
 _ORDER = (Status.WAITING, Status.WORKING, Status.IDLE, Status.ENDED)
@@ -106,6 +107,7 @@ class RingApp(App[None]):
         Binding("r", "refresh_now", _("刷新")),
         Binding("a", "toggle_all", _("含已離場")),
         Binding("n", "name_session", _("命名")),
+        Binding("d", "delete_session", _("隱藏"), key_display="dd"),
         Binding("enter", "jump", _("跳過去")),
         Binding("space", "jump", _("跳過去"), show=False),
     ]
@@ -126,6 +128,8 @@ class RingApp(App[None]):
         self.title = "RiNG 🎤"
         # 記下自己的 controlling tty，供 _poll_focus_request activate 視窗用。
         self._own_tty: str = self._detect_own_tty()
+        self._delete_armed_sid: str | None = None
+        self._delete_armed_until: float = 0.0
 
     @staticmethod
     def _detect_own_tty() -> str:
@@ -191,6 +195,10 @@ class RingApp(App[None]):
 
     def _set_status(self, text: str) -> None:
         self.query_one("#status", Static).update(text)
+
+    def _clear_delete_armed(self) -> None:
+        self._delete_armed_sid = None
+        self._delete_armed_until = 0.0
 
     def _hooks_active(self) -> bool:
         return any(s.source == "hook" for s in self._sessions)
@@ -354,13 +362,16 @@ class RingApp(App[None]):
         self.push_screen(_NameModal(s.project, get_label(s.session_id)), _save)
 
     def action_refresh_now(self) -> None:
+        self._clear_delete_armed()
         self._reload()
 
     def action_toggle_all(self) -> None:
+        self._clear_delete_armed()
         self._show_all = not self._show_all
         self._reload()
 
     def action_jump(self) -> None:
+        self._clear_delete_armed()
         s = self._selected()
         if s is None:
             self._set_status(_("（沒有選到 session）"))
@@ -375,6 +386,34 @@ class RingApp(App[None]):
             text = _("{project}：{msg}", project=name, msg=msg)
         self._set_status(text)
         self.notify(text, severity="information" if ok else "warning", timeout=10)
+
+    def action_delete_session(self) -> None:
+        s = self._selected()
+        if s is None:
+            self._set_status(_("（沒有選到 session）"))
+            return
+
+        now = time.monotonic()
+        name = self._display_name(s)
+        if self._delete_armed_sid != s.session_id or now > self._delete_armed_until:
+            self._delete_armed_sid = s.session_id
+            self._delete_armed_until = now + 2.0
+            self._set_status(_("再按一次 d 隱藏 {project}（有新活動會自動重新出現）", project=name))
+            return
+
+        self._clear_delete_armed()
+        hide_session(s.session_id)
+        deleted = delete_session_state(s.session_id)
+        set_label(s.session_id, "")
+        if s.session_id == self._focused_sid:
+            self._focused_sid = None
+        text = (
+            _("已隱藏 {project}，並清掉 RiNG 狀態；有新活動會自動重新出現", project=name)
+            if deleted
+            else _("已隱藏 {project}（沒有 RiNG registry 可清；有新活動會自動重新出現）", project=name)
+        )
+        self._reload()
+        self._set_status(text)
 
 
 def run_tui(interval: float = 2.0, show_all: bool = False) -> int:

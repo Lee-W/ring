@@ -1,5 +1,6 @@
 import json
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -114,6 +115,78 @@ def test_gc_deletes_candidates(
 
     assert result.deleted[0].path == old
     assert not old.exists()
+
+
+def test_gc_prunes_hidden_sessions_not_found_or_too_old(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    deleted_path = tmp_path / "deleted_sessions.json"
+    now = time.time()
+    deleted_path.write_text(
+        json.dumps(
+            {
+                "keep-1": datetime.fromtimestamp(now - 10, UTC).isoformat(),  # 找得到、夠新 → 留
+                "gone-1": datetime.fromtimestamp(now - 10, UTC).isoformat(),  # 哪個 source 都找不到 → 清
+                "old-1": datetime.fromtimestamp(now - 1000, UTC).isoformat(),  # 找得到但超過保留期 → 清
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(registry, "DELETED_SESSIONS", deleted_path)
+    monkeypatch.setattr(gc, "_known_session_ids", lambda: {"keep-1", "old-1"})
+    monkeypatch.setattr(gc, "RING_REGISTRY", tmp_path / "missing")
+    monkeypatch.setattr(registry, "RING_REGISTRY", tmp_path / "missing")
+
+    result = gc.run_gc(older_than=100)
+
+    assert set(result.hidden_stale) == {"gone-1", "old-1"}
+    assert result.hidden_remaining == 1
+    assert registry.hidden_session_ids(path=deleted_path) == {"keep-1"}
+
+
+def test_gc_dry_run_previews_hidden_stale_without_removing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    deleted_path = tmp_path / "deleted_sessions.json"
+    now = time.time()
+    deleted_path.write_text(
+        json.dumps({"gone-1": datetime.fromtimestamp(now - 10, UTC).isoformat()}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(registry, "DELETED_SESSIONS", deleted_path)
+    monkeypatch.setattr(gc, "_known_session_ids", lambda: set())
+    monkeypatch.setattr(gc, "RING_REGISTRY", tmp_path / "missing")
+    monkeypatch.setattr(registry, "RING_REGISTRY", tmp_path / "missing")
+
+    result = gc.run_gc(older_than=100, dry_run=True)
+
+    assert result.hidden_stale == ["gone-1"]
+    # dry-run 只預覽，不真的清掉。
+    assert registry.hidden_session_ids(path=deleted_path) == {"gone-1"}
+
+
+def test_gc_skips_source_scan_when_nothing_hidden(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """隱藏清單本來就空 → 不該去真的掃 source（省一輪 process/檔案掃描）。"""
+    monkeypatch.setattr(registry, "DELETED_SESSIONS", tmp_path / "deleted_sessions.json")
+
+    def _boom() -> set[str]:
+        raise AssertionError("_known_session_ids 不該被呼叫")
+
+    monkeypatch.setattr(gc, "_known_session_ids", _boom)
+    monkeypatch.setattr(gc, "RING_REGISTRY", tmp_path / "missing")
+    monkeypatch.setattr(registry, "RING_REGISTRY", tmp_path / "missing")
+
+    result = gc.run_gc(older_than=100)
+
+    assert result.hidden_stale == []
+    assert result.hidden_remaining == 0
 
 
 def test_gc_collects_stale_ipc_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

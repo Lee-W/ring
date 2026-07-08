@@ -43,4 +43,19 @@ def run_gc(args: list[str]) -> int:
         print(f"{prefix}{candidate.path} ({candidate.reason})")
     for candidate, error in result.errors:
         print(f"  ! {candidate.path} ({error})", file=sys.stderr)
+
+    if result.hidden_stale:
+        hidden_action = _("將清掉") if result.dry_run else _("已清掉")
+        print(
+            _(
+                "隱藏清單：{action} {count} 筆過期／找不到的條目",
+                action=hidden_action,
+                count=len(result.hidden_stale),
+            )
+        )
+        for sid in result.hidden_stale:
+            prefix = "  - " if result.dry_run else "  ✓ "
+            print(f"{prefix}{sid}")
+    print(_("目前隱藏中：{count} 個 session", count=result.hidden_remaining))
+
     return 1 if result.errors else 0

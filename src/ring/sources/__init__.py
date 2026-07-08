@@ -32,15 +32,53 @@ def sources() -> list[SessionSource]:
 
 
 def discover_sessions() -> list[Session]:
-    """場館點名：彙整所有來源的 session，配 tmux 座標、排序（等你的排最上面）。"""
+    """場館點名：彙整所有來源的 session，配 tmux 座標、排序（等你的排最上面）。
+
+    手動隱藏（``dd``）的 session 預設不收進看板；但只要它在任一來源出現的
+    ``last_active`` 比隱藏當下還新，就代表它又活了——自動解除隱藏並照樣收進來，
+    這對所有來源都成立，不只裝了 hook 的 session。
+    """
     merged: dict[str, Session] = {}
     for source in _SOURCES:
         for s in source.discover():
             current = merged.get(s.session_id)
             merged[s.session_id] = s if current is None else _merge_duplicate_session(current, s)
-    found = list(merged.values())
+
+    hidden = registry.hidden_sessions()
+    found: list[Session] = []
+    for s in merged.values():
+        hidden_at = hidden.get(s.session_id)
+        if hidden_at is None:
+            found.append(s)
+            continue
+        if s.last_active > hidden_at:
+            registry.unhide_session(s.session_id)
+            found.append(s)
+        # 否則：仍在隱藏保留期內、沒有新活動 → 不收進看板。
+
+    bound_targets = registry._tmux_pane_targets()
+    process_targets = registry._tmux_process_tree_targets(found)
     targets = registry._tmux_targets()
+    targets_by_cwd = registry._tmux_targets_by_cwd()
+    used_by_cwd: dict[str, int] = {}
     for s in found:
+        if s.tmux_pane:
+            if bound := bound_targets.get(s.tmux_pane):
+                s.tmux_target = bound
+                continue
+
+        if process_target := process_targets.get(s.session_id):
+            s.tmux_target = process_target
+            continue
+
+        cwd_targets = targets_by_cwd.get(s.cwd, [])
+        if len(cwd_targets) > 1:
+            idx = used_by_cwd.get(s.cwd, 0)
+            if idx < len(cwd_targets):
+                s.tmux_target = cwd_targets[idx]
+                used_by_cwd[s.cwd] = idx + 1
+                continue
+
         s.tmux_target = targets.get(s.cwd)
     found.sort(key=lambda s: (s.status.rank, s.idle_for))
     return found
