@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-07-07 19:20+0800\n"
+"POT-Creation-Date: 2026-07-08 09:40+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -291,41 +291,41 @@ msgstr ""
 msgid "重開 Codex session、並在它詢問時「信任」這個 hook，🔴 等你狀態才會精準起來（Codex 不會執行未信任的 hook）。"
 msgstr ""
 
-#: src/ring/hook.py:387
+#: src/ring/hook.py:399
 #, python-brace-format
 msgid "⚠️ 偵測到其他工具也掛在 {events}：{cmds}"
 msgstr ""
 
-#: src/ring/hook.py:388
+#: src/ring/hook.py:400
 msgid "它們會跟 RiNG 的通知重複觸發；要完全改用 RiNG，建議移除它們。"
 msgstr ""
 
-#: src/ring/hook.py:436 src/ring/hook.py:512
+#: src/ring/hook.py:448 src/ring/hook.py:524
 #, python-brace-format
 msgid "⚠️ {path} 不是合法 JSON，先處理它再來。"
 msgstr ""
 
-#: src/ring/hook.py:474
+#: src/ring/hook.py:486
 #, python-brace-format
 msgid "✅ RiNG hooks 已經裝過了，沒有變更。（{path}）"
 msgstr ""
 
-#: src/ring/hook.py:487
+#: src/ring/hook.py:499
 #, python-brace-format
 msgid "✅ 已註冊 RiNG hooks（{events}）到 {path}"
 msgstr ""
 
-#: src/ring/hook.py:506
+#: src/ring/hook.py:518
 #, python-brace-format
 msgid "ℹ️ {path} 不存在，沒有可移除的 hook。"
 msgstr ""
 
-#: src/ring/hook.py:533
+#: src/ring/hook.py:545
 #, python-brace-format
 msgid "ℹ️ 沒有找到 RiNG hook 條目，無需移除。（{path}）"
 msgstr ""
 
-#: src/ring/hook.py:537
+#: src/ring/hook.py:549
 #, python-brace-format
 msgid "✅ 已移除 RiNG hooks（{events}）從 {path}"
 msgstr ""
@@ -419,11 +419,11 @@ msgstr ""
 msgid "已隱藏 {project}（沒有 RiNG registry 可清；有新活動會自動重新出現）"
 msgstr ""
 
-#: src/ring/commands/completion.py:160
+#: src/ring/commands/completion.py:164
 msgid "用法：ring completion zsh|bash"
 msgstr ""
 
-#: src/ring/commands/completion.py:164
+#: src/ring/commands/completion.py:168
 #, python-brace-format
 msgid "不支援的 shell：{shell}（目前支援 zsh / bash）"
 msgstr ""
@@ -558,6 +558,25 @@ msgstr ""
 
 #: src/ring/commands/doctor.py:123
 msgid "完整生效值請看 `ring config`。"
+msgstr ""
+
+#: src/ring/commands/focus.py:23
+#, python-brace-format
+msgid " 等 {n} 筆"
+msgstr ""
+
+#: src/ring/commands/focus.py:26
+#, python-brace-format
+msgid "session id 前綴不唯一：{query}（符合：{matches}{more}）"
+msgstr ""
+
+#: src/ring/commands/focus.py:29 src/ring/commands/focus.py:43
+#, python-brace-format
+msgid "找不到 session：{query}"
+msgstr ""
+
+#: src/ring/commands/focus.py:34
+msgid "用法：ring focus SESSION_ID"
 msgstr ""
 
 #: src/ring/commands/gc.py:18

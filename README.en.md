@@ -91,7 +91,7 @@ Hooks only apply to new sessions, so restart Claude Code / Codex sessions after 
 | `ring --all` | Show ended sessions too |
 | `ring --no-legend` | Hide the legend |
 | `ring --lang zh-Hant` | Switch UI language |
-| `ring focus SESSION_ID` | Focus a specific session |
+| `ring focus SESSION_ID` | Focus a specific session; unique prefixes work |
 | `ring config` | Show config path and effective settings |
 | `ring config set KEY VALUE` | Write one config value |
 | `ring doctor` | Read-only environment diagnosis |
@@ -122,7 +122,7 @@ eval "$(ring completion zsh)"
 eval "$(ring completion bash)"
 ```
 
-Completes subcommands, flags, and `config set` keys.
+Completes subcommands, flags, and `config set` keys; `ring focus` prompts for a session id or unique prefix.
 
 ## Watch Mode
 
@@ -134,7 +134,9 @@ Completes subcommands, flags, and `config set` keys.
 
 ### Jump To A Session
 
-Select a session and press `Enter`. RiNG focuses the terminal where that session is running.
+Select a session and press `Enter`, or run `ring focus SESSION_ID` with a full id or unique prefix.
+RiNG focuses the terminal where that session is running. If the TUI is already open, `ring focus`
+hands the request to the TUI so it selects that session; otherwise it focuses the terminal directly.
 
 - **tmux**: switches directly to the pane via `switch-client`.
 - **Neovim `:terminal`**: uses the terminal job's inherited `$NVIM` server socket to switch to the exact buffer, then lets the outer tmux or terminal focuser raise its pane/window.

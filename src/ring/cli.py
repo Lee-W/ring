@@ -555,7 +555,7 @@ def main(argv: list[str] | None = None) -> int:
         return run_stats(raw[1:])
     if raw and raw[0] == "completion":
         return run_completion(raw[1:])
-    if raw and raw[0] == "focus" and len(raw) >= 2:
+    if raw and raw[0] == "focus":
         return run_focus(raw[1:])
 
     parser = argparse.ArgumentParser(
