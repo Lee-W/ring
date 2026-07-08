@@ -6,7 +6,9 @@ session 需要你回話時，它「響鈴」叫你。
 
 from importlib.metadata import PackageNotFoundError, version
 
+__distribution__ = "ring-cli"
+
 try:
-    __version__ = version("ring")
+    __version__ = version(__distribution__)
 except PackageNotFoundError:  # 直接從原始碼跑、尚未安裝
     __version__ = "0.0.0+dev"
