@@ -81,14 +81,17 @@ def _select_notifier(backend: str) -> Notifier | None:
     return clickable[0] if clickable else available[0]
 
 
-def notify_waiting(sessions: list[Session]) -> str | None:
-    """對一批「新轉為等你」的 session 發系統通知。
+def _dispatch(sessions: list[Session]) -> str | None:
+    """共用發送流程：選後端、送、加發 notify_also，必要時回傳一次性安裝引導。
+
+    每則通知的標題／內文會依 ``session.status`` 分流（見 ``notify/base.py``），
+    所以 waiting 與 idle 共用這一條路徑，只差呼叫端傳進來的 session 狀態。
 
     依 config ``notify_backend`` 選一個 notifier 後端發送（見 ``_select_notifier``）。
     auto 模式下若只選到不支援點擊的後端、且在 macOS 上，回傳一次性的安裝引導字串
     （建議裝 terminal-notifier 取得點擊跳轉）；其餘情況回 ``None``。失敗一律安靜吞掉。
 
-    :param sessions: 新轉為 waiting 的 session 清單；空清單時直接回傳。
+    :param sessions: 要發通知的 session 清單；空清單時直接回傳。
     :returns: 安裝引導提示字串或 ``None``。
     """
     if not sessions:
@@ -108,6 +111,16 @@ def notify_waiting(sessions: list[Session]) -> str | None:
     if backend == "auto" and not notifier.supports_click() and sys.platform == "darwin":
         return _maybe_show_install_hint()
     return None
+
+
+def notify_waiting(sessions: list[Session]) -> str | None:
+    """對一批「新轉為等你」的 session 發系統通知。見 ``_dispatch`` 的回傳語義。"""
+    return _dispatch(sessions)
+
+
+def notify_idle(sessions: list[Session]) -> str | None:
+    """對一批「首次超過閒置門檻」的 session 發系統通知。見 ``_dispatch`` 的回傳語義。"""
+    return _dispatch(sessions)
 
 
 def _send_also(sessions: list[Session], also: tuple[str, ...], primary: Notifier | None) -> None:
@@ -144,4 +157,4 @@ def _maybe_show_install_hint() -> str | None:
         return None
 
 
-__all__ = ["Notifier", "notifiers", "notify_waiting", "register_notifier"]
+__all__ = ["Notifier", "notifiers", "notify_idle", "notify_waiting", "register_notifier"]

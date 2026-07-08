@@ -10,7 +10,7 @@ from typing import Protocol
 
 from ring.i18n import gettext as _
 from ring.labels import get_label
-from ring.registry import Session
+from ring.registry import Session, Status
 
 
 class Notifier(Protocol):
@@ -38,6 +38,8 @@ def display_name(session: Session) -> str:
 
 def notify_title(session: Session) -> str:
     """通知標題——「哪個 session 在等你」，全後端共用一句。"""
+    if session.status is Status.IDLE:
+        return _("RiNG · {project} 已閒置", project=display_name(session))
     return _("RiNG · {project} 在等你回話", project=display_name(session))
 
 
@@ -47,4 +49,13 @@ def notify_message(session: Session) -> str:
     標題已經說了「誰在等你」，內文就補「等什麼、去哪」，讓你看一眼就能決定要不要現在回去。
     """
     location = f"📍 {session.location}"
+    if session.status is Status.IDLE:
+        return _("已閒置 {duration}", duration=_idle_duration(session.idle_for)) + f"\n{location}"
     return f"{session.waiting_detail}\n{location}" if session.waiting_detail else location
+
+
+def _idle_duration(seconds: float) -> str:
+    s = int(max(0, seconds))
+    if s < 3600:
+        return f"{s // 60}m"
+    return f"{s // 3600}h{(s % 3600) // 60:02d}m"

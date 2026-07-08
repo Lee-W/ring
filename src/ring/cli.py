@@ -33,10 +33,12 @@ from ring.config import get_config as get_config
 from ring.config import set_value as set_value
 from ring.i18n import gettext as _
 from ring.i18n import ngettext, set_lang
+from ring.ipc import read_tui_presence
 from ring.labels import load_labels
 from ring.plugins import load_plugins
 from ring.registry import Session, Status, running_agent_pids
 from ring.sources import discover_sessions
+from ring.watcher import IdleAlertScheduler
 
 try:
     from rich.box import SIMPLE_HEAD
@@ -400,15 +402,33 @@ def run_config(args: list[str]) -> int:
 
 
 def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int:
-    # 系統通知由 ``ring hook`` 在 session 轉 🔴 等你的當下就地發出（見 hook._ring_waiting_now）；
-    # watch 只負責顯示看板，不再輪詢發通知——這樣關掉看板也照樣 ring 你。
+    # 🔴 等你的通知由 ``ring hook`` 在 session 轉態的當下就地發出（見 hook._ring_waiting_now），
+    # 這樣關掉看板也照樣 ring 你；watch 迴圈額外負責輪詢發 🟡 閒置提醒——
+    # 閒置是時間累積出來的，沒有事件可掛，只能靠輪詢偵測。
     frames = 0
     footer_text = _("每 {interval}s 刷新 · Ctrl-C 離場", interval=int(interval))
+    idle_alerts = IdleAlertScheduler(get_config().idle_threshold_seconds)
+
+    def _notify_idle_alerts(sessions: list[Session]) -> None:
+        # scheduler 照常 feed 讓狀態持續前進；但若 TUI（ring tui）也開著，
+        # 就讓它去發、watch 這邊不重複發系統通知——否則同一 session 會被兩個行程各響一次。
+        # 已標記為 due 的 session 在這裡仍算「提醒過」，所以 TUI 關掉後 watch 不會補發。
+        alerts = idle_alerts.feed(sessions)
+        if not alerts or read_tui_presence() is not None:
+            return
+        try:
+            from ring.notify import notify_idle
+
+            notify_idle(alerts)
+        except Exception:
+            pass
+
     if not HAVE_RICH:
         try:
             while True:
                 sys.stdout.write("\033[2J\033[H")
                 sessions = board(show_all)
+                _notify_idle_alerts(sessions)
                 print(_render_plain(sessions, show_legend, show_tool_column(sessions)))
                 print(f"\n{footer_text}")
                 sys.stdout.flush()
@@ -424,6 +444,7 @@ def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int
         with Live(console=console, screen=True, auto_refresh=False) as live:
             while True:
                 sessions = board(show_all)
+                _notify_idle_alerts(sessions)
                 body = _rich_renderable(sessions, show_legend, show_tool_column(sessions))
                 live.update(Group(body, Text(f"\n{footer_text}", style=_MUTED)), refresh=True)
                 frames += 1
