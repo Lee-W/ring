@@ -160,11 +160,6 @@ zero-config 下每個專案只開一個 session 時也對得上。Codex 沒裝 h
 開著 TUI 時，若它一直停在等你，TUI 還會在 30s / 120s / 300s 各補一次 in-app 響鈴提醒。
 （zero-config 測不到「等你」，所以這個需要 hook 模式。）
 
-另一種提醒是 🟡 **閒置太久**（`idle_threshold_seconds`，預設 2h）：session 停在閒置超過門檻就通知一次。
-但閒置和「等你」不同——它是時間累積出來的、沒有事件可掛 hook，只能靠輪詢偵測，所以**只有在
-`ring watch` 或 TUI 開著時才會發**；兩者同時開時只由其中一個發、不重複。若把看板全關掉，閒置提醒
-就不會響（但「等你」照樣響，那條走 hook）。這是刻意的取捨：閒置是次要訊號，不值得為它常駐一支背景程序。
-
 macOS 上若要點通知後直接跳回 RiNG TUI 並選中那個 session，需要安裝
 [terminal-notifier](https://github.com/julienXX/terminal-notifier)（brew 外部 binary）：
 
@@ -381,7 +376,6 @@ legend = true                    # 是否預設顯示圖例
 active_window_seconds = 21600    # 只看最近這段時間動過的 session（預設 6h）
 working_threshold_seconds = 90   # 多久沒動 → 🟢 工作中 變 🟡 閒置
 waiting_window_seconds = 1800    # 跑完停著升等你的時間窗上限（預設 30 分）
-idle_threshold_seconds = 7200    # 🟡 閒置多久後提醒一次（預設 2h；0 = 關閉）
 notify_sound = true              # 系統通知是否播放聲音
 notify_sound_name = "Glass"      # macOS / terminal-notifier sound name
 notify_ignore_dnd = false        # macOS terminal-notifier 是否穿透勿擾 / Focus

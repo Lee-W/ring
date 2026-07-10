@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ring.registry import Session, Status
-from ring.watcher import IdleAlertScheduler, WaitingAlertScheduler, WaitingWatcher
+from ring.watcher import WaitingAlertScheduler, WaitingWatcher
 
 
 def _s(sid: str, status: Status) -> Session:
@@ -124,44 +124,6 @@ class TestWaitingAlertScheduler:
         result = scheduler.feed([_s("a", Status.WAITING)])
 
         assert [s.session_id for s in result] == ["a"]
-
-
-class TestIdleAlertScheduler:
-    def test_prime_does_not_alert_existing_idle(self) -> None:
-        clock = _Clock()
-        scheduler = IdleAlertScheduler(60, now=clock)
-        assert scheduler.feed([_s("a", Status.IDLE)]) == []
-
-    def test_idle_alerts_once_after_threshold(self) -> None:
-        clock = _Clock()
-        scheduler = IdleAlertScheduler(60, now=clock)
-        session = _s("a", Status.IDLE)
-        session.last_active = 0
-        scheduler.feed([_s("b", Status.WORKING)])
-
-        clock.advance(61)
-        assert [s.session_id for s in scheduler.feed([session])] == ["a"]
-        assert scheduler.feed([session]) == []
-
-    def test_leaving_idle_resets_alert(self) -> None:
-        clock = _Clock()
-        scheduler = IdleAlertScheduler(60, now=clock)
-        session = _s("a", Status.IDLE)
-        session.last_active = 0
-        scheduler.feed([_s("a", Status.WORKING)])
-        clock.advance(61)
-        scheduler.feed([session])
-        scheduler.feed([_s("a", Status.WORKING)])
-
-        assert [s.session_id for s in scheduler.feed([session])] == ["a"]
-
-    def test_zero_threshold_disables_alerts(self) -> None:
-        clock = _Clock()
-        scheduler = IdleAlertScheduler(0, now=clock)
-        session = _s("a", Status.IDLE)
-        session.last_active = 0
-        clock.advance(3600)
-        assert scheduler.feed([session]) == []
 
     def test_repeat_max_limits_repeats(self) -> None:
         clock = _Clock()

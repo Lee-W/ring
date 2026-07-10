@@ -105,33 +105,3 @@ class WaitingAlertScheduler:
         if state.repeats_sent < len(self._repeat_seconds):
             return now - state.first_seen >= self._repeat_seconds[state.repeats_sent]
         return now - state.last_alert >= self._repeat_seconds[-1]
-
-
-class IdleAlertScheduler:
-    """🟡 閒置提醒：超過門檻只通知一次，離開 idle 後 reset。"""
-
-    def __init__(self, threshold_seconds: int, *, now: Callable[[], float] = time.time) -> None:
-        self._threshold_seconds = max(0, threshold_seconds)
-        self._now = now
-        self._alerted: set[str] = set()
-        self._primed = False
-
-    def feed(self, sessions: list[Session]) -> list[Session]:
-        current = {s.session_id: s for s in sessions if s.status is Status.IDLE}
-        if not self._threshold_seconds:
-            self._alerted = set(current)
-            self._primed = True
-            return []
-
-        due = [
-            s
-            for sid, s in current.items()
-            if sid not in self._alerted and self._now() - s.last_active >= self._threshold_seconds
-        ]
-        current_ids = set(current)
-        if not self._primed:
-            self._alerted = current_ids
-            self._primed = True
-            return []
-        self._alerted = (self._alerted & current_ids) | {s.session_id for s in due}
-        return due

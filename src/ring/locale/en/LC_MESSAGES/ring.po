@@ -124,9 +124,6 @@ msgstr "↑/↓ to select, Enter or Space to jump to its terminal"
 msgid "🔔 {names} 在等你回話"
 msgstr "🔔 {names} waiting for your reply"
 
-msgid "🟡 {names} 已閒置"
-msgstr "🟡 {names} has gone idle"
-
 msgid "（沒有選到 session）"
 msgstr "(no session selected)"
 
@@ -198,14 +195,8 @@ msgid "✅ 已移除 RiNG hooks（{events}）從 {path}"
 msgstr "✅ Removed RiNG hooks ({events}) from {path}"
 
 # ── notify 文案明確化 ──
-msgid "RiNG · {project} 已閒置"
-msgstr "RiNG · {project} has gone idle"
-
 msgid "RiNG · {project} 在等你回話"
 msgstr "RiNG · {project} is waiting for you"
-
-msgid "已閒置 {duration}"
-msgstr "Idle for {duration}"
 
 msgid "{project} · …/{tail}"
 msgstr "{project} · …/{tail}"

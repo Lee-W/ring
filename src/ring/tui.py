@@ -38,7 +38,7 @@ from ring.i18n import set_lang
 from ring.ipc import clear_tui_presence, read_focus_request, write_tui_presence
 from ring.labels import get_label, load_labels, set_label
 from ring.registry import Session, Status, delete_session_state, hide_session, running_agent_pids
-from ring.watcher import IdleAlertScheduler, WaitingAlertScheduler
+from ring.watcher import WaitingAlertScheduler
 
 _ORDER = (Status.WAITING, Status.WORKING, Status.IDLE, Status.ENDED)
 
@@ -126,7 +126,6 @@ class RingApp(App[None]):
         self._focused_sid: str | None = None
         cfg = get_config()
         self._alerts = WaitingAlertScheduler(cfg.notify_repeat_seconds, cfg.notify_repeat_max)
-        self._idle_alerts = IdleAlertScheduler(cfg.idle_threshold_seconds)
         self.title = "RiNG 🎤"
         # 記下自己的 controlling tty，供 _poll_focus_request activate 視窗用。
         self._own_tty: str = self._detect_own_tty()
@@ -227,18 +226,6 @@ class RingApp(App[None]):
             names = ", ".join(sorted(self._display_name(s) for s in alerts))
             self.notify(_("🔔 {names} 在等你回話", names=names), timeout=8)
 
-    def _ring_on_idle_alerts(self, alerts: list[Session]) -> None:
-        if not alerts:
-            return
-        try:
-            from ring.notify import notify_idle
-
-            notify_idle(alerts)
-        except Exception:
-            pass
-        names = ", ".join(sorted(self._display_name(s) for s in alerts))
-        self.notify(_("🟡 {names} 已閒置", names=names), timeout=8)
-
     def _activate_own_window(self) -> None:
         """把 RiNG 自己的終端視窗帶到前景（best-effort，失敗安靜吞）。
 
@@ -310,7 +297,6 @@ class RingApp(App[None]):
         # 這裡只留 TUI 自己的 in-app 響鈴 / 訊息列與醒目標記，不重複發系統通知。
         alerts = self._alerts.feed(self._sessions)
         self._ring_on_waiting_alerts(alerts)
-        self._ring_on_idle_alerts(self._idle_alerts.feed(self._sessions))
         self.sub_title = _header(len(self._sessions), len(running_agent_pids()))
         labels = load_labels()
         table.clear()
