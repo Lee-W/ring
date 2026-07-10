@@ -1,3 +1,14 @@
+## 0.10.0 (2026-07-10)
+
+### Feat
+
+- per-session cooldown for waiting notifications
+
+### Fix
+
+- live session marked ended after cd into subdirectory
+- ghost sessions from bg-spare warm-up processes
+
 ## 0.9.0 (2026-07-10)
 
 ### BREAKING CHANGE
