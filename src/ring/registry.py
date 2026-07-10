@@ -620,6 +620,30 @@ def _real(path: str) -> str:
         return path
 
 
+def _is_ancestor_dir(ancestor: str, path: str) -> bool:
+    """``ancestor`` 是否為 ``path`` 本身或其祖先目錄（兩者皆須已用 ``_real`` 正規化）。
+
+    純字串 ``startswith`` 裸比對會誤判 ``/foo`` 命中 ``/foobar``；用尾斜線組出前綴
+    （或直接相等）才能正確界定「目錄」邊界。
+    """
+    if not ancestor or not path:
+        return False
+    if ancestor == path:
+        return True
+    prefix = ancestor if ancestor.endswith(os.sep) else ancestor + os.sep
+    return path.startswith(prefix)
+
+
+def _has_ancestor_live_process(row_cwd: str, live_cwds: list[str]) -> bool:
+    """``live_cwds`` 裡是否有任一筆是 ``row_cwd`` 本身或其祖先目錄。
+
+    用於：使用者在 session 裡 cd 進子目錄後，hook payload 記的 cwd 變成子目錄，但
+    claude process 實際 cwd（lsof 量到的）仍停在啟動目錄——子目錄底下量不到 live
+    process，不代表 session 已離場，只是 process 沒跟著 cd。
+    """
+    return any(_is_ancestor_dir(live_cwd, row_cwd) for live_cwd in live_cwds)
+
+
 def _pid_tty(pid: int) -> str:
     """claude process 的控制終端，正規化成 iTerm2 認得的 "/dev/ttysNNN"。"""
     try:
@@ -1000,13 +1024,16 @@ def _hook_sessions(
     if out:
         proc_counts: dict[tuple[str, str], int] = {}
         proc_ttys: dict[tuple[str, str], set[str]] = {}
+        proc_cwds_by_provider: dict[str, list[str]] = {}
         for pk in _PROVIDER_PROCS:
             provider_procs = procs_by_provider.get(pk, []) if procs_by_provider is not None else (procs or [])
             for cwd, tty in provider_procs:
-                key = (pk, _real(cwd))
+                real_cwd = _real(cwd)
+                key = (pk, real_cwd)
                 proc_counts[key] = proc_counts.get(key, 0) + 1
                 if tty:
                     proc_ttys.setdefault(key, set()).add(tty)
+                proc_cwds_by_provider.setdefault(pk, []).append(real_cwd)
 
         rows_by_key: dict[tuple[str, str], list[Session]] = {}
         for s in out:
@@ -1018,6 +1045,14 @@ def _hook_sessions(
         for key, rows in rows_by_key.items():
             live_n = proc_counts.get(key, 0)
             if live_n == 0:
+                pk, row_cwd = key
+                if _has_ancestor_live_process(row_cwd, proc_cwds_by_provider.get(pk, [])):
+                    # hook payload 的 cwd 落在使用者 cd 進去的子目錄，但 claude process 實際
+                    # cwd（lsof 量到的）仍停在啟動目錄——兩者都正規化過，子目錄底下自然量不到
+                    # live proc。祖先目錄有活 process 時保守判定「還活著」，不殺，避免把正常
+                    # cd 進子目錄的 session 誤判 ENDED（見
+                    # test_hook_sessions_keeps_live_session_when_cwd_moved_to_subdir）。
+                    continue
                 for s in rows:
                     s.status = Status.ENDED
                 continue

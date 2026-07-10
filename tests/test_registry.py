@@ -565,6 +565,48 @@ def test_hook_sessions_ends_stale_tty_even_when_same_cwd_has_live_proc(
     assert by_id["live"].status is Status.WAITING
 
 
+def test_hook_sessions_keeps_live_session_when_cwd_moved_to_subdir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """使用者在 session 裡 cd 進子目錄後，hook payload 的 cwd 變成子目錄，但 claude
+    process 實際 cwd（lsof 量到的）仍停在啟動目錄——子目錄底下量不到 live process，
+    不該因此被判離場；祖先目錄有活 process 時要保守判定「還活著」。
+    """
+    project = tmp_path / "work" / "app"
+    sub = project / "sub" / "dir"
+    sub.mkdir(parents=True)
+
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(registry_dir, "alive", str(sub), "/dev/ttys001")
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+
+    # live proc 的 cwd 停在啟動目錄（祖先），不是 hook 記的子目錄
+    sessions = _hook_sessions([(str(project), "/dev/ttys001")])
+
+    assert sessions[0].status is Status.WAITING, "cd 進子目錄不該讓活著的 session 被判離場"
+
+
+def test_hook_sessions_ends_session_when_live_proc_cwd_is_unrelated_lookalike(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """祖先目錄比對不可用裸字串 startswith：``/work/app`` 不該誤判命中 ``/work/app-other``
+    底下的 row（兩者只是前綴字面相似，不是真正的父子目錄關係）。
+    """
+    project = tmp_path / "work" / "app"
+    lookalike_sub = tmp_path / "work" / "app-other" / "sub"
+    lookalike_sub.mkdir(parents=True)
+    project.mkdir(parents=True)
+
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(registry_dir, "gone", str(lookalike_sub), "/dev/ttys001")
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+
+    # 唯一 live proc 的 cwd 是字面相似但非祖先的目錄
+    sessions = _hook_sessions([(str(project), "/dev/ttys001")])
+
+    assert sessions[0].status is Status.ENDED, "字面相似但非祖先目錄不該被誤判為活著"
+
+
 def test_hook_sessions_matches_live_proc_through_symlink(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """hook cwd 是 symlink 路徑、live proc cwd 是 realpath 時，仍要對得上、不誤判離場。
 
