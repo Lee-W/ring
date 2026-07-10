@@ -132,6 +132,29 @@ def test_running_claude_pids_ignores_daemon_and_bg_pty(monkeypatch: pytest.Monke
     assert running_claude_pids() == [103]
 
 
+def test_running_claude_pids_ignores_bg_spare(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``claude ... --bg-spare <token>`` 是 Claude Code 預熱的備用 process，不是使用者 session。
+
+    token 形狀（``--bg-spare`` 為 ``--`` 前綴 flag，非位置參數）取自本機 claude CLI 2.1.206
+    二進位 strings 掃描：spawn 呼叫 ``[...,"--bg-pty-host",r,"200","50","--",...,"--bg-spare",n]``，
+    以及該 process 自己對 argv 做的 ``e.includes("--bg-spare", t+1)`` 檢查。
+    """
+
+    class Result:
+        stdout = "\n".join(
+            [
+                "  PID COMM ARGS",
+                (" 104 claude /Users/me/.local/share/claude/versions/2.1.206 --bg-spare tok123"),
+                " 105 claude claude --plugin-dir /work/app",
+            ]
+        )
+
+    monkeypatch.setattr("ring.registry._pids_cache", (-1.0, []))
+    monkeypatch.setattr("ring.registry.subprocess.run", lambda *args, **kwargs: Result())
+
+    assert running_claude_pids() == [105]
+
+
 def test_delete_session_state_removes_hook_registry_only(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

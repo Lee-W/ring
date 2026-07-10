@@ -545,11 +545,21 @@ def running_claude_pids() -> list[int]:
 
 
 def _is_claude_background_process(args: str) -> bool:
-    """Claude daemon / bg pty host 不是使用者可聚焦的 CLI session。"""
+    """Claude daemon / bg pty host / bg-spare 備用 process 不是使用者可聚焦的 CLI session。
+
+    ``--bg-spare`` 是 Claude Code 預熱的備用 process（供下一個 ``claude`` 呼叫快速接手），
+    跟 ``--bg-pty-host`` 一樣不代表真正的使用者 session，卻會被 ``_claude_procs`` 合成假
+    session 列上看板，冒出幽靈列。token 形狀（`--bg-spare`，`--` flag，不是位置參數）取自
+    本機 claude CLI 2.1.206 二進位的 strings 掃描（無法用 ``ps`` 現場逮到活體 bg-spare
+    process，掃描時機是巧合——它壽命短、隨用隨滅）：
+    ``[a,...l,"--bg-pty-host",r,"200","50","--",a,...l,"--bg-spare",n]`` spawn 呼叫，
+    以及 bg-spare process 自己啟動時對 ``process.argv`` 做的
+    ``e.includes("--bg-spare", t+1)`` 檢查，兩處都證實是 ``--`` 前綴的 flag token。
+    """
     tokens = args.split()
     if len(tokens) >= 3 and tokens[1:3] == ["daemon", "run"]:
         return True
-    return "--bg-pty-host" in tokens
+    return "--bg-pty-host" in tokens or "--bg-spare" in tokens
 
 
 def running_codex_pids() -> list[int]:
