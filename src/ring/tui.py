@@ -125,7 +125,9 @@ class RingApp(App[None]):
         # 通知點過來時指向的 session：那一列要持續醒目標記，直到它離開 WAITING（你回應了）或不在場。
         self._focused_sid: str | None = None
         cfg = get_config()
-        self._alerts = WaitingAlertScheduler(cfg.notify_repeat_seconds, cfg.notify_repeat_max)
+        self._alerts = WaitingAlertScheduler(
+            cfg.notify_repeat_seconds, cfg.notify_repeat_max, cooldown_seconds=cfg.waiting_cooldown_seconds
+        )
         self.title = "RiNG 🎤"
         # 記下自己的 controlling tty，供 _poll_focus_request activate 視窗用。
         self._own_tty: str = self._detect_own_tty()

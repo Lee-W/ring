@@ -169,7 +169,8 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
 
     unhide_session(event.session_id)
     path = RING_REGISTRY / f"{quote(event.session_id, safe=':')}.json"
-    prev_status = _previous_status(path)
+    prev_row = _previous_row(path)
+    prev_status = str(prev_row["status"]) if "status" in prev_row else None
     if event.status is Status.ENDED:
         path.unlink(missing_ok=True)  # 乾淨離場：直接消失
         if prev_status is not None and prev_status != Status.ENDED.value:
@@ -213,6 +214,19 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
     if tty:
         payload["tty"] = tty
 
+    # waiting 通知冷卻（防翻轉轟炸）：hook 是短命 process，冷卻狀態持久化在 registry row
+    # 的 waiting_notified_at（上次 waiting 通知的 epoch 時間戳）。離開 WAITING 也要把時間戳
+    # 帶進新 row（payload 每次重建，不帶會遺失），快速翻回 WAITING 時才判得出「還在冷卻期」。
+    # 舊 row 沒這欄位 = 從未通知過 → 照發。並發寫沿用既有 tmp+replace 的 last-write-wins。
+    last_notified = _as_epoch(prev_row.get("waiting_notified_at"))
+    if last_notified is not None:
+        payload["waiting_notified_at"] = last_notified
+    should_ring = False
+    if event.status is Status.WAITING:
+        should_ring = _waiting_ring_allowed(last_notified, now)
+        if should_ring:
+            payload["waiting_notified_at"] = now
+
     RING_REGISTRY.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload))
@@ -221,17 +235,35 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
     if prev_status != event.status.value:
         log_transition(event.session_id, event.provider, event.cwd, event.status.value)
 
-    if event.status is Status.WAITING:
+    if should_ring:
         _ring_waiting_now(event, payload, last_action)
 
 
-def _previous_status(path: Path) -> str | None:
-    """讀 registry 檔目前的狀態值（給轉換偵測用）；沒檔 / 壞檔回 None。"""
+def _previous_row(path: Path) -> dict[str, Any]:
+    """讀 registry 檔目前的內容（給轉換偵測與通知冷卻用）；沒檔 / 壞檔回空 dict。"""
     try:
         data = json.loads(path.read_text())
-        return str(data["status"])
+        return data if isinstance(data, dict) else {}
     except Exception:
-        return None
+        return {}
+
+
+def _as_epoch(v: Any) -> float | None:
+    """把 row 欄位值安全轉成 epoch float；缺欄位 / 型別不對回 None（視為從未通知）。"""
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def _waiting_ring_allowed(last_notified: float | None, now: float) -> bool:
+    """hook 的 waiting 通知是否放行：距上次通知未滿 ``waiting_cooldown_seconds`` 就不發。
+
+    背景 subagent 的權限請求會讓 session 以 30 秒～2 分鐘頻率在 working↔waiting 間翻轉，
+    每次轉入都發一則系統通知會轟炸使用者。cooldown=0 = 關閉（維持現行為：每次轉入都發）；
+    從未通知過（``last_notified`` 為 None，含舊版 row 沒有該欄位）一律放行。
+    """
+    cooldown = get_config().waiting_cooldown_seconds
+    if cooldown <= 0 or last_notified is None:
+        return True
+    return now - last_notified >= cooldown
 
 
 def _ring_waiting_now(event: Any, payload: dict[str, Any], last_action: str) -> None:

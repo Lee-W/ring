@@ -220,6 +220,96 @@ def test_non_waiting_event_does_not_notify_in_hook(monkeypatch: pytest.MonkeyPat
     assert spy.sent == []
 
 
+def test_waiting_flap_within_cooldown_suppresses_second_hook_notification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """反例：session 在 working↔waiting 間快速翻轉——冷卻期內第二次轉 waiting 不該再發系統通知。
+
+    背景 subagent 的權限請求會讓 session 以 30 秒～2 分鐘頻率翻轉；沒有冷卻期時，
+    每次轉入 waiting 都由 hook 發一則系統通知，轟炸使用者。
+    """
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    spy = _SpyNotifier()
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [spy])
+
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/proj"})
+    assert hook.run_hook() == 0
+    assert len(spy.sent) == 1
+
+    # 翻轉：權限請求自動解決 → 離開 waiting（Stop → idle）。時間戳要跟著帶進新 row。
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "Stop", "cwd": "/proj"})
+    assert hook.run_hook() == 0
+    row = json.loads((tmp_path / "s1.json").read_text())
+    assert "waiting_notified_at" in row, "離開 waiting 時要保留上次通知時間戳，否則冷卻判斷失憶"
+
+    # 幾秒內又翻回 waiting（遠小於預設 180 秒冷卻期）→ 不再發
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/proj"})
+    assert hook.run_hook() == 0
+
+    assert len(spy.sent) == 1, "冷卻期內再轉 waiting 不該再發一則系統通知"
+
+
+def test_waiting_realerts_after_cooldown_expired(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """距上次通知已滿冷卻期 → 再轉 waiting 照常發通知。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    spy = _SpyNotifier()
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [spy])
+
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/proj"})
+    assert hook.run_hook() == 0
+    assert len(spy.sent) == 1
+
+    # 把 row 的上次通知時間改成遠早於冷卻期（模擬時間流逝，不 patch 時鐘）
+    row_path = tmp_path / "s1.json"
+    row = json.loads(row_path.read_text())
+    row["waiting_notified_at"] = row["waiting_notified_at"] - 999.0
+    row_path.write_text(json.dumps(row))
+
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/proj"})
+    assert hook.run_hook() == 0
+
+    assert len(spy.sent) == 2, "冷卻期滿後再轉 waiting 要照常通知"
+    # 放行同時要把時間戳推進，下一輪冷卻從這次通知起算
+    new_ts = json.loads(row_path.read_text())["waiting_notified_at"]
+    assert new_ts > row["waiting_notified_at"]
+
+
+def test_waiting_cooldown_zero_notifies_every_transition(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """waiting_cooldown_seconds=0 = 關閉冷卻：每次轉 waiting 都發（現行為）。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    monkeypatch.setattr("ring.hook.get_config", lambda: Config(waiting_cooldown_seconds=0))
+    spy = _SpyNotifier()
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [spy])
+
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/proj"})
+    assert hook.run_hook() == 0
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "Stop", "cwd": "/proj"})
+    assert hook.run_hook() == 0
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/proj"})
+    assert hook.run_hook() == 0
+
+    assert len(spy.sent) == 2
+
+
+def test_waiting_notifies_when_legacy_row_lacks_timestamp_field(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """向後相容：舊版 row 沒有 waiting_notified_at 欄位 = 從未通知過 → 照發，並補上欄位。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    spy = _SpyNotifier()
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [spy])
+    (tmp_path / "s1.json").write_text(
+        json.dumps({"session_id": "s1", "provider": "claude-code", "cwd": "/proj", "status": "working"})
+    )
+
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/proj"})
+    assert hook.run_hook() == 0
+
+    assert len(spy.sent) == 1
+    row = json.loads((tmp_path / "s1.json").read_text())
+    assert isinstance(row.get("waiting_notified_at"), float)
+
+
 def test_ask_user_question_writes_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
     _feed(

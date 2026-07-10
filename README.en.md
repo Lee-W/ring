@@ -311,8 +311,14 @@ RiNG prefers clickable `terminal-notifier`, then falls back to `osascript` on ma
 on Linux. If none are available, RiNG keeps the board running and skips notifications.
 
 Config keys include `notify_sound`, `notify_sound_name`, `notify_ignore_dnd`,
-`notify_repeat_seconds`, `notify_repeat_max`, and `notify_backend`. Custom notification channels
-can be added by registering another `Notifier`.
+`notify_repeat_seconds`, `notify_repeat_max`, `notify_backend`, and `waiting_cooldown_seconds`.
+Custom notification channels can be added by registering another `Notifier`.
+
+Background subagent permission requests can make a session flap between waiting and working in
+quick succession. `waiting_cooldown_seconds` (180s by default) stops `ring hook`'s system
+notification and the TUI's bell/reminder from firing again the instant a session re-enters waiting
+within the cooldown window of its last alert; set it to `0` to disable the cooldown (alert on
+every re-entry, the old behavior).
 
 `agent-hooks` is an optional external hook helper / decision UI. If it is installed and
 `notify_backend = "agent-hooks"`, `ring hook` still writes RiNG registry state, then passes the
@@ -347,6 +353,7 @@ notify_ignore_dnd = false
 notify_backend = "auto"          # auto / terminal-notifier / osascript / notify-send / agent-hooks / none
 notify_repeat_seconds = [30, 120, 300]
 notify_repeat_max = 3
+waiting_cooldown_seconds = 180   # suppress an immediate re-alert on re-entering waiting within this window; 0 = off
 notify_ntfy_url = ""             # full ntfy topic URL enables phone push (e.g. https://ntfy.sh/my-topic)
 notify_webhook_url = ""          # URL enables the generic webhook backend (JSON POST)
 notify_also = []                 # extra backends fired besides the primary, e.g. ["ntfy"]

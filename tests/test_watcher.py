@@ -136,6 +136,7 @@ class TestWaitingAlertScheduler:
         assert scheduler.feed([_s("a", Status.WAITING)]) == []
 
     def test_leaving_waiting_resets_state(self) -> None:
+        """cooldown_seconds 預設 0（關閉）→ 保留舊行為：離開再轉回立即通知。"""
         clock = _Clock()
         scheduler = WaitingAlertScheduler((30,), 1, now=clock)
         scheduler.feed([_s("a", Status.WAITING)])
@@ -144,3 +145,93 @@ class TestWaitingAlertScheduler:
         result = scheduler.feed([_s("a", Status.WAITING)])
 
         assert [s.session_id for s in result] == ["a"]
+
+    def test_cooldown_suppresses_realert_when_flapping_back_into_waiting(self) -> None:
+        """反例：權限請求快速在 working/waiting 間翻轉——冷卻期內轉回 waiting 不該再響一次。
+
+        還原成沒有冷卻期的版本（不傳 cooldown_seconds）會在這裡紅：翻轉一次響一次。
+        """
+        clock = _Clock()
+        scheduler = WaitingAlertScheduler((30,), 1, now=clock, cooldown_seconds=180)
+        scheduler.feed([_s("a", Status.WORKING)])  # prime
+
+        result1 = scheduler.feed([_s("a", Status.WAITING)])
+        assert [s.session_id for s in result1] == ["a"]
+
+        clock.advance(20)
+        scheduler.feed([_s("a", Status.WORKING)])  # 翻轉：離開 waiting（PermissionRequest 解決）
+        clock.advance(5)
+        result2 = scheduler.feed([_s("a", Status.WAITING)])  # 25 秒後又翻回 waiting，仍在冷卻期內
+
+        assert result2 == [], "冷卻期內重新轉入 waiting 不該立即再通知"
+
+    def test_realert_after_cooldown_expires(self) -> None:
+        """冷卻期滿後才轉回 waiting → 視為真正的新轉入，照常立即通知。"""
+        clock = _Clock()
+        scheduler = WaitingAlertScheduler((30,), 1, now=clock, cooldown_seconds=180)
+        scheduler.feed([_s("a", Status.WORKING)])  # prime
+        scheduler.feed([_s("a", Status.WAITING)])
+
+        clock.advance(90)
+        scheduler.feed([_s("a", Status.WORKING)])
+        clock.advance(181)  # 冷卻期滿（累計早已 > 180 秒）
+        result = scheduler.feed([_s("a", Status.WAITING)])
+
+        assert [s.session_id for s in result] == ["a"]
+
+    def test_cooldown_tracks_state_and_repeat_logic_resumes_after_suppressed_realert(self) -> None:
+        """冷卻期內雖不通知，仍要建立 state 追蹤；持續 waiting 到 repeat 門檻照樣提醒。"""
+        clock = _Clock()
+        scheduler = WaitingAlertScheduler((30,), 1, now=clock, cooldown_seconds=180)
+        scheduler.feed([_s("a", Status.WORKING)])  # prime
+        scheduler.feed([_s("a", Status.WAITING)])
+
+        clock.advance(10)
+        scheduler.feed([_s("a", Status.WORKING)])
+        clock.advance(5)
+        suppressed = scheduler.feed([_s("a", Status.WAITING)])  # 冷卻期內，抑制
+        assert suppressed == []
+
+        clock.advance(30)  # 距這次「轉入」的 first_seen 已過 repeat_seconds[0]=30
+        result = scheduler.feed([_s("a", Status.WAITING)])
+
+        assert [s.session_id for s in result] == ["a"]
+
+    def test_cooldown_zero_keeps_legacy_behavior_explicitly(self) -> None:
+        """cooldown_seconds=0 明確關閉冷卻——即使剛通知過，立刻轉回也照樣立即再通知。"""
+        clock = _Clock()
+        scheduler = WaitingAlertScheduler((30,), 1, now=clock, cooldown_seconds=0)
+        scheduler.feed([_s("a", Status.WORKING)])  # prime
+        scheduler.feed([_s("a", Status.WAITING)])
+        scheduler.feed([_s("a", Status.WORKING)])
+
+        result = scheduler.feed([_s("a", Status.WAITING)])
+
+        assert [s.session_id for s in result] == ["a"]
+
+    def test_recently_alerted_table_is_pruned_after_cooldown_window(self) -> None:
+        """recently-alerted 表要隨冷卻期過期清理，不無界成長（多 session 長跑情境）。"""
+        clock = _Clock()
+        scheduler = WaitingAlertScheduler((30,), 1, now=clock, cooldown_seconds=60)
+        scheduler.feed([])  # prime
+
+        for i in range(50):
+            sid = f"s{i}"
+            scheduler.feed([_s(sid, Status.WAITING)])
+            scheduler.feed([_s(sid, Status.WORKING)])
+
+        # 早就超過 60 秒冷卻期，之前累積的條目該被清掉，不會一路累加到 50 筆。
+        clock.advance(1000)
+        scheduler.feed([_s("tail", Status.WAITING)])
+
+        assert len(scheduler._recently_alerted) < 50
+
+    def test_batched_alerts_returned_as_single_list_for_one_tick(self) -> None:
+        """同一輪 tick 多個 session 同時 due → 一次 feed() 回傳含所有名字的清單（合批），不是逐一回傳。"""
+        clock = _Clock()
+        scheduler = WaitingAlertScheduler((30,), 1, now=clock)
+        scheduler.feed([_s("a", Status.WORKING), _s("b", Status.WORKING)])  # prime
+
+        result = scheduler.feed([_s("a", Status.WAITING), _s("b", Status.WAITING)])
+
+        assert {s.session_id for s in result} == {"a", "b"}

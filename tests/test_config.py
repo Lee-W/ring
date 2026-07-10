@@ -37,6 +37,20 @@ def test_parses_values(tmp_path: Path) -> None:
     assert cfg.focusers == ("Terminal", "iTerm2")
 
 
+def test_waiting_cooldown_seconds_parses_and_defaults(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("waiting_cooldown_seconds = 60\n")
+    assert load(p).waiting_cooldown_seconds == 60
+    # 沒設 → 預設 180（非 0），確保新使用者一開始就有冷卻期保護，不是要手動開啟。
+    assert load(tmp_path / "nope.toml").waiting_cooldown_seconds == 180
+
+
+def test_waiting_cooldown_seconds_negative_clamped_to_zero(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("waiting_cooldown_seconds = -5\n")
+    assert load(p).waiting_cooldown_seconds == 0
+
+
 def test_notify_backend_parses_valid(tmp_path: Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text('notify_backend = "osascript"\n')
@@ -93,6 +107,7 @@ def test_set_value_coerces_types(tmp_path: Path) -> None:
     set_value("notify_ignore_dnd", "true", p)
     set_value("notify_repeat_max", "5", p)
     set_value("notify_repeat_seconds", "10, 20, 30", p)
+    set_value("waiting_cooldown_seconds", "90", p)
     set_value("focusers", "tmux, iTerm2", p)
     cfg = load(p)
     assert cfg.interval == 1.5
@@ -100,6 +115,7 @@ def test_set_value_coerces_types(tmp_path: Path) -> None:
     assert cfg.notify_ignore_dnd is True
     assert cfg.notify_repeat_max == 5
     assert cfg.notify_repeat_seconds == (10, 20, 30)
+    assert cfg.waiting_cooldown_seconds == 90
     assert cfg.focusers == ("tmux", "iTerm2")
 
 

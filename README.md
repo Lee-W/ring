@@ -337,7 +337,11 @@ RiNG 會優先相信這些欄位；沒有時才退回 event / notification type 
 退回 `osascript`（macOS）或 `notify-send`（Linux）。如果全部不可用，就只保留看板，不讓通知失敗打斷主流程。
 
 - **設定**：`notify_sound`、`notify_sound_name`、`notify_ignore_dnd`、`notify_repeat_seconds`、
-  `notify_repeat_max`、`notify_backend` 都可在 `~/.config/ring/config.toml` 調整。
+  `notify_repeat_max`、`notify_backend`、`waiting_cooldown_seconds` 都可在 `~/.config/ring/config.toml` 調整。
+- **防翻轉轟炸**：背景 subagent 的權限請求可能讓 session 在等你／工作中之間快速翻轉。
+  `waiting_cooldown_seconds`（預設 180 秒）讓 `ring hook` 的系統通知與 TUI 的響鈴／提醒，
+  在 session 離開等你又很快轉回時，距上次通知未滿冷卻期就不再立即發；設 `0` 關閉冷卻
+  （回到每次轉入都發）。
 - **點擊聚焦 + 聲音**：需先安裝 `terminal-notifier`（brew）。點擊通知後會直接跳回 RiNG TUI
   並選中 session；若沒有 TUI 在跑，則直接跳到對應終端。
 
@@ -382,6 +386,7 @@ notify_ignore_dnd = false        # macOS terminal-notifier 是否穿透勿擾 / 
 notify_backend = "auto"          # auto / terminal-notifier / osascript / notify-send / agent-hooks / none
 notify_repeat_seconds = [30, 120, 300]  # 持續等你時，幾秒後重複提醒
 notify_repeat_max = 3            # 重複提醒上限；0 = 不限
+waiting_cooldown_seconds = 180   # 離開等你又轉回時，距上次提醒未滿這段時間就不再立即提醒；0 = 關閉
 notify_ntfy_url = ""             # 設完整 ntfy topic URL 啟用手機推播（如 https://ntfy.sh/my-topic）
 notify_webhook_url = ""          # 設 URL 啟用通用 webhook 後端（JSON POST）
 notify_also = []                 # 主後端之外「加發」的後端，如 ["ntfy"]（桌面＋手機各一份）

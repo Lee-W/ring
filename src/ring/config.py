@@ -20,6 +20,8 @@
                                       #   "none" = 完全不發通知（RiNG 當純看板）
     notify_repeat_seconds = [30, 120, 300]  # 持續等你時，多久後重複提醒
     notify_repeat_max = 3             # 重複提醒上限；0 = 不限
+    waiting_cooldown_seconds = 180    # session 離開 WAITING 又轉回時，距上次提醒未滿這段時間就
+                                      #   不再當「新轉入」立即提醒（防翻轉轟炸）；0 = 關閉（現行為）
     notify_ntfy_url = "https://ntfy.sh/my-topic"   # 設了才啟用 ntfy 後端（推到手機）
     notify_webhook_url = "https://example.com/hook"  # 設了才啟用 webhook 後端（JSON POST）
     notify_also = ["ntfy"]            # 主後端之外「加發」的後端（例如桌面通知＋手機各一份）
@@ -69,6 +71,7 @@ class Config:
     notify_backend: str = "auto"
     notify_repeat_seconds: tuple[int, ...] = (30, 120, 300)
     notify_repeat_max: int = 3  # 0 = 不限
+    waiting_cooldown_seconds: int = 180  # 離開 WAITING 又轉回時的提醒冷卻期；0 = 關閉（現行為）
     notify_ntfy_url: str = ""  # 完整 ntfy topic URL；空＝ntfy 後端不可用
     notify_webhook_url: str = ""  # webhook URL；空＝webhook 後端不可用
     notify_also: tuple[str, ...] = ()  # 主後端之外加發的後端名（如 ["ntfy"]）
@@ -138,6 +141,7 @@ def load(path: Path | None = None) -> Config:
         notify_ignore_dnd=_as_bool(raw.get("notify_ignore_dnd"), d.notify_ignore_dnd),
         notify_repeat_seconds=_as_positive_int_tuple(raw.get("notify_repeat_seconds"), d.notify_repeat_seconds),
         notify_repeat_max=max(0, _as_int(raw.get("notify_repeat_max"), d.notify_repeat_max)),
+        waiting_cooldown_seconds=max(0, _as_int(raw.get("waiting_cooldown_seconds"), d.waiting_cooldown_seconds)),
         notify_backend=notify_backend,
         notify_ntfy_url=(raw["notify_ntfy_url"] if isinstance(raw.get("notify_ntfy_url"), str) else ""),
         notify_webhook_url=(raw["notify_webhook_url"] if isinstance(raw.get("notify_webhook_url"), str) else ""),
@@ -208,6 +212,7 @@ _SETTERS: dict[str, Callable[[str], object]] = {
     "notify_backend": str,
     "notify_repeat_seconds": _coerce_int_list,
     "notify_repeat_max": _coerce_int,
+    "waiting_cooldown_seconds": _coerce_int,
     "notify_ntfy_url": str,
     "notify_webhook_url": str,
     "notify_also": _coerce_str_list,
