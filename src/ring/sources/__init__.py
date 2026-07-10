@@ -91,6 +91,13 @@ def _merge_duplicate_session(current: Session, candidate: Session) -> Session:
     action-required 狀態之後未必會送出能清掉 waiting 的 hook；如果 zero-config scan
     已看到同一 session 有更新紀錄且不再是 WAITING，就用 scan 清掉 stale waiting，
     同時保留 hook 拿到的 tty，避免跳轉能力退化。
+
+    只看 last_active 先後還不夠：Claude Code 在送出需要權限的 tool_use 之後，會繼續
+    往同一份 transcript 追加幾筆非對話簿記紀錄（last-prompt / ai-title / mode /
+    permission-mode 等），這些紀錄一樣會推進檔案 mtime，但不代表使用者真的回應了
+    權限請求。因此還要求 candidate 的 ``_tail_kind`` 不是 ``"interrupted"``——
+    只有真人 prompt（"working"）或對話真的收尾（"waiting"）才算「使用者真的回應了」，
+    單純簿記寫入（tail 仍是 interrupted）不該觸發覆蓋。
     """
     if (
         current.source == "hook"
@@ -98,6 +105,7 @@ def _merge_duplicate_session(current: Session, candidate: Session) -> Session:
         and candidate.provider == current.provider
         and candidate.status is not Status.WAITING
         and candidate.last_active > current.last_active
+        and candidate._tail_kind != "interrupted"
     ):
         if not candidate.tty:
             candidate.tty = current.tty

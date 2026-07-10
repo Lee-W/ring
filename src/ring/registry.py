@@ -855,10 +855,24 @@ def _scan_sessions(procs: list[tuple[str, str]]) -> list[Session]:
     out: list[Session] = []
     for _cwd, group in by_cwd.items():
         group.sort(key=lambda s: s.last_active, reverse=True)
+        skey = _real(group[0].cwd)  # 同一 group 內 cwd 皆相同（by_cwd 就是照 s.cwd 分組）
+        live_n = counts.get(skey, 0)
+        ordered = group
+        if 0 < live_n < len(group):
+            # 曖昧情境：同 cwd 的 transcript 數多於 live claude 數，純 mtime 排名不可靠
+            # ——已崩潰的 session 若剛好在真正還活著、但已安靜一段時間的 session 之後
+            # 才寫入最後一筆，mtime 反而「更新」，會把真正活著的那個擠出 live_n 名額
+            # （見 session-detection-review.md 症狀 1）。若能從 tmux pane 子孫 process
+            # 的 args 找到明確提到 session id 的強訊號（比照 _tmux_process_tree_targets
+            # 用在 tmux_target 配對的同一套邏輯），優先信任它決定誰佔 live 名額；沒有這
+            # 種訊號（多數非 tmux／非 --resume 情境）就 fallback 回既有 mtime 排名。
+            confirmed = _tmux_process_tree_targets(group)
+            if confirmed:
+                front = [s for s in group if s.session_id in confirmed]
+                back = [s for s in group if s.session_id not in confirmed]
+                ordered = front + back
         # 同一 cwd 組內，各 session 依自己的當下 cwd 查 live 名額與 tty
-        for i, s in enumerate(group):
-            skey = _real(s.cwd)
-            live_n = counts.get(skey, 0)
+        for i, s in enumerate(ordered):
             # 當下 cwd 只有一個 claude 時，把它的 tty 給那個活著的 session（終端跳轉用）；
             # 多個 claude 同 cwd 無法精準對應，留給 hook 模式處理。
             uniq_tty = cwd_ttys[skey][0] if live_n == 1 and cwd_ttys.get(skey) else ""
@@ -966,10 +980,13 @@ def _hook_sessions(
             s.hook_stale = _hook_heartbeat_stale(s.source_path, s.heartbeat_at, s.status)
     # SessionEnd 沒觸發（crash）會留下幽靈檔。判定離場：
     #   1. 該 cwd 完全沒有 live proc → 一定離場。
-    #   2. 該 cwd 的 hook row 數「多於」live proc 數（真的有多餘列要修剪）時，才用 tty
-    #      挑出 tty 對不上的那幾筆標離場。row 數 <= proc 數時每筆都可能還活著，不靠 tty 殺
-    #      ——因為 hook 寫進來的 tty 不一定可靠（終端 tty 會被作業系統重配，甚至跨 session
-    #      錯置），拿它隱藏唯一活著的 session 會讓整列憑空消失。
+    #   2. 該 cwd 的 hook row 數「多於一筆」時，用 tty 挑出 tty 對不上的那幾筆標離場——
+    #      不論這筆數是否 <= live proc 數：計數只是巧合對上（例如同 cwd 剛好有跟 RiNG
+    #      hook 無關的 live process 佔掉名額），不代表每筆 row 都真的還活著；row 數 > 1
+    #      時 tty 交叉比對才有意義去挑出誰是 stale 的。
+    #   3. 該 cwd 只有「單一」hook row 時，無論 tty 是否對得上都不靠 tty 殺——hook 寫進來
+    #      的 tty 不一定可靠（終端 tty 會被作業系統重配，甚至跨 session 錯置），拿它隱藏
+    #      唯一活著的 session 會讓整列憑空消失。
     if out:
         proc_counts: dict[tuple[str, str], int] = {}
         proc_ttys: dict[tuple[str, str], set[str]] = {}
@@ -994,7 +1011,10 @@ def _hook_sessions(
                 for s in rows:
                     s.status = Status.ENDED
                 continue
-            if len(rows) <= live_n:
+
+            # 單筆 row：不靠 tty 殺，理由見上方註解 3——避免唯一活著的 session 因 tty
+            # 重配而憑空消失（test_hook_sessions_keeps_lone_live_session_with_wrong_tty）。
+            if len(rows) == 1:
                 continue
 
             live_ttys = proc_ttys.get(key, set())
@@ -1002,6 +1022,12 @@ def _hook_sessions(
                 for s in rows:
                     if s.tty and s.tty not in live_ttys:
                         s.status = Status.ENDED
+
+            if len(rows) <= live_n:
+                # 沒有多餘列要修剪，但上面的 tty 交叉比對仍然有效——即使計數巧合對上，
+                # tty 對不上的那幾筆（例如已 crash 的舊 row）還是會被標離場，不會永遠
+                # 靠計數巧合躲過清理。
+                continue
 
             remaining = [s for s in rows if s.status is not Status.ENDED]
             if len(remaining) > live_n:

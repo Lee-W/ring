@@ -68,6 +68,45 @@ def test_scan_marks_live_newest_and_ends_the_rest(monkeypatch: pytest.MonkeyPatc
     assert by_id["blog"].status is Status.ENDED  # cwd 沒有活著的 claude
 
 
+def test_scan_mtime_inversion_resolved_by_tmux_process_tree(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """已崩潰 session 的最後寫入時間比 still-alive-but-quiet session 更新時的反例（症狀 1）。
+
+    純 mtime 排名（見 test_scan_marks_live_newest_and_ends_the_rest）會把「最後一筆寫入
+    剛好比較新」的死掉 session 排到 index 0、拿到唯一的活著名額，真正還活著、但已經安靜
+    一陣子的 session 反而被推到 live_n 之外、判成 ENDED、從看板消失。
+
+    若能從 tmux pane 子孫 process 的 args 找到明確提到 session id 的強訊號（跟
+    _tmux_process_tree_targets 用在 tmux_target 配對的同一套邏輯），_scan_sessions
+    應該優先信任它決定誰佔 live 名額，而不是無條件相信 mtime 排名。
+    """
+    projects = tmp_path / "projects"
+    now = time.time()
+    # "crashed" 的 mtime 比 "alive-quiet" 新（模擬崩潰前最後動作剛好比 alive-quiet
+    # 安靜下來後的最後動作更近）——純排名下 crashed 會贏得唯一的活著名額。
+    _write_session(projects, "-work-app", "crashed", "/work/app", now - 10)
+    _write_session(projects, "-work-app", "alive-quiet", "/work/app", now - 500)
+
+    monkeypatch.setattr(registry, "CLAUDE_PROJECTS", projects)
+    monkeypatch.setattr(registry, "RING_REGISTRY", tmp_path / "noreg")
+    monkeypatch.setattr(registry, "_claude_procs", lambda: [("/work/app", "/dev/ttys020")])
+    monkeypatch.setattr(registry, "_tmux_targets", lambda: {})
+    monkeypatch.setattr(
+        registry,
+        "_tmux_panes",
+        lambda: [registry.TmuxPane("%1", "/work/app", "main:1.0", pane_pid=10)],
+    )
+    monkeypatch.setattr(
+        registry,
+        "_process_rows",
+        lambda: {10: (1, "zsh"), 11: (10, "claude --resume alive-quiet")},
+    )
+
+    by_id = {s.session_id: s for s in discover_sessions()}
+
+    assert by_id["alive-quiet"].status is not Status.ENDED, "真正活著的 session 不該被 mtime 排名擠掉"
+    assert by_id["crashed"].status is Status.ENDED, "已崩潰的 session 不該冒充活著"
+
+
 def test_scan_marks_recent_transcript_ended_without_live_proc(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """關掉整個終端後，就算 transcript 很新，也不能繼續冒充活 session。"""
     projects = tmp_path / "projects"

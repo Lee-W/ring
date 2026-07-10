@@ -628,6 +628,28 @@ def test_hook_sessions_caps_same_cwd_same_tty_rows_to_live_process_count(
     assert by_id["codex:new"].status is Status.WAITING
 
 
+def test_hook_sessions_len_leq_live_n_still_cross_checks_tty_when_multiple_rows(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """row 數 <= live 數的「fail-open」分支，row 數 > 1 時仍要用 tty 交叉比對。
+
+    症狀 1 次要成因反例：同 cwd 有一筆真正已 crash 的舊 hook row，剛好又有跟 RiNG hook
+    無關的 live process 佔掉同一 cwd 名額，計數「巧合」對上（row 數 == live 數）。
+    修復前這個分支完全跳過驗證，crash 掉的 row 永遠不會被判 ENDED；修復後 row 數 > 1
+    時仍比照 row 數 > live 數分支做 tty 交叉比對，tty 對不上的那筆才會被標離場。
+    """
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(registry_dir, "crashed", "/work/app", "/dev/ttys001")  # 舊 tty，已 crash
+    _write_hook_session(registry_dir, "alive", "/work/app", "/dev/ttys002")  # tty 對得上活著的 proc
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+
+    # 2 筆 row、2 個 live proc（巧合對上），但只有一個 tty 真的對得上其中一筆 row。
+    by_id = {s.session_id: s for s in _hook_sessions([("/work/app", "/dev/ttys002"), ("/work/app", "/dev/ttys003")])}
+
+    assert by_id["crashed"].status is Status.ENDED, "tty 對不上任何活著 proc 的舊 row 該被判離場"
+    assert by_id["alive"].status is Status.WAITING, "tty 對得上活著 proc 的 row 不該被誤殺"
+
+
 def test_hook_sessions_purges_session_start_source_phantom(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """provider 是 SessionStart source（startup 等）的腐壞檔 → 不顯示且自我刪除。"""
     registry_dir = tmp_path / "sessions"
