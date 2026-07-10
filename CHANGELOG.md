@@ -1,3 +1,17 @@
+## 0.9.0 (2026-07-10)
+
+### BREAKING CHANGE
+
+- the idle_threshold_seconds config option is removed
+
+### Feat
+
+- remove idle-too-long notifications
+
+### Fix
+
+- session liveness and waiting-state misdetection
+
 ## 0.8.1 (2026-07-08)
 
 ### Fix
