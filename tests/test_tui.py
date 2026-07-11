@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import DataTable
 
+import ring.permission as permission
 import ring.tui as tui
 from ring.registry import Session, Status
 
@@ -616,3 +617,103 @@ async def test_jump_oldest_waiting_hotkey_without_waiting(monkeypatch: pytest.Mo
     async with app.run_test() as pilot:
         await pilot.press("w")
         assert "session" in str(app.query_one("#status", Static).render()).lower()
+
+
+# ---------------------------------------------------------------------------
+# 就地回覆權限（p）
+# ---------------------------------------------------------------------------
+
+_PERM_FIXTURES = Path(__file__).parent / "fixtures" / "permission"
+
+
+def _perm_screen(name: str) -> str:
+    return (_PERM_FIXTURES / name).read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_permission_reply_without_tmux_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    """無 tmux 座標 → toast 拒絕、不 crash、不碰 tmux。"""
+    sessions = [Session("a", "/x/maigo", Status.WAITING, 0.0, "→ Bash", "hook")]  # tmux_target=None
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+    captured: list[str] = []
+    monkeypatch.setattr(permission, "capture_pane", lambda target: captured.append(target))
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        from textual.widgets import Static
+
+        assert "tmux" in str(app.query_one("#status", Static).render())
+        assert captured == []  # 連 capture 都不該發生
+
+
+@pytest.mark.asyncio
+async def test_permission_reply_no_dialog_on_screen(monkeypatch: pytest.MonkeyPatch) -> None:
+    """有座標但畫面上沒有權限對話框 → toast、不開浮層、不送鍵。"""
+    sessions = [Session("a", "/x/maigo", Status.WAITING, 0.0, "→ Bash", "hook", tmux_target="main:1.0")]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+    monkeypatch.setattr(permission, "capture_pane", lambda target: _perm_screen("no-dialog-after-reply.txt"))
+    sent: list[tuple[str, str]] = []
+    monkeypatch.setattr(permission, "send_key", lambda target, key: sent.append((target, key)))
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        assert not isinstance(app.screen, tui._PermissionModal)
+        assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_permission_reply_modal_lists_options_and_esc_cancels(monkeypatch: pytest.MonkeyPatch) -> None:
+    sessions = [Session("a", "/x/maigo", Status.WAITING, 0.0, "→ Bash", "hook", tmux_target="main:1.0")]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+    monkeypatch.setattr(permission, "capture_pane", lambda target: _perm_screen("dialog-bash.txt"))
+    replied: list[int] = []
+
+    def fake_reply(target: str, dialog: permission.PermissionDialog, number: int) -> permission.ReplyOutcome:
+        replied.append(number)
+        return permission.ReplyOutcome.OK
+
+    monkeypatch.setattr(permission, "send_permission_reply", fake_reply)
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        assert isinstance(app.screen, tui._PermissionModal)
+        from textual.widgets import OptionList
+
+        option_list = app.screen.query_one(OptionList)
+        assert option_list.option_count == 3
+        assert "1. Yes" in str(option_list.get_option_at_index(0).prompt)
+        await pilot.press("escape")  # 取消 → 不送
+        assert not isinstance(app.screen, tui._PermissionModal)
+        assert replied == []
+
+
+@pytest.mark.asyncio
+async def test_permission_reply_digit_key_sends_reply(monkeypatch: pytest.MonkeyPatch) -> None:
+    """浮層裡按數字鍵 → 以該編號呼叫 send_permission_reply（用 pane id 優先於 window 座標）。"""
+    sessions = [
+        Session("a", "/x/maigo", Status.WAITING, 0.0, "→ Bash", "hook", tmux_target="main:1.0", tmux_pane="%12")
+    ]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+    monkeypatch.setattr(permission, "capture_pane", lambda target: _perm_screen("dialog-bash.txt"))
+    calls: list[tuple[str, int]] = []
+
+    def fake_reply(target: str, dialog: permission.PermissionDialog, number: int) -> permission.ReplyOutcome:
+        calls.append((target, number))
+        return permission.ReplyOutcome.OK
+
+    monkeypatch.setattr(permission, "send_permission_reply", fake_reply)
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        assert isinstance(app.screen, tui._PermissionModal)
+        await pilot.press("2")
+        assert calls == [("%12", 2)]
+        assert not isinstance(app.screen, tui._PermissionModal)

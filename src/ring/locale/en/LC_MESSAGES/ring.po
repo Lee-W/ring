@@ -653,3 +653,42 @@ msgstr "total wait"
 
 msgid "⚠️ 其中 {n} 段還在 🔴 等你（計到現在為止）。"
 msgstr "⚠️ {n} of these are still 🔴 waiting for you (counted up to now)."
+
+msgid "回覆權限"
+msgstr "reply perm"
+
+msgid "回覆 {project} 的權限請求"
+msgstr "Reply to the permission request from {project}"
+
+msgid "Enter 或數字鍵送出、Esc 取消"
+msgstr "Enter or a digit key sends, Esc cancels"
+
+msgid "{project}：沒有 tmux 座標，無法就地回覆（僅支援 tmux 內的 session）"
+msgstr "{project}: no tmux coordinates, cannot reply in place (only sessions inside tmux are supported)"
+
+msgid "{project}：讀不到 tmux pane 畫面（{target}）"
+msgstr "{project}: cannot read the tmux pane screen ({target})"
+
+msgid "{project}：畫面上沒有可辨識的權限對話框，未送出任何按鍵"
+msgstr "{project}: no recognizable permission dialog on screen; no key was sent"
+
+msgid "→ {project}：已回覆權限（{option}）"
+msgstr "→ {project}: permission answered ({option})"
+
+msgid "{project}：權限對話框已不在，未送出任何按鍵"
+msgstr "{project}: the permission dialog is gone; no key was sent"
+
+msgid "{project}：對話框內容已變化，未送出；請再按一次 p"
+msgstr "{project}: the dialog changed; nothing sent — press p again"
+
+msgid "{project}：tmux send-keys 失敗，沒能回覆"
+msgstr "{project}: tmux send-keys failed; could not reply"
+
+msgid "{project}：已送出但對話框還在，請跳過去確認"
+msgstr "{project}: key sent but the dialog is still there — jump over to check"
+
+msgid "{project}：對話框已不在，數字落進輸入框，已補 Backspace 清掉"
+msgstr "{project}: the dialog was gone and the digit landed in the input box — sent Backspace to clean it up"
+
+msgid "{project}：已送出但拿不到畫面驗證，請跳過去確認"
+msgstr "{project}: key sent but the screen could not be re-read to verify — jump over to check"

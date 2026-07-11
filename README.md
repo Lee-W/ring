@@ -34,6 +34,7 @@ session 需要你回話時，它「**ring** 你」。
 - **等你優先**：需要你回應的 session 會排最上面，避免被工作中的 session 淹掉。
 - **一鍵跳回終端**：在 TUI 選 session 後按 `Enter` / `Space`，跳回 tmux、iTerm2、Terminal.app（macOS）或 Linux X11 視窗（`wmctrl`）裡的原本位置。
 - **等你時通知，不必開著看板**：裝了 hook，session 轉 🔴 等你的**當下**就響鈴 + 發系統通知——關掉 RiNG 看板、關掉終端也照樣 ring 你。裝 `terminal-notifier` 後還能點通知跳回 session。
+- **就地回覆權限請求**：游標停在 🔴 等你的列按 `p`，RiNG 讀出那個 session tmux pane 上的權限對話框選項，開浮層讓你選、代你按下——不必一個個跳過去（僅支援 tmux 內的 session）。
 - **替 session 命名**：TUI 裡按 `n` 幫 session 取名，像「重構登入」；取了名，看板與通知就直接顯示名字，不再用專案目錄名猜它在做什麼。
 - **看得到它在等什麼**：hook 模式下，🔴 等你的 session 會帶「具體在等什麼」（要跑的指令、問的問題），TUI 選中即顯示、通知內文也帶——小事可以先放著。
 - **塞進 status bar**：`ring --format oneline` 印 `🔴2 🟢1 🟡3` 單行摘要給 tmux / SwiftBar / waybar；`--format json` 給腳本吃。
@@ -130,7 +131,7 @@ eval "$(ring completion bash)"
 ### `--watch` 的兩種樣子
 
 - 裝了 **Textual**（`[tui]` extra）且在真終端 → **互動 TUI**：
-  `↑/↓` 選 session、`Enter` / `Space` 跳到它所在的終端、`n` 命名、`a` 切換是否顯示已離場、`dd` 隱藏 session（有新活動會自動重新出現）、`r` 刷新、`q` 離場。
+  `↑/↓` 選 session、`Enter` / `Space` 跳到它所在的終端、`p` 就地回覆權限請求、`n` 命名、`a` 切換是否顯示已離場、`dd` 隱藏 session（有新活動會自動重新出現）、`r` 刷新、`q` 離場。
   如果你跟我一樣有 vim 手癖，也可以用 `j/k` 上下移動、`g/G` 跳到第一列 / 最後一列。
   選中 🔴 等你的列時，表格下方會多一行顯示**它具體在等什麼**（要跑的指令、問的問題；hook 模式才有）。
 - 否則 → **Rich poll**（清除畫面重畫）；連 Rich 都沒有就純文字。三層優雅降級。
@@ -152,6 +153,21 @@ eval "$(ring completion bash)"
 「哪個 session 在哪個終端」靠它的 `tty` 對應——**hook 模式最精準**；
 zero-config 下每個專案只開一個 session 時也對得上。Codex 沒裝 hook 時會走 zero-config：
 同一個 cwd 只開一個 live Codex 時可跳轉；同 cwd 多個 Codex 只能保守顯示，避免跳錯。
+
+### 就地回覆權限請求（`p`）
+
+游標停在 🔴 等你的列按 `p`，RiNG 用 `tmux capture-pane` 讀出那個 session 畫面上的
+權限對話框（Claude Code 的「Do you want to proceed?」框，含背景 subagent 帶
+「from the … agent」標頭的），把編號選項原文列成浮層讓你選；選定後 RiNG 會**再抓一次
+畫面**確認對話框還在且沒變（防止你考慮期間它已被回掉），才用 `tmux send-keys` 代你
+按下那個數字，並回頭驗證對話框確實消失。
+
+安全底線：畫面上解析不到可辨識的對話框（標記、編號、游標任一缺）就只提示、**絕不送鍵**——
+對話框不在時按鍵會落進聊天輸入框變成文字；萬一送出的瞬間對話框剛好消失、數字落進輸入框，
+RiNG 會自動補一個 Backspace 清掉並警告你。
+
+**限制**：僅支援 tmux 內的 session（要有 pane 座標才抓得到畫面）；不在 tmux 裡的 session
+請按 `Enter` 跳過去回。
 
 ### 等你時發通知
 

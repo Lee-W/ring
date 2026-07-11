@@ -3,7 +3,8 @@
 需要 textual（``pip install 'ring[tui]'``）。沒裝時 CLI 會自動退回 Rich poll。
 
 鍵：↑/↓（或 vim 的 j/k、g/G 跳頭尾）選 session、Enter/Space 跳到它所在的終端、
-a 切換是否顯示已離場、dd 隱藏 session（有新活動會自動重新出現）、r 刷新、q 離場。
+p 就地回覆權限請求（tmux 內的 session）、a 切換是否顯示已離場、dd 隱藏 session
+（有新活動會自動重新出現）、r 刷新、q 離場。
 """
 
 from __future__ import annotations
@@ -13,12 +14,14 @@ import time
 from typing import ClassVar
 
 from rich.text import Text
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import DataTable, Footer, Header, Input, Static
+from textual.widgets import DataTable, Footer, Header, Input, OptionList, Static
 
+from ring import permission
 from ring.cli import (
     _LOC_MAX,
     _STATUS_STYLE,
@@ -98,6 +101,61 @@ class _NameModal(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class _PermissionModal(ModalScreen[int | None]):
+    """就地回覆權限請求的浮層：列出對話框原文選項，↑/↓＋Enter 或直接按數字鍵選、Esc 取消。
+
+    dismiss 回傳：選項編號（int）或 ``None``（取消，不送任何鍵）。
+    """
+
+    DEFAULT_CSS = """
+    _PermissionModal {
+        align: center middle;
+    }
+    _PermissionModal #perm-box {
+        width: 90;
+        max-width: 100%;
+        height: auto;
+        padding: 1 2;
+        background: $panel;
+        border: round $accent;
+    }
+    _PermissionModal OptionList {
+        height: auto;
+        background: $panel;
+        border: none;
+    }
+    """
+
+    def __init__(self, project: str, dialog: permission.PermissionDialog) -> None:
+        super().__init__()
+        self._project = project
+        self._dialog = dialog
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="perm-box"):
+            yield Static(Text(_("回覆 {project} 的權限請求", project=self._project), style="bold"))
+            context = " · ".join(part for part in (self._dialog.title, self._dialog.question) if part)
+            if context:
+                yield Static(Text(context, style="grey50"))
+            yield OptionList(*(f"{n}. {text}" for n, text in self._dialog.options))
+            yield Static(Text(_("Enter 或數字鍵送出、Esc 取消"), style="grey50"))
+
+    def on_mount(self) -> None:
+        self.query_one(OptionList).focus()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        self.dismiss(self._dialog.options[event.option_index][0])
+
+    def on_key(self, event: events.Key) -> None:
+        # 跟真的對話框一樣，直接按選項數字也行。
+        if event.key.isdigit() and any(int(event.key) == n for n, _text in self._dialog.options):
+            event.stop()
+            self.dismiss(int(event.key))
+
+    def key_escape(self) -> None:
+        self.dismiss(None)
+
+
 class RingApp(App[None]):
     """場館的即時看板。"""
 
@@ -109,6 +167,7 @@ class RingApp(App[None]):
         Binding("n", "name_session", _("命名")),
         Binding("d", "delete_session", _("隱藏"), key_display="dd"),
         Binding("w", "jump_oldest_waiting", _("最久等待")),
+        Binding("p", "permission_reply", _("回覆權限")),
         Binding("enter", "jump", _("跳過去")),
         Binding("space", "jump", _("跳過去"), show=False),
     ]
@@ -406,6 +465,67 @@ class RingApp(App[None]):
         idx, _session = max(candidates, key=lambda item: item[1].idle_for)
         self.query_one(DataTable).move_cursor(row=idx)
         self.action_jump()
+
+    def action_permission_reply(self) -> None:
+        """游標列的 session 掛著權限對話框時，就地讀出選項讓你選、代按，不必跳過去。
+
+        僅支援 tmux 內的 session（要有 pane 座標才抓得到畫面）。解析不到可辨識的
+        權限對話框就只 toast、絕不送鍵——沒有對話框時按鍵會落進聊天輸入框變成文字。
+        """
+        self._clear_delete_armed()
+        s = self._selected()
+        if s is None:
+            self._set_status(_("（沒有選到 session）"))
+            return
+        name = self._display_name(s)
+        target = s.tmux_pane or s.tmux_target
+        if not target:
+            self._toast(_("{project}：沒有 tmux 座標，無法就地回覆（僅支援 tmux 內的 session）", project=name))
+            return
+        screen = permission.capture_pane(target)
+        if screen is None:
+            self._toast(_("{project}：讀不到 tmux pane 畫面（{target}）", project=name, target=target))
+            return
+        dialog = permission.parse_permission_dialog(screen)
+        if dialog is None:
+            self._toast(_("{project}：畫面上沒有可辨識的權限對話框，未送出任何按鍵", project=name))
+            return
+
+        def _submit(number: int | None) -> None:
+            if number is None:
+                return  # Esc 取消，不送
+            self._finish_permission_reply(s, name, target, dialog, number)
+
+        self.push_screen(_PermissionModal(name, dialog), _submit)
+
+    def _toast(self, text: str, *, ok: bool = False) -> None:
+        """status 列＋toast 一次到位（權限回覆路徑的訊息都成對出現）。"""
+        self._set_status(text)
+        self.notify(text, severity="information" if ok else "warning", timeout=8)
+
+    def _finish_permission_reply(
+        self, s: Session, name: str, target: str, dialog: permission.PermissionDialog, number: int
+    ) -> None:
+        """浮層選定後：再驗證一次、送鍵、依結果回報（見 permission.send_permission_reply）。"""
+        outcome = permission.send_permission_reply(target, dialog, number)
+        option = next((f"{n}. {text}" for n, text in dialog.options if n == number), str(number))
+        if outcome is permission.ReplyOutcome.OK:
+            if s.session_id == self._focused_sid:
+                self._focused_sid = None  # 已就地回覆，解除通知標記
+            self._toast(_("→ {project}：已回覆權限（{option}）", project=name, option=option), ok=True)
+            self._reload()
+            return
+        messages = {
+            permission.ReplyOutcome.NO_DIALOG: _("{project}：權限對話框已不在，未送出任何按鍵", project=name),
+            permission.ReplyOutcome.CHANGED: _("{project}：對話框內容已變化，未送出；請再按一次 p", project=name),
+            permission.ReplyOutcome.SEND_FAILED: _("{project}：tmux send-keys 失敗，沒能回覆", project=name),
+            permission.ReplyOutcome.STILL_PRESENT: _("{project}：已送出但對話框還在，請跳過去確認", project=name),
+            permission.ReplyOutcome.MISFIRE: _(
+                "{project}：對話框已不在，數字落進輸入框，已補 Backspace 清掉", project=name
+            ),
+            permission.ReplyOutcome.UNVERIFIED: _("{project}：已送出但拿不到畫面驗證，請跳過去確認", project=name),
+        }
+        self._toast(messages[outcome])
 
     def action_delete_session(self) -> None:
         s = self._selected()
