@@ -1,3 +1,10 @@
+## 0.11.0 (2026-07-12)
+
+### Feat
+
+- reply to permission prompts from iTerm2 sessions without tmux
+- reply to permission prompts directly from the board
+
 ## 0.10.0 (2026-07-10)
 
 ### Feat
