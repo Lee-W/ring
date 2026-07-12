@@ -702,10 +702,12 @@ async def test_permission_reply_digit_key_sends_reply(monkeypatch: pytest.Monkey
     monkeypatch.setattr(tui, "board", lambda show_all: sessions)
     monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
     monkeypatch.setattr(permission, "capture_pane", lambda target: _perm_screen("dialog-bash.txt"))
-    calls: list[tuple[str, int]] = []
+    calls: list[tuple[permission.PermissionBackend, int]] = []
 
-    def fake_reply(target: str, dialog: permission.PermissionDialog, number: int) -> permission.ReplyOutcome:
-        calls.append((target, number))
+    def fake_reply(
+        backend: permission.PermissionBackend, dialog: permission.PermissionDialog, number: int
+    ) -> permission.ReplyOutcome:
+        calls.append((backend, number))
         return permission.ReplyOutcome.OK
 
     monkeypatch.setattr(permission, "send_permission_reply", fake_reply)
@@ -715,5 +717,9 @@ async def test_permission_reply_digit_key_sends_reply(monkeypatch: pytest.Monkey
         await pilot.press("p")
         assert isinstance(app.screen, tui._PermissionModal)
         await pilot.press("2")
-        assert calls == [("%12", 2)]
+        assert len(calls) == 1
+        backend, number = calls[0]
+        assert isinstance(backend, permission.TmuxBackend)
+        assert backend.target == "%12"  # pane id 優先於 window 座標
+        assert number == 2
         assert not isinstance(app.screen, tui._PermissionModal)

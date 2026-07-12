@@ -34,7 +34,7 @@ session 需要你回話時，它「**ring** 你」。
 - **等你優先**：需要你回應的 session 會排最上面，避免被工作中的 session 淹掉。
 - **一鍵跳回終端**：在 TUI 選 session 後按 `Enter` / `Space`，跳回 tmux、iTerm2、Terminal.app（macOS）或 Linux X11 視窗（`wmctrl`）裡的原本位置。
 - **等你時通知，不必開著看板**：裝了 hook，session 轉 🔴 等你的**當下**就響鈴 + 發系統通知——關掉 RiNG 看板、關掉終端也照樣 ring 你。裝 `terminal-notifier` 後還能點通知跳回 session。
-- **就地回覆權限請求**：游標停在 🔴 等你的列按 `p`，RiNG 讀出那個 session tmux pane 上的權限對話框選項，開浮層讓你選、代你按下——不必一個個跳過去（僅支援 tmux 內的 session）。
+- **就地回覆權限請求**：游標停在 🔴 等你的列按 `p`，RiNG 讀出那個 session 終端畫面上的權限對話框選項，開浮層讓你選、代你按下——不必一個個跳過去（支援 tmux 內的 session，以及 macOS 上直接開在 iTerm2 分頁的 session）。
 - **替 session 命名**：TUI 裡按 `n` 幫 session 取名，像「重構登入」；取了名，看板與通知就直接顯示名字，不再用專案目錄名猜它在做什麼。
 - **看得到它在等什麼**：hook 模式下，🔴 等你的 session 會帶「具體在等什麼」（要跑的指令、問的問題），TUI 選中即顯示、通知內文也帶——小事可以先放著。
 - **塞進 status bar**：`ring --format oneline` 印 `🔴2 🟢1 🟡3` 單行摘要給 tmux / SwiftBar / waybar；`--format json` 給腳本吃。
@@ -156,18 +156,23 @@ zero-config 下每個專案只開一個 session 時也對得上。Codex 沒裝 h
 
 ### 就地回覆權限請求（`p`）
 
-游標停在 🔴 等你的列按 `p`，RiNG 用 `tmux capture-pane` 讀出那個 session 畫面上的
-權限對話框（Claude Code 的「Do you want to proceed?」框，含背景 subagent 帶
+游標停在 🔴 等你的列按 `p`，RiNG 讀出那個 session 畫面上的權限對話框
+（Claude Code 的「Do you want to proceed?」框，含背景 subagent 帶
 「from the … agent」標頭的），把編號選項原文列成浮層讓你選；選定後 RiNG 會**再抓一次
-畫面**確認對話框還在且沒變（防止你考慮期間它已被回掉），才用 `tmux send-keys` 代你
-按下那個數字，並回頭驗證對話框確實消失。
+畫面**確認對話框還在且沒變（防止你考慮期間它已被回掉），才代你按下那個數字，
+並回頭驗證對話框確實消失。
+
+- **tmux 內的 session**：用 `tmux capture-pane` 抓畫面、`tmux send-keys` 送鍵。
+- **macOS 上直接開在 iTerm2 分頁的 session**（沒有 tmux）：用 session 的 `tty` 透過
+  AppleScript 找到對應 iTerm2 分頁，抓畫面、送鍵都走 `osascript`。第一次用時 macOS
+  會跳「允許控制 iTerm2」的自動化授權框，允許一次即可。
 
 安全底線：畫面上解析不到可辨識的對話框（標記、編號、游標任一缺）就只提示、**絕不送鍵**——
 對話框不在時按鍵會落進聊天輸入框變成文字；萬一送出的瞬間對話框剛好消失、數字落進輸入框，
 RiNG 會自動補一個 Backspace 清掉並警告你。
 
-**限制**：僅支援 tmux 內的 session（要有 pane 座標才抓得到畫面）；不在 tmux 裡的 session
-請按 `Enter` 跳過去回。
+**限制**：要有 tmux pane 座標、或（macOS 上）測得到 tty 的 iTerm2 session 才抓得到畫面；
+其餘 session 請按 `Enter` 跳過去回。
 
 ### 等你時發通知
 

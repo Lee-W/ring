@@ -663,11 +663,11 @@ msgstr "Reply to the permission request from {project}"
 msgid "Enter 或數字鍵送出、Esc 取消"
 msgstr "Enter or a digit key sends, Esc cancels"
 
-msgid "{project}：沒有 tmux 座標，無法就地回覆（僅支援 tmux 內的 session）"
-msgstr "{project}: no tmux coordinates, cannot reply in place (only sessions inside tmux are supported)"
+msgid "{project}：沒有 tmux 座標，且非 macOS 上的 iTerm2 session，無法就地回覆"
+msgstr "{project}: no tmux coordinates, and not a macOS iTerm2 session either — cannot reply in place"
 
-msgid "{project}：讀不到 tmux pane 畫面（{target}）"
-msgstr "{project}: cannot read the tmux pane screen ({target})"
+msgid "{project}：讀不到 {backend} 畫面"
+msgstr "{project}: cannot read the {backend} screen"
 
 msgid "{project}：畫面上沒有可辨識的權限對話框，未送出任何按鍵"
 msgstr "{project}: no recognizable permission dialog on screen; no key was sent"

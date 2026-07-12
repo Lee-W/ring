@@ -1,28 +1,41 @@
-"""permission 模組：對話框解析（餵 PoC 真實畫面）與送鍵流程（mock tmux）。
+"""permission 模組：對話框解析（餵 PoC 真實畫面）與送鍵流程（mock tmux / osascript）。
 
-fixtures 是 PoC（claude 2.1.206 + tmux 3.7b）用 ``tmux capture-pane -p`` 抓下來的
-真實畫面，放 ``tests/fixtures/permission/``：
+fixtures 放 ``tests/fixtures/permission/``：
+
+tmux（PoC：claude 2.1.206 + tmux 3.7b，用 ``tmux capture-pane -p`` 抓下來）：
 
 - ``dialog-bash.txt``：一般 Bash 權限對話框（3 個選項）
 - ``dialog-subagent.txt``：背景 subagent 的對話框（標題帶 "from the general-purpose agent"）
 - ``no-dialog-misfire.txt``：對話框不在時誤送「2」、數字落進聊天輸入框的樣子
 - ``no-dialog-after-reply.txt``：回覆成功後對話框消失、模型繼續跑的畫面
+
+iTerm2（PoC：同一版 claude，直接開在 iTerm2 分頁、沒有 tmux，用 ``contents of session``
+抓下來）：
+
+- ``iterm-dialog.txt``：權限對話框畫面
+- ``iterm-after-reply.txt``：回覆成功後對話框消失、模型繼續跑的畫面
+- ``iterm-misfire.txt``：對話框不在時誤送「2」、數字落進聊天輸入框的樣子
 """
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 import ring.permission as permission
 from ring.permission import (
+    ITermBackend,
     PermissionDialog,
     ReplyOutcome,
+    TmuxBackend,
     digit_in_input_line,
     parse_permission_dialog,
+    select_backend,
     send_permission_reply,
 )
+from ring.registry import Session, Status
 
 _FIXTURES = Path(__file__).parent / "fixtures" / "permission"
 
@@ -113,7 +126,7 @@ def _wire(monkeypatch: pytest.MonkeyPatch, captures: list[str | None]) -> tuple[
 
 def test_reply_ok_when_dialog_disappears(monkeypatch: pytest.MonkeyPatch) -> None:
     _seen, sent = _wire(monkeypatch, [_fixture("dialog-bash.txt"), _fixture("no-dialog-after-reply.txt")])
-    outcome = send_permission_reply("main:1.0", _dialog(), 1, delay=0)
+    outcome = send_permission_reply(TmuxBackend("main:1.0"), _dialog(), 1, delay=0)
     assert outcome is ReplyOutcome.OK
     assert sent == [("main:1.0", "1")]  # 單一數字、無 Enter
 
@@ -121,33 +134,33 @@ def test_reply_ok_when_dialog_disappears(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_reply_refuses_when_no_dialog(monkeypatch: pytest.MonkeyPatch) -> None:
     """二次 capture 抓不到對話框 → 不送鍵。"""
     _seen, sent = _wire(monkeypatch, [_fixture("no-dialog-after-reply.txt")])
-    assert send_permission_reply("main:1.0", _dialog(), 1, delay=0) is ReplyOutcome.NO_DIALOG
+    assert send_permission_reply(TmuxBackend("main:1.0"), _dialog(), 1, delay=0) is ReplyOutcome.NO_DIALOG
     assert sent == []
 
 
 def test_reply_refuses_when_capture_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     _seen, sent = _wire(monkeypatch, [None])
-    assert send_permission_reply("main:1.0", _dialog(), 1, delay=0) is ReplyOutcome.NO_DIALOG
+    assert send_permission_reply(TmuxBackend("main:1.0"), _dialog(), 1, delay=0) is ReplyOutcome.NO_DIALOG
     assert sent == []
 
 
 def test_reply_refuses_when_dialog_changed(monkeypatch: pytest.MonkeyPatch) -> None:
     """二次 capture 的對話框內容變了（換成 subagent 的請求）→ 不送鍵。"""
     _seen, sent = _wire(monkeypatch, [_fixture("dialog-subagent.txt")])
-    assert send_permission_reply("main:1.0", _dialog(), 1, delay=0) is ReplyOutcome.CHANGED
+    assert send_permission_reply(TmuxBackend("main:1.0"), _dialog(), 1, delay=0) is ReplyOutcome.CHANGED
     assert sent == []
 
 
 def test_reply_refuses_number_outside_options(monkeypatch: pytest.MonkeyPatch) -> None:
     seen, sent = _wire(monkeypatch, [])
-    assert send_permission_reply("main:1.0", _dialog(), 7, delay=0) is ReplyOutcome.CHANGED
+    assert send_permission_reply(TmuxBackend("main:1.0"), _dialog(), 7, delay=0) is ReplyOutcome.CHANGED
     assert seen == [] and sent == []
 
 
 def test_reply_misfire_sends_backspace(monkeypatch: pytest.MonkeyPatch) -> None:
     """送鍵瞬間對話框消失、數字落進輸入框（❯ 2）→ 補 Backspace。"""
     _seen, sent = _wire(monkeypatch, [_fixture("dialog-bash.txt"), _fixture("no-dialog-misfire.txt")])
-    outcome = send_permission_reply("main:1.0", _dialog(), 2, delay=0)
+    outcome = send_permission_reply(TmuxBackend("main:1.0"), _dialog(), 2, delay=0)
     assert outcome is ReplyOutcome.MISFIRE
     assert sent == [("main:1.0", "2"), ("main:1.0", "BSpace")]
 
@@ -155,20 +168,20 @@ def test_reply_misfire_sends_backspace(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_reply_warns_when_dialog_still_present(monkeypatch: pytest.MonkeyPatch) -> None:
     same = _fixture("dialog-bash.txt")
     _seen, sent = _wire(monkeypatch, [same, same])
-    assert send_permission_reply("main:1.0", _dialog(), 1, delay=0) is ReplyOutcome.STILL_PRESENT
+    assert send_permission_reply(TmuxBackend("main:1.0"), _dialog(), 1, delay=0) is ReplyOutcome.STILL_PRESENT
     assert sent == [("main:1.0", "1")]
 
 
 def test_reply_ok_when_next_dialog_appears(monkeypatch: pytest.MonkeyPatch) -> None:
     """送出後畫面換成「下一個」權限對話框 → 原請求已被回覆，算成功。"""
     _seen, sent = _wire(monkeypatch, [_fixture("dialog-bash.txt"), _fixture("dialog-subagent.txt")])
-    assert send_permission_reply("main:1.0", _dialog(), 1, delay=0) is ReplyOutcome.OK
+    assert send_permission_reply(TmuxBackend("main:1.0"), _dialog(), 1, delay=0) is ReplyOutcome.OK
     assert sent == [("main:1.0", "1")]
 
 
 def test_reply_unverified_when_second_capture_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     _seen, sent = _wire(monkeypatch, [_fixture("dialog-bash.txt"), None])
-    assert send_permission_reply("main:1.0", _dialog(), 1, delay=0) is ReplyOutcome.UNVERIFIED
+    assert send_permission_reply(TmuxBackend("main:1.0"), _dialog(), 1, delay=0) is ReplyOutcome.UNVERIFIED
     assert sent == [("main:1.0", "1")]
 
 
@@ -202,3 +215,127 @@ def test_capture_pane_runs_capture_command(monkeypatch: pytest.MonkeyPatch) -> N
         ["tmux", "capture-pane", "-p", "-t", "%12"],
         ["tmux", "send-keys", "-t", "%12", "2"],
     ]
+
+
+# ---------------------------------------------------------------------------
+# iTerm2 backend：送鍵流程一樣走 send_permission_reply，只是 backend 換成 ITermBackend；
+# osascript 一律 mock（不碰真 iTerm2）。
+# ---------------------------------------------------------------------------
+
+
+def _iterm_dialog() -> PermissionDialog:
+    dialog = parse_permission_dialog(_fixture("iterm-dialog.txt"))
+    assert dialog is not None
+    return dialog
+
+
+def _wire_osascript(monkeypatch: pytest.MonkeyPatch, responses: list[tuple[int, str, str]]) -> list[str]:
+    """把 osascript 換成腳本：responses 依序回放，記錄每次送出的 script 原文。"""
+    scripts: list[str] = []
+
+    def fake_osascript(script: str) -> tuple[int, str, str]:
+        scripts.append(script)
+        return responses.pop(0) if responses else (1, "", "no more responses")
+
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/osascript")
+    monkeypatch.setattr(permission, "osascript", fake_osascript)
+    return scripts
+
+
+def test_iterm_reply_ok_when_dialog_disappears(monkeypatch: pytest.MonkeyPatch) -> None:
+    """(a) capture 成功 → 整條回覆流程 OK：找到 session、送數字、驗證對話框消失。"""
+    scripts = _wire_osascript(
+        monkeypatch,
+        [
+            (0, _fixture("iterm-dialog.txt"), ""),
+            (0, "ok", ""),
+            (0, _fixture("iterm-after-reply.txt"), ""),
+        ],
+    )
+    outcome = send_permission_reply(ITermBackend("/dev/ttys007"), _iterm_dialog(), 1, delay=0)
+    assert outcome is ReplyOutcome.OK
+    assert len(scripts) == 3
+    assert 'write text "1" newline NO' in scripts[1]  # 單一數字、無 Enter
+
+
+def test_iterm_reply_refuses_when_tty_session_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    """(b) 找不到 tty 對應的 iTerm2 session → NO_DIALOG，不送鍵。"""
+    scripts = _wire_osascript(monkeypatch, [(0, permission._ITERM_NO_SESSION, "")])
+    outcome = send_permission_reply(ITermBackend("/dev/ttys999"), _iterm_dialog(), 1, delay=0)
+    assert outcome is ReplyOutcome.NO_DIALOG
+    assert len(scripts) == 1  # 只抓了一次畫面，沒送任何鍵
+
+
+def test_iterm_reply_misfire_sends_backspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """(c) 誤送：數字落進聊天輸入框 → 補送 Backspace（ASCII 8，不帶 Enter）。"""
+    scripts = _wire_osascript(
+        monkeypatch,
+        [
+            (0, _fixture("iterm-dialog.txt"), ""),
+            (0, "ok", ""),
+            (0, _fixture("iterm-misfire.txt"), ""),
+            (0, "ok", ""),
+        ],
+    )
+    outcome = send_permission_reply(ITermBackend("/dev/ttys007"), _iterm_dialog(), 2, delay=0)
+    assert outcome is ReplyOutcome.MISFIRE
+    assert len(scripts) == 4
+    assert 'write text "2" newline NO' in scripts[1]
+    assert "write text (ASCII character 8) newline NO" in scripts[3]
+
+
+def test_iterm_capture_returns_none_without_osascript(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    assert permission.iterm_capture("/dev/ttys007") is None
+    assert permission.iterm_send_digit("/dev/ttys007", "1") is False
+
+
+# ---------------------------------------------------------------------------
+# backend 選擇（tui.py 用）：tmux 座標優先，其次 macOS 上有 tty 就用 iTerm2，都沒有 → None
+# ---------------------------------------------------------------------------
+
+
+def _session(**overrides: object) -> Session:
+    base: dict[str, object] = dict(
+        session_id="s1",
+        cwd="/tmp/project",
+        status=Status.WAITING,
+        last_active=0.0,
+        last_action="",
+        source="hook",
+    )
+    base.update(overrides)
+    return Session(**base)  # type: ignore[arg-type]
+
+
+def test_select_backend_prefers_tmux_target() -> None:
+    """(d)-1 有 tmux_target → TmuxBackend，即使也有 tty。"""
+    backend = select_backend(_session(tmux_target="main:1.0", tty="/dev/ttys007"))
+    assert isinstance(backend, TmuxBackend)
+    assert backend.target == "main:1.0"
+
+
+def test_select_backend_prefers_tmux_pane_over_target() -> None:
+    backend = select_backend(_session(tmux_target="main:1.0", tmux_pane="%7"))
+    assert isinstance(backend, TmuxBackend)
+    assert backend.target == "%7"  # 穩定的 pane id 優先於 target 座標
+
+
+def test_select_backend_falls_back_to_iterm_on_macos(monkeypatch: pytest.MonkeyPatch) -> None:
+    """(d)-2 沒有 tmux 座標，但有 tty 且平台是 macOS → ITermBackend。"""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    backend = select_backend(_session(tty="/dev/ttys007"))
+    assert isinstance(backend, ITermBackend)
+    assert backend.tty == "/dev/ttys007"
+
+
+def test_select_backend_none_when_no_coordinates_at_all(monkeypatch: pytest.MonkeyPatch) -> None:
+    """(d)-3 沒有 tmux 座標也沒有 tty → None（呼叫端走既有 toast 路徑）。"""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert select_backend(_session()) is None
+
+
+def test_select_backend_none_on_non_macos_without_tmux(monkeypatch: pytest.MonkeyPatch) -> None:
+    """有 tty 但平台不是 macOS → 不接（iTerm2 backend 僅支援 macOS）。"""
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert select_backend(_session(tty="/dev/ttys007")) is None

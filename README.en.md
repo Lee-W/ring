@@ -34,7 +34,7 @@ RiNG puts them on one board, with sessions waiting for you sorted first.
 - **Waiting first**: sessions that need your response are highlighted and sorted above the rest.
 - **Jump back to the terminal**: in the TUI, select a session and press `Enter` / `Space` to focus tmux, iTerm2, Terminal.app (macOS), or a Linux X11 window (`wmctrl`).
 - **Notifies you without the board open**: with hooks installed, the moment a session turns 🔴 waiting it beeps and fires a system notification — even with no RiNG board running. With `terminal-notifier`, clicking the notification jumps back.
-- **Reply to permission requests in place**: with the cursor on a 🔴 waiting row, press `p` — RiNG reads the permission dialog from that session's tmux pane, pops the numbered options in a modal, and presses your choice for you, so you don't have to jump over one by one (tmux sessions only).
+- **Reply to permission requests in place**: with the cursor on a 🔴 waiting row, press `p` — RiNG reads the permission dialog from that session's terminal screen, pops the numbered options in a modal, and presses your choice for you, so you don't have to jump over one by one (sessions inside tmux, plus plain iTerm2 tabs on macOS).
 - **Name your sessions**: press `n` in the TUI to name a session, e.g. "auth refactor"; once named, the board and notifications show the name instead of the workspace directory.
 - **See what it is waiting for**: in hook mode, a 🔴 waiting session carries the concrete pending item (the command to run, the question asked) — shown in the TUI and in the notification body.
 - **Fits your status bar**: `ring --format oneline` prints a `🔴2 🟢1 🟡3` one-liner for tmux / SwiftBar / waybar; `--format json` feeds scripts.
@@ -150,20 +150,27 @@ one live Codex session per cwd can jump correctly; multiple live Codex sessions 
 
 ### Reply To Permission Requests In Place (`p`)
 
-With the cursor on a 🔴 waiting row, press `p`. RiNG runs `tmux capture-pane` on that session's
-pane, parses the permission dialog (Claude Code's "Do you want to proceed?" box, including
-background-subagent ones with a "from the … agent" header), and lists the numbered options
-verbatim in a modal. After you pick one, RiNG **captures the screen again** to confirm the dialog
-is still there and unchanged (it may have been answered while you were deciding), only then sends
-that single digit via `tmux send-keys`, and re-checks that the dialog actually disappeared.
+With the cursor on a 🔴 waiting row, press `p`. RiNG reads that session's screen, parses the
+permission dialog (Claude Code's "Do you want to proceed?" box, including background-subagent
+ones with a "from the … agent" header), and lists the numbered options verbatim in a modal.
+After you pick one, RiNG **captures the screen again** to confirm the dialog is still there and
+unchanged (it may have been answered while you were deciding), only then sends that single
+digit, and re-checks that the dialog actually disappeared.
+
+- **Sessions inside tmux**: reads the screen with `tmux capture-pane` and sends keys with
+  `tmux send-keys`.
+- **Sessions in a plain iTerm2 tab on macOS** (no tmux): locates the matching iTerm2 session by
+  its `tty` via AppleScript, and both reads the screen and sends keys through `osascript`. The
+  first use triggers the macOS Automation permission prompt ("allow control of iTerm2") — allow
+  it once.
 
 Safety first: if no recognizable dialog can be parsed (missing markers, numbering, or cursor),
 RiNG only shows a toast and **never sends a key** — without the dialog, keystrokes would land in
 the chat input box as text. If the dialog happens to vanish in the instant the digit is sent and
 the digit lands in the input box, RiNG sends a Backspace to clean it up and warns you.
 
-**Limits**: only sessions inside tmux are supported (a pane coordinate is needed to read the
-screen); for sessions outside tmux, press `Enter` to jump over and reply there.
+**Limits**: reading the screen requires a tmux pane coordinate, or (on macOS) an iTerm2 session
+with a detectable tty; for other sessions, press `Enter` to jump over and reply there.
 
 ### Notifications
 

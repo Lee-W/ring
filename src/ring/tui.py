@@ -469,8 +469,9 @@ class RingApp(App[None]):
     def action_permission_reply(self) -> None:
         """游標列的 session 掛著權限對話框時，就地讀出選項讓你選、代按，不必跳過去。
 
-        僅支援 tmux 內的 session（要有 pane 座標才抓得到畫面）。解析不到可辨識的
-        權限對話框就只 toast、絕不送鍵——沒有對話框時按鍵會落進聊天輸入框變成文字。
+        支援 tmux 內的 session，以及（macOS 上）直接開在 iTerm2 分頁、沒有 tmux 的
+        session——backend 選擇見 ``permission.select_backend``。解析不到可辨識的權限
+        對話框就只 toast、絕不送鍵——沒有對話框時按鍵會落進聊天輸入框變成文字。
         """
         self._clear_delete_armed()
         s = self._selected()
@@ -478,13 +479,18 @@ class RingApp(App[None]):
             self._set_status(_("（沒有選到 session）"))
             return
         name = self._display_name(s)
-        target = s.tmux_pane or s.tmux_target
-        if not target:
-            self._toast(_("{project}：沒有 tmux 座標，無法就地回覆（僅支援 tmux 內的 session）", project=name))
+        backend = permission.select_backend(s)
+        if backend is None:
+            self._toast(
+                _(
+                    "{project}：沒有 tmux 座標，且非 macOS 上的 iTerm2 session，無法就地回覆",
+                    project=name,
+                )
+            )
             return
-        screen = permission.capture_pane(target)
+        screen = backend.capture()
         if screen is None:
-            self._toast(_("{project}：讀不到 tmux pane 畫面（{target}）", project=name, target=target))
+            self._toast(_("{project}：讀不到 {backend} 畫面", project=name, backend=backend.name))
             return
         dialog = permission.parse_permission_dialog(screen)
         if dialog is None:
@@ -494,7 +500,7 @@ class RingApp(App[None]):
         def _submit(number: int | None) -> None:
             if number is None:
                 return  # Esc 取消，不送
-            self._finish_permission_reply(s, name, target, dialog, number)
+            self._finish_permission_reply(s, name, backend, dialog, number)
 
         self.push_screen(_PermissionModal(name, dialog), _submit)
 
@@ -504,10 +510,15 @@ class RingApp(App[None]):
         self.notify(text, severity="information" if ok else "warning", timeout=8)
 
     def _finish_permission_reply(
-        self, s: Session, name: str, target: str, dialog: permission.PermissionDialog, number: int
+        self,
+        s: Session,
+        name: str,
+        backend: permission.PermissionBackend,
+        dialog: permission.PermissionDialog,
+        number: int,
     ) -> None:
         """浮層選定後：再驗證一次、送鍵、依結果回報（見 permission.send_permission_reply）。"""
-        outcome = permission.send_permission_reply(target, dialog, number)
+        outcome = permission.send_permission_reply(backend, dialog, number)
         option = next((f"{n}. {text}" for n, text in dialog.options if n == number), str(number))
         if outcome is permission.ReplyOutcome.OK:
             if s.session_id == self._focused_sid:
