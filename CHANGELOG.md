@@ -1,3 +1,9 @@
+## 0.11.1 (2026-07-13)
+
+### Fix
+
+- show background agent sessions instead of dropping them
+
 ## 0.11.0 (2026-07-12)
 
 ### Feat
