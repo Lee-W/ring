@@ -1,3 +1,10 @@
+## 0.11.2 (2026-07-13)
+
+### Fix
+
+- clear waiting state after in-board permission replies
+- stop internal agent processes creating ghost sessions
+
 ## 0.11.1 (2026-07-13)
 
 ### Fix
