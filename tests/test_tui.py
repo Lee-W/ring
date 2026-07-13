@@ -822,3 +822,49 @@ async def test_permission_reply_digit_key_sends_reply(monkeypatch: pytest.Monkey
         assert backend.target == "%12"  # pane id 優先於 window 座標
         assert number == 2
         assert not isinstance(app.screen, tui._PermissionModal)
+
+
+@pytest.mark.asyncio
+async def test_permission_reply_ack_suppresses_stale_waiting_until_new_hook(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """p 已確認回覆後，同 revision 的 registry 不再卡 WAITING；較新的 hook 仍會重新生效。"""
+    revision = {"value": 100.0}
+
+    def fresh_board(show_all: bool) -> list[Session]:
+        return [
+            Session(
+                "a",
+                "/x/maigo",
+                Status.WAITING,
+                revision["value"],
+                "→ Bash",
+                "hook",
+                tmux_target="main:1.0",
+                waiting_kind="permission",
+                waiting_detail="Bash: make deploy",
+            )
+        ]
+
+    monkeypatch.setattr(tui, "board", fresh_board)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+    monkeypatch.setattr(permission, "capture_pane", lambda target: _perm_screen("dialog-bash.txt"))
+    monkeypatch.setattr(
+        permission,
+        "send_permission_reply",
+        lambda backend, dialog, number: permission.ReplyOutcome.OK,
+    )
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        await pilot.press("2")
+
+        assert app._sessions[0].status is Status.WORKING
+        assert app._sessions[0].waiting_kind == ""
+        assert app._sessions[0].waiting_detail == ""
+
+        revision["value"] = 101.0
+        app._reload()
+        assert app._sessions[0].status.value == "waiting"
+        assert "a" not in app._permission_acks

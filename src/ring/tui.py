@@ -197,6 +197,9 @@ class RingApp(App[None]):
         self._own_tty: str = self._detect_own_tty()
         self._delete_armed_sid: str | None = None
         self._delete_armed_until: float = 0.0
+        # p 已確認終端對話框消失，但 provider 尚未送後續 hook 時，別讓同一筆舊
+        # PermissionRequest 又把列拉回 WAITING。value 是已回覆那筆 row 的 last_active revision。
+        self._permission_acks: dict[str, float] = {}
 
     @staticmethod
     def _detect_own_tty() -> str:
@@ -345,6 +348,7 @@ class RingApp(App[None]):
         # 退回去跳 session 自己的終端（scan 模式常沒 tty → 跳轉失敗）。
         write_tui_presence()
         self._sessions = board(self._show_all)
+        self._apply_permission_acks()
         table = self.query_one(DataTable)
         # cursor 快照要在「任何」clear 之前取：clear(columns=True) 會把 cursor_row reset 成 0。
         cursor = table.cursor_row
@@ -388,6 +392,30 @@ class RingApp(App[None]):
             table.move_cursor(row=min(cursor, len(self._sessions) - 1))
         self._update_detail()
         self._poll_focus_request()
+
+    def _apply_permission_acks(self) -> None:
+        """以終端回覆結果蓋過同一 revision 的 stale WAITING，直到 provider 送來新事件。"""
+        present_ids = {s.session_id for s in self._sessions}
+        for session_id in set(self._permission_acks) - present_ids:
+            del self._permission_acks[session_id]
+
+        for s in self._sessions:
+            acknowledged_revision = self._permission_acks.get(s.session_id)
+            if acknowledged_revision is None:
+                continue
+            if s.last_active > acknowledged_revision:
+                # 新 hook event（可能是下一個權限請求）已到，重新採信 provider 狀態。
+                del self._permission_acks[s.session_id]
+                continue
+            if s.status is Status.WAITING:
+                # 終端畫面已證實原對話框消失；provider 尚未回報後續狀態時先視為處理中。
+                s.status = Status.WORKING
+                s.waiting_kind = ""
+                s.waiting_detail = ""
+            else:
+                # provider 已用同 revision 清掉 WAITING，不再需要本地 acknowledgment。
+                del self._permission_acks[s.session_id]
+        self._sessions.sort(key=lambda s: (s.status.rank, s.idle_for))
 
     def _update_detail(self) -> None:
         """detail 列：選中的 session 在 🔴 等什麼（hook 有給具體內容才顯示）。
@@ -541,6 +569,7 @@ class RingApp(App[None]):
         if outcome is permission.ReplyOutcome.OK:
             if s.session_id == self._focused_sid:
                 self._focused_sid = None  # 已就地回覆，解除通知標記
+            self._permission_acks[s.session_id] = s.last_active
             self._toast(_("→ {project}：已回覆權限（{option}）", project=name, option=option), ok=True)
             self._reload()
             return
