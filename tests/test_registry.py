@@ -1,9 +1,11 @@
 import json
 import sqlite3
+import subprocess
 import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -286,6 +288,41 @@ def test_background_agent_session_ids_only_collects_bg_pty_host_with_session_id(
     monkeypatch.setattr("ring.registry.subprocess.run", lambda *args, **kwargs: Result())
 
     assert registry.background_agent_session_ids() == {"abc"}
+
+
+def test_running_codex_pids_excludes_internal_app_processes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """sandbox / app-server 共用 codex binary，但不能各自復活一筆舊 thread。"""
+    ps = "\n".join(
+        [
+            "101 codex codex",
+            "102 codex codex resume thread-id",
+            "201 codex /Applications/Codex.app/Resources/codex sandbox -c policy -- command",
+            "202 codex /Applications/Codex.app/Resources/codex app-server --listen stdio://",
+        ]
+    )
+    monkeypatch.setattr(registry, "_codex_pids_cache", (-1.0, []))
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout=ps))
+
+    assert registry.running_codex_pids() == [101, 102]
+
+
+def test_running_foreground_claude_pids_excludes_background_agent_children(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """背景承載者與它的子行程都不能拿來替前景 hook row 證明存活。"""
+    snapshot = "\n".join(
+        [
+            "  PID COMM ARGS",
+            " 101 claude claude --session-id foreground",
+            " 201 claude claude --bg-pty-host /tmp/pty/a.sock --session-id agent-a",
+            " 202 claude claude --session-id agent-a",
+        ]
+    )
+    monkeypatch.setattr(registry, "_ps_claude_snapshot", lambda: snapshot)
+    monkeypatch.setattr(registry, "running_claude_pids", lambda: [101, 202])
+    monkeypatch.setattr(registry, "background_agent_session_ids", lambda: {"agent-a"})
+
+    assert registry.running_foreground_claude_pids() == [101]
 
 
 def test_delete_session_state_removes_hook_registry_only(

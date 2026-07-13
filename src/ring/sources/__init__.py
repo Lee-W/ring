@@ -60,6 +60,11 @@ def discover_sessions() -> list[Session]:
     for s in found:
         if s.session_id in bg_agent_ids:
             s.kind = "agent"
+            # 背景 agent 跑完後不會像前景 session 一樣停在終端等下一輪輸入；它只會由
+            # daemon 暫留 process。繼續顯示成「跑完停著」既無法跳轉也無事可處理，反而
+            # 把已完成工作混進在場清單。歸入 ENDED 後預設收起，`--all` / TUI 的 a 仍可查。
+            if s.status is Status.IDLE:
+                s.status = Status.ENDED
 
     bound_targets = registry._tmux_pane_targets()
     process_targets = registry._tmux_process_tree_targets(found)

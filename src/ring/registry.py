@@ -633,6 +633,24 @@ def running_claude_pids() -> list[int]:
     return pids
 
 
+def running_foreground_claude_pids() -> list[int]:
+    """目前仍有可聚焦終端的 Claude session pid。
+
+    ``running_claude_pids`` 也包含 agents mode 的背景 session，因為 scan 需要靠它們
+    找到對應 transcript；但 hook registry 不能拿背景 agent 的 cwd／數量替同專案的
+    舊前景 row 證明存活，否則一個 agent 就可能讓 crash 數小時的 session 繼續顯示。
+    """
+    bg_ids = background_agent_session_ids()
+    if not bg_ids:
+        return running_claude_pids()
+    args_by_pid = {pid: args for pid, args, _is_bg_host in _parse_ps_claude_lines(_ps_claude_snapshot())}
+    return [
+        pid
+        for pid in running_claude_pids()
+        if (session_id := _arg_session_id(args_by_pid.get(pid, ""))) is None or session_id not in bg_ids
+    ]
+
+
 def background_agent_session_ids() -> set[str]:
     """所有背景 agent（``--bg-pty-host`` 承載且已載入真 session）的 session-id 集合。
 
@@ -686,19 +704,34 @@ def running_codex_pids() -> list[int]:
     if 0.0 <= now - _codex_pids_cache[0] <= _SUBPROCESS_CACHE_TTL:
         return _codex_pids_cache[1]
     try:
-        out = subprocess.run(["ps", "-Ao", "pid,comm"], capture_output=True, text=True, timeout=3).stdout
+        out = subprocess.run(["ps", "-Ao", "pid=,comm=,args="], capture_output=True, text=True, timeout=3).stdout
     except (OSError, subprocess.SubprocessError):
         out = ""
     pids: list[int] = []
-    for line in out.splitlines()[1:]:
-        parts = line.split(None, 1)
-        if len(parts) == 2 and os.path.basename(parts[1].strip()) == "codex":
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) >= 2 and os.path.basename(parts[1].strip()) == "codex":
+            args = parts[2] if len(parts) == 3 else ""
+            if _is_codex_internal_process(args):
+                continue
             try:
                 pids.append(int(parts[0]))
             except ValueError:
                 pass
     _codex_pids_cache = (now, pids)
     return pids
+
+
+def _is_codex_internal_process(args: str) -> bool:
+    """Codex app 為工具呼叫啟動的同名內部 process，不是獨立互動 session。"""
+    tokens = args.split()
+    if not tokens:
+        return False
+    try:
+        command_index = next(i for i, token in enumerate(tokens) if os.path.basename(token) == "codex")
+    except StopIteration:
+        return False
+    return command_index + 1 < len(tokens) and tokens[command_index + 1] in {"app-server", "sandbox"}
 
 
 def running_agent_pids() -> list[int]:
@@ -776,14 +809,15 @@ def _pid_tty(pid: int) -> str:
 
 
 def _claude_procs() -> list[tuple[str, str]]:
-    """每個還活著的 claude：(cwd, tty)。cwd 判活躍/分流，tty 給終端跳轉。
+    """每個可聚焦的前景 Claude：(cwd, tty)。cwd 判活躍/分流，tty 給終端跳轉。
 
-    claude 不會把 session 的 jsonl 一直開著（lsof 看不到），但給得到 cwd 與 tty。
+    背景 agent 不在這裡按 cwd 配對；它們由 source 依 process args 的 session id 精準
+    認領，避免背景 process 的啟動 cwd 讓同專案舊 transcript 誤判成仍在場。
     同一個 cwd 可能同時開好幾個 session，所以之後在 cwd 群組裡只有 mtime 最新的
     這幾個算活著，其餘同專案的舊 session＝已離場。
     """
     procs: list[tuple[str, str]] = []
-    for pid in running_claude_pids():
+    for pid in running_foreground_claude_pids():
         cwd = _pid_cwd(pid)
         if cwd:
             procs.append((cwd, _pid_tty(pid)))
@@ -1153,11 +1187,17 @@ def _hook_sessions(
                     proc_ttys.setdefault(key, set()).add(tty)
                 proc_cwds_by_provider.setdefault(pk, []).append(real_cwd)
 
+        # 背景 agent 的 process 沒有可聚焦終端，不能拿來替同 cwd 的舊前景 hook row
+        # 證明存活；它只精準認領 args 裡明載的 session id。Claude scan 仍使用包含背景
+        # agent 的 session-id 配對，因此沒有 hook row 的 agent 也不會從看板消失。
+        background_ids = background_agent_session_ids()
         rows_by_key: dict[tuple[str, str], list[Session]] = {}
         for s in out:
             pk = _canonical_provider(s.provider)
             if pk not in _PROVIDER_PROCS:
                 continue  # 沒有 proc 偵測器 → 無法驗活性 → fail-open，交給 SessionEnd
+            if pk == "claude-code" and s.session_id in background_ids:
+                continue
             rows_by_key.setdefault((pk, _real(s.cwd)), []).append(s)
 
         for key, rows in rows_by_key.items():

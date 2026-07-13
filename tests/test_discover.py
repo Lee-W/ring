@@ -9,6 +9,7 @@ import pytest
 import ring.registry as registry
 from ring.registry import Session, Status
 from ring.sources import discover_sessions, get_by_id
+from ring.sources.claude_code import _activate_background_agents
 from ring.transcript import _head_cwd
 
 
@@ -322,6 +323,18 @@ def test_scan_commitizen_regression(monkeypatch: pytest.MonkeyPatch, tmp_path: P
 # ---------------------------------------------------------------------------
 
 
+def test_activate_background_agents_uses_session_id_not_shared_cwd() -> None:
+    """背景 process 只認領自己的 session id，不該讓同 cwd 的舊前景 transcript 復活。"""
+    now = time.time()
+    foreground = Session("foreground", "/work/maigo", Status.ENDED, now, "done", "scan")
+    agent = Session("agent", "/work/maigo", Status.ENDED, now, "running", "scan", _tail_kind="working")
+
+    _activate_background_agents([foreground, agent], {"agent"})
+
+    assert foreground.status is Status.ENDED
+    assert agent.status is Status.WORKING
+
+
 def _write_hook_row(registry_dir: Path, sid: str, cwd: str, last_active: float, tty: str = "") -> None:
     registry_dir.mkdir(parents=True, exist_ok=True)
     (registry_dir / f"{sid}.json").write_text(
@@ -351,9 +364,14 @@ def test_discover_tags_kind_agent_for_background_agent_session_ids(
     registry_dir = tmp_path / "sessions"
     now = time.time()
     agent_cwd = str(tmp_path / "work" / "agent-proj")
+    completed_agent_cwd = str(tmp_path / "work" / "completed-agent-proj")
     fg_cwd = str(tmp_path / "work" / "fg-proj")
 
     _write_hook_row(registry_dir, "agent-x", agent_cwd, now)
+    _write_hook_row(registry_dir, "agent-done", completed_agent_cwd, now)
+    completed_data = json.loads((registry_dir / "agent-done.json").read_text())
+    completed_data["status"] = "idle"
+    (registry_dir / "agent-done.json").write_text(json.dumps(completed_data))
     _write_hook_row(registry_dir, "fg-y", fg_cwd, now, tty="/dev/ttys001")
 
     monkeypatch.setattr(registry, "CLAUDE_PROJECTS", projects)
@@ -363,16 +381,28 @@ def test_discover_tags_kind_agent_for_background_agent_session_ids(
     monkeypatch.setattr(
         registry,
         "_PROVIDER_PROCS",
-        {"claude-code": lambda: [(agent_cwd, ""), (fg_cwd, "/dev/ttys001")]},
+        {
+            "claude-code": lambda: [
+                (agent_cwd, ""),
+                (completed_agent_cwd, ""),
+                (fg_cwd, "/dev/ttys001"),
+            ]
+        },
     )
-    monkeypatch.setattr(registry, "_claude_procs", lambda: [(agent_cwd, ""), (fg_cwd, "/dev/ttys001")])
+    monkeypatch.setattr(
+        registry,
+        "_claude_procs",
+        lambda: [(agent_cwd, ""), (completed_agent_cwd, ""), (fg_cwd, "/dev/ttys001")],
+    )
     monkeypatch.setattr(registry, "_tmux_targets", lambda: {})
-    monkeypatch.setattr(registry, "background_agent_session_ids", lambda: {"agent-x"})
+    monkeypatch.setattr(registry, "background_agent_session_ids", lambda: {"agent-x", "agent-done"})
 
     by_id = {s.session_id: s for s in discover_sessions()}
 
     assert by_id["agent-x"].kind == "agent"
     assert by_id["agent-x"].status is not Status.ENDED, "子行程被認成 live proc，liveness 判定應過關"
+    assert by_id["agent-done"].kind == "agent"
+    assert by_id["agent-done"].status is Status.ENDED, "已完成的背景 agent 不該繼續佔用在場 row"
     assert by_id["fg-y"].kind == "foreground"
 
 
