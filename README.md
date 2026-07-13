@@ -134,6 +134,7 @@ eval "$(ring completion bash)"
   `↑/↓` 選 session、`Enter` / `Space` 跳到它所在的終端、`p` 就地回覆權限請求、`n` 命名、`a` 切換是否顯示已離場、`dd` 隱藏 session（有新活動會自動重新出現）、`r` 刷新、`q` 離場。
   如果你跟我一樣有 vim 手癖，也可以用 `j/k` 上下移動、`g/G` 跳到第一列 / 最後一列。
   選中 🔴 等你的列時，表格下方會多一行顯示**它具體在等什麼**（要跑的指令、問的問題；hook 模式才有）。
+  Claude Code 背景 agent 以 `⚙` 標示；它沒有可跳轉的終端，選取時會顯示 `claude --resume` 接回提示，完成後預設收進已離場（按 `a` 仍可查看）。
 - 否則 → **Rich poll**（清除畫面重畫）；連 Rich 都沒有就純文字。三層優雅降級。
 
 ### 跳到 session（`Enter` / `Space` / `ring focus`）
@@ -161,6 +162,7 @@ zero-config 下每個專案只開一個 session 時也對得上。Codex 沒裝 h
 「from the … agent」標頭的），把編號選項原文列成浮層讓你選；選定後 RiNG 會**再抓一次
 畫面**確認對話框還在且沒變（防止你考慮期間它已被回掉），才代你按下那個數字，
 並回頭驗證對話框確實消失。
+確認回覆成功後，TUI 會立即清掉該筆「等你」；只有時間較新的 hook 事件（例如下一個權限請求）能再次把它標成等待。
 
 - **tmux 內的 session**：用 `tmux capture-pane` 抓畫面、`tmux send-keys` 送鍵。
 - **macOS 上直接開在 iTerm2 分頁的 session**（沒有 tmux）：用 session 的 `tty` 透過

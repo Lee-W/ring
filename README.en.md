@@ -132,6 +132,7 @@ Completes subcommands, flags, and `config set` keys; `ring focus` prompts for a 
   Use `↑/↓` to select, `Enter` / `Space` to jump, `p` to reply to a permission request in place, `n` to name a session, `a` to toggle ended sessions, `dd` to hide a session (it reappears automatically once it has new activity), `r` to refresh, and `q` to quit.
   If you have vim muscle memory like I do, `j/k` move up/down and `g/G` jump to the first/last row.
   When the selected row is 🔴 waiting, a line under the table shows **what it is concretely waiting for** (the command to run, the question asked; hook mode only).
+  Claude Code background agents carry a `⚙` badge. They have no terminal to jump to, so selecting one shows a `claude --resume` hint; completed agents are folded into ended sessions by default and remain available via `a`.
 - Otherwise: Rich polling; without Rich, plain text.
 
 ### Jump To A Session
@@ -156,6 +157,8 @@ ones with a "from the … agent" header), and lists the numbered options verbati
 After you pick one, RiNG **captures the screen again** to confirm the dialog is still there and
 unchanged (it may have been answered while you were deciding), only then sends that single
 digit, and re-checks that the dialog actually disappeared.
+Once the reply is verified, the TUI immediately clears that waiting revision. Only a newer hook
+event, such as another permission request, can mark the session as waiting again.
 
 - **Sessions inside tmux**: reads the screen with `tmux capture-pane` and sends keys with
   `tmux send-keys`.
