@@ -56,6 +56,11 @@ def discover_sessions() -> list[Session]:
             found.append(s)
         # 否則：仍在隱藏保留期內、沒有新活動 → 不收進看板。
 
+    bg_agent_ids = registry.background_agent_session_ids()
+    for s in found:
+        if s.session_id in bg_agent_ids:
+            s.kind = "agent"
+
     bound_targets = registry._tmux_pane_targets()
     process_targets = registry._tmux_process_tree_targets(found)
     targets = registry._tmux_targets()

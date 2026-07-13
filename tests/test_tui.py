@@ -694,6 +694,105 @@ async def test_permission_reply_modal_lists_options_and_esc_cancels(monkeypatch:
 
 
 @pytest.mark.asyncio
+async def test_agent_kind_badge_shown_in_status_cell(monkeypatch: pytest.MonkeyPatch) -> None:
+    """kind="agent" 的 session 在 status cell 尾綴加 ⚙ badge。"""
+    sessions = [Session("agent-1", "/x/proj", Status.WORKING, 0.0, "→ Edit", "hook", kind="agent")]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test():
+        table = app.query_one(DataTable)
+        cells = [str(c) for c in table.get_row_at(0)]
+        assert "⚙" in cells[0]
+
+
+@pytest.mark.asyncio
+async def test_agent_kind_detail_shows_resume_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """選中背景 agent 列（無 waiting_detail）→ detail 顯示接回提示，含 session-id。"""
+    from textual.widgets import Static
+
+    sessions = [Session("agent-1", "/x/proj", Status.WORKING, 0.0, "→ Edit", "hook", kind="agent")]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test():
+        detail = str(app.query_one("#detail", Static).render())
+        assert "agent-1" in detail
+        assert "claude --resume" in detail
+
+
+@pytest.mark.asyncio
+async def test_agent_jump_shows_resume_hint_without_focus_jump(monkeypatch: pytest.MonkeyPatch) -> None:
+    """背景 agent（無 tmux/tty）按 Enter → 顯示接回提示、不呼叫 focus_jump（沒有畫面可跳）。"""
+    from textual.widgets import Static
+
+    sessions = [Session("agent-1", "/x/proj", Status.WORKING, 0.0, "→ Edit", "hook", kind="agent")]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+
+    jumped: list[str] = []
+
+    def fake_focus_jump(s: Session) -> tuple[bool, str]:
+        jumped.append(s.session_id)
+        return True, "jumped"
+
+    monkeypatch.setattr(tui, "focus_jump", fake_focus_jump)
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("enter")
+        assert jumped == [], "背景 agent 沒有終端可跳，不該呼叫 focus_jump"
+        status = str(app.query_one("#status", Static).render())
+        assert "agent-1" in status
+        assert "claude --resume" in status
+
+
+@pytest.mark.asyncio
+async def test_foreground_jump_unaffected_by_agent_handling(monkeypatch: pytest.MonkeyPatch) -> None:
+    """kind="foreground"（預設）的 session 按 Enter → 行為不變，正常呼叫 focus_jump。"""
+    sessions = [Session("fg-1", "/x/proj", Status.WORKING, 0.0, "→ Edit", "hook", tmux_target="main:1.0")]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+
+    jumped: list[str] = []
+
+    def fake_focus_jump(s: Session) -> tuple[bool, str]:
+        jumped.append(s.session_id)
+        return True, "jumped"
+
+    monkeypatch.setattr(tui, "focus_jump", fake_focus_jump)
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("enter")
+        assert jumped == ["fg-1"]
+
+
+@pytest.mark.asyncio
+async def test_agent_permission_reply_shows_resume_hint_without_sending_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """背景 agent（無 tmux/tty）按 p → toast 接回提示，不送鍵、連 capture 都不該發生。"""
+    from textual.widgets import Static
+
+    sessions = [Session("agent-1", "/x/proj", Status.WAITING, 0.0, "→ Bash", "hook", kind="agent")]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+    captured: list[str] = []
+    monkeypatch.setattr(permission, "capture_pane", lambda target: captured.append(target))
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        status = str(app.query_one("#status", Static).render())
+        assert "agent-1" in status
+        assert "claude --resume" in status
+        assert captured == []
+
+
+@pytest.mark.asyncio
 async def test_permission_reply_digit_key_sends_reply(monkeypatch: pytest.MonkeyPatch) -> None:
     """浮層裡按數字鍵 → 以該編號呼叫 send_permission_reply（用 pane id 優先於 window 座標）。"""
     sessions = [

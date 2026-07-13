@@ -161,6 +161,9 @@ msgstr "terminal tab not found (it may have been closed; if it still appears aft
 msgid "沒有 focuser 接得住（裝 hook，或一個專案只開一個 session 才測得到 tty）"
 msgstr "no focuser handled it (install hooks, or keep one session per project so tty is detectable)"
 
+msgid "背景 agent，沒有終端可跳；用 `claude --resume {session_id}` 接回"
+msgstr "background agent, no terminal to jump to; reconnect with `claude --resume {session_id}`"
+
 # ── install-hooks ──
 msgid "⚠️ {path} 不是合法 JSON，先處理它再來。"
 msgstr "⚠️ {path} is not valid JSON; fix it first."

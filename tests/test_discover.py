@@ -318,6 +318,65 @@ def test_scan_commitizen_regression(monkeypatch: pytest.MonkeyPatch, tmp_path: P
 
 
 # ---------------------------------------------------------------------------
+# kind="agent" 貼標（背景 agent session）
+# ---------------------------------------------------------------------------
+
+
+def _write_hook_row(registry_dir: Path, sid: str, cwd: str, last_active: float, tty: str = "") -> None:
+    registry_dir.mkdir(parents=True, exist_ok=True)
+    (registry_dir / f"{sid}.json").write_text(
+        json.dumps(
+            {
+                "session_id": sid,
+                "provider": "claude-code",
+                "cwd": cwd,
+                "status": "working",
+                "last_active": last_active,
+                "last_action": "→ Edit",
+                "tty": tty,
+            }
+        )
+    )
+
+
+def test_discover_tags_kind_agent_for_background_agent_session_ids(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """session-id 在 background_agent_session_ids() 集合裡 → kind="agent"，且活性不受影響
+    （子行程被 running_claude_pids 認成 live proc，liveness 判定過關，不被判 ENDED）；
+    不在集合者維持 kind="foreground"。
+    """
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    registry_dir = tmp_path / "sessions"
+    now = time.time()
+    agent_cwd = str(tmp_path / "work" / "agent-proj")
+    fg_cwd = str(tmp_path / "work" / "fg-proj")
+
+    _write_hook_row(registry_dir, "agent-x", agent_cwd, now)
+    _write_hook_row(registry_dir, "fg-y", fg_cwd, now, tty="/dev/ttys001")
+
+    monkeypatch.setattr(registry, "CLAUDE_PROJECTS", projects)
+    monkeypatch.setattr(registry, "RING_REGISTRY", registry_dir)
+    # 沒有 jsonl 供 scan 比對，但 hook liveness 需要 claude-code 的 live proc 偵測器：
+    # 直接替換 _PROVIDER_PROCS，避免經 collect_provider_procs() 打真實 ps（含 codex）。
+    monkeypatch.setattr(
+        registry,
+        "_PROVIDER_PROCS",
+        {"claude-code": lambda: [(agent_cwd, ""), (fg_cwd, "/dev/ttys001")]},
+    )
+    monkeypatch.setattr(registry, "_claude_procs", lambda: [(agent_cwd, ""), (fg_cwd, "/dev/ttys001")])
+    monkeypatch.setattr(registry, "_tmux_targets", lambda: {})
+    monkeypatch.setattr(registry, "background_agent_session_ids", lambda: {"agent-x"})
+
+    by_id = {s.session_id: s for s in discover_sessions()}
+
+    assert by_id["agent-x"].kind == "agent"
+    assert by_id["agent-x"].status is not Status.ENDED, "子行程被認成 live proc，liveness 判定應過關"
+    assert by_id["fg-y"].kind == "foreground"
+
+
+# ---------------------------------------------------------------------------
 # get_by_id
 # ---------------------------------------------------------------------------
 

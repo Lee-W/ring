@@ -46,6 +46,11 @@ from ring.watcher import WaitingAlertScheduler
 _ORDER = (Status.WAITING, Status.WORKING, Status.IDLE, Status.ENDED)
 
 
+def _agent_resume_hint(session_id: str) -> str:
+    """背景 agent（無終端可跳）的誠實提示：講清楚沒有畫面可跳，附接回指令。"""
+    return _("背景 agent，沒有終端可跳；用 `claude --resume {session_id}` 接回", session_id=session_id)
+
+
 class _Grid(DataTable[Text]):
     """看板表格。在 DataTable 既有的方向鍵之外，加上 vim 風的 j/k/g/G 導覽。
 
@@ -368,6 +373,8 @@ class RingApp(App[None]):
             suffix = f" {s.waiting_icon}" if s.status is Status.WAITING and s.waiting_icon else ""
             if s.hook_stale:
                 suffix += " ⚠"
+            if s.kind == "agent":
+                suffix += " ⚙"
             status_cell = Text(f"{marker}{s.status.marker} {status_label(s.status)}{suffix}", style=style)
             progress = f"{s.todo[0]}/{s.todo[1]}" if s.todo else "·"
             loc_cell = f"📍{_middle_truncate(s.location, _LOC_MAX)}"
@@ -395,6 +402,8 @@ class RingApp(App[None]):
         if s is not None and s.status is Status.WAITING and s.waiting_detail:
             icon = s.waiting_icon or "🔴"
             widget.update(Text(f"  {icon} {s.waiting_detail}", style=_STATUS_STYLE[Status.WAITING]))
+        elif s is not None and s.kind == "agent":
+            widget.update(Text(f"  ⚙ {_agent_resume_hint(s.session_id)}", style="grey50"))
         else:
             widget.update("")
 
@@ -447,8 +456,14 @@ class RingApp(App[None]):
             return
         if s.session_id == self._focused_sid:
             self._focused_sid = None  # 你已親自跳過去處理，解除通知標記
-        ok, msg = focus_jump(s)
         name = self._display_name(s)
+        if s.kind == "agent" and not s.tmux_target and not s.tty:
+            # 背景 agent 本就無終端可跳，不呼叫 focus_jump（沒有畫面可假裝跳得過去）。
+            text = _("{project}：{msg}", project=name, msg=_agent_resume_hint(s.session_id))
+            self._set_status(text)
+            self.notify(text, severity="warning", timeout=10)
+            return
+        ok, msg = focus_jump(s)
         if ok:
             text = _("→ {project}（{where}）", project=name, where=msg)
         else:
@@ -481,12 +496,15 @@ class RingApp(App[None]):
         name = self._display_name(s)
         backend = permission.select_backend(s)
         if backend is None:
-            self._toast(
-                _(
-                    "{project}：沒有 tmux 座標，且非 macOS 上的 iTerm2 session，無法就地回覆",
-                    project=name,
+            if s.kind == "agent":
+                self._toast(_("{project}：{msg}", project=name, msg=_agent_resume_hint(s.session_id)))
+            else:
+                self._toast(
+                    _(
+                        "{project}：沒有 tmux 座標，且非 macOS 上的 iTerm2 session，無法就地回覆",
+                        project=name,
+                    )
                 )
-            )
             return
         screen = backend.capture()
         if screen is None:

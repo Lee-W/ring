@@ -304,6 +304,7 @@ class Session:
     provider: str = ""
     waiting_kind: str = ""  # permission | question | plan | idle；空代表非 WAITING 或舊 registry
     waiting_detail: str = ""  # 🔴 等你時「到底在等什麼」（權限指令 / 問題內容；hook 模式才有）
+    kind: str = "foreground"  # "foreground" | "agent"；背景 agent（bg-pty-host 承載）由 discover 貼標
     _tail_kind: str = field(default="none", repr=False, compare=False)  # 內部：scan 路徑暫存對話尾判定
     origin_cwd: str = ""  # 開場 cwd（session 第一筆帶 cwd 紀錄），用於歸屬；空時 fallback 到 cwd
 
@@ -518,48 +519,165 @@ def _tmux_process_tree_targets(sessions: list[Session]) -> dict[str, str]:
 
 _pids_cache: tuple[float, list[int]] = (-1.0, [])
 _codex_pids_cache: tuple[float, list[int]] = (-1.0, [])
+_ps_claude_snapshot_cache: tuple[float, str] = (-1.0, "")
+_bg_agent_session_ids_cache: tuple[float, frozenset[str]] = (-1.0, frozenset())
+
+# args 內任一出現即可判定「這是 claude 安裝二進位在跑」的路徑標記。ps comm 對
+# daemon-exec 的二進位常被截斷（如 `/Users/weilee/.l`），單看 comm 不可靠。
+_CLAUDE_PATH_MARKERS = ("ClaudeCode.app", "claude/versions/", "/.claude/")
 
 
-def running_claude_pids() -> list[int]:
-    global _pids_cache
+def _is_claude_session_line(comm: str, args: str) -> bool:
+    """判定一行 ``ps`` 輸出是否為 claude session process（承載者或子行程皆算）。
+
+    comm basename 為 ``claude`` 是最常見的情況；但 daemon 承載的 process，ps comm
+    會被截斷成本機路徑片段（例如 ``/Users/weilee/.l``），此時改看 args 是否含可辨識
+    的 claude 安裝路徑標記，或 args 內任一 token 的 basename 為 ``claude``
+    （args 首 token 有時只是版本號如 ``2.1.187``，不能只看 args[0]）。第三個 fallback
+    另外要求 args 內必須有 ``--session-id``，否則像 ``grep -r claude .``、
+    ``less claude`` 這類完全無關但恰好帶 ``claude`` 字面的 process 會被誤收；
+    真正被截斷 comm 的 claude session（daemon 承載者與其子行程）必然帶
+    ``--session-id``，所以這個限定不會犧牲 fallback 能力。
+    """
+    if os.path.basename(comm.strip()) == "claude":
+        return True
+    if any(marker in args for marker in _CLAUDE_PATH_MARKERS):
+        return True
+    tokens = args.split()
+    if "--session-id" not in tokens:
+        return False
+    return any(os.path.basename(tok) == "claude" for tok in tokens)
+
+
+def _ps_claude_snapshot() -> str:
+    """``ps -Ao pid,comm,args`` 的短快取原始輸出，供多個 claude proc 判定函式共用。"""
+    global _ps_claude_snapshot_cache
     now = time.monotonic()
-    if 0.0 <= now - _pids_cache[0] <= _SUBPROCESS_CACHE_TTL:
-        return _pids_cache[1]
+    if 0.0 <= now - _ps_claude_snapshot_cache[0] <= _SUBPROCESS_CACHE_TTL:
+        return _ps_claude_snapshot_cache[1]
     try:
         out = subprocess.run(["ps", "-Ao", "pid,comm,args"], capture_output=True, text=True, timeout=3).stdout
     except (OSError, subprocess.SubprocessError):
         out = ""
-    pids: list[int] = []
+    _ps_claude_snapshot_cache = (now, out)
+    return out
+
+
+def _parse_ps_claude_lines(out: str) -> list[tuple[int, str, bool]]:
+    """把 ``ps`` 輸出解析成 claude session 行：``(pid, args, is_bg_pty_host)``。
+
+    不論是否為背景 process（daemon / bg-spare / bg-pty-host）都收進來——背景判定
+    交給呼叫端各自決定要不要濾除；``_hook_sessions`` 的活性判定與
+    ``running_claude_pids`` 對「該濾誰」的答案不同，不能在這裡先幫忙決定。
+    """
+    entries: list[tuple[int, str, bool]] = []
     for line in out.splitlines()[1:]:
         parts = line.split(None, 2)
-        if len(parts) >= 2 and os.path.basename(parts[1].strip()) == "claude":
-            args = parts[2] if len(parts) == 3 else ""
-            if _is_claude_background_process(args):
-                continue
-            try:
-                pids.append(int(parts[0]))
-            except ValueError:
-                pass
+        if len(parts) < 2:
+            continue
+        comm = parts[1].strip()
+        args = parts[2] if len(parts) == 3 else ""
+        if not _is_claude_session_line(comm, args):
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+        entries.append((pid, args, "--bg-pty-host" in args.split()))
+    return entries
+
+
+def _arg_session_id(args: str) -> str | None:
+    """解析 args 裡 ``--session-id`` 後面的那個 token；沒有就回 ``None``。"""
+    tokens = args.split()
+    for i, tok in enumerate(tokens):
+        if tok == "--session-id" and i + 1 < len(tokens):
+            return tokens[i + 1]
+    return None
+
+
+def running_claude_pids() -> list[int]:
+    """目前活著、使用者可聚焦的 claude CLI pid（daemon / bg-spare / bg 暖機承載者濾除）。
+
+    承載者（``--bg-pty-host`` + ``--session-id``）與其子行程常成對出現、共用同一個
+    session-id：兩者都算「真 session」不濾除，但只留一個 pid，偏好子行程——子行程
+    的 cwd（lsof 量得到）誠實，承載者的 cwd 常是 daemon 自己的 cwd，非專案目錄。
+    只有承載者、沒有子行程時（fallback）仍保留承載者這個 pid，好過整個 session 消失。
+    """
+    global _pids_cache
+    now = time.monotonic()
+    if 0.0 <= now - _pids_cache[0] <= _SUBPROCESS_CACHE_TTL:
+        return _pids_cache[1]
+    entries = _parse_ps_claude_lines(_ps_claude_snapshot())
+
+    pids: list[int] = []
+    sid_index: dict[str, int] = {}  # session-id → 該 pid 在 pids 裡的位置，供子行程晚到時換掉
+    sid_is_bg_host: dict[str, bool] = {}
+    for pid, args, is_bg_host in entries:
+        if _is_claude_background_process(args):
+            continue
+        session_id = _arg_session_id(args)
+        if session_id is None:
+            pids.append(pid)
+            continue
+        if session_id not in sid_index:
+            sid_index[session_id] = len(pids)
+            sid_is_bg_host[session_id] = is_bg_host
+            pids.append(pid)
+        elif sid_is_bg_host[session_id] and not is_bg_host:
+            # 子行程晚到：換掉先記到的承載者 pid，偏好子行程（cwd 誠實）。
+            pids[sid_index[session_id]] = pid
+            sid_is_bg_host[session_id] = False
+
     _pids_cache = (now, pids)
     return pids
 
 
+def background_agent_session_ids() -> set[str]:
+    """所有背景 agent（``--bg-pty-host`` 承載且已載入真 session）的 session-id 集合。
+
+    給 ``discover_sessions()`` 對應貼 ``kind="agent"`` 標籤用。與 ``running_claude_pids``
+    共用同一份 ``ps`` 快照（``_ps_claude_snapshot``），不額外多打一次 ``ps``。
+    """
+    global _bg_agent_session_ids_cache
+    now = time.monotonic()
+    if 0.0 <= now - _bg_agent_session_ids_cache[0] <= _SUBPROCESS_CACHE_TTL:
+        return set(_bg_agent_session_ids_cache[1])
+    entries = _parse_ps_claude_lines(_ps_claude_snapshot())
+    ids = frozenset(
+        session_id
+        for _pid, args, is_bg_host in entries
+        if is_bg_host and (session_id := _arg_session_id(args)) is not None
+    )
+    _bg_agent_session_ids_cache = (now, ids)
+    return set(ids)
+
+
 def _is_claude_background_process(args: str) -> bool:
-    """Claude daemon / bg pty host / bg-spare 備用 process 不是使用者可聚焦的 CLI session。
+    """Claude daemon / bg pty host 暖機承載者 / bg-spare 不是使用者可聚焦的 CLI session。
 
     ``--bg-spare`` 是 Claude Code 預熱的備用 process（供下一個 ``claude`` 呼叫快速接手），
-    跟 ``--bg-pty-host`` 一樣不代表真正的使用者 session，卻會被 ``_claude_procs`` 合成假
-    session 列上看板，冒出幽靈列。token 形狀（`--bg-spare`，`--` flag，不是位置參數）取自
-    本機 claude CLI 2.1.206 二進位的 strings 掃描（無法用 ``ps`` 現場逮到活體 bg-spare
-    process，掃描時機是巧合——它壽命短、隨用隨滅）：
+    跟尚未載入真 session 的 ``--bg-pty-host`` 承載者一樣不代表真正的使用者 session，卻會
+    被 ``_claude_procs`` 合成假 session 列上看板，冒出幽靈列。token 形狀（`--bg-spare`，
+    `--` flag，不是位置參數）取自本機 claude CLI 2.1.206 二進位的 strings 掃描（無法用
+    ``ps`` 現場逮到活體 bg-spare process，掃描時機是巧合——它壽命短、隨用隨滅）：
     ``[a,...l,"--bg-pty-host",r,"200","50","--",a,...l,"--bg-spare",n]`` spawn 呼叫，
     以及 bg-spare process 自己啟動時對 ``process.argv`` 做的
     ``e.includes("--bg-spare", t+1)`` 檢查，兩處都證實是 ``--`` 前綴的 flag token。
+
+    ``--bg-pty-host`` 本身不再一律濾除：暖機階段（spare sock，無 ``--session-id``）仍
+    濾除；一旦掛上真正的 ``--session-id``（使用者已進入 agents、真背景 session），就不
+    再視為背景 process——那是一個真人在跑的背景 agent，該讓它現身，只是要標成
+    ``kind="agent"``（見 ``background_agent_session_ids``）。
     """
     tokens = args.split()
     if len(tokens) >= 3 and tokens[1:3] == ["daemon", "run"]:
         return True
-    return "--bg-pty-host" in tokens or "--bg-spare" in tokens
+    if "--bg-spare" in tokens:
+        return True
+    if "--bg-pty-host" in tokens:
+        return _arg_session_id(args) is None
+    return False
 
 
 def running_codex_pids() -> list[int]:

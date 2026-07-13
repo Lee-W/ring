@@ -109,27 +109,89 @@ def test_tail_records_reads_last_valid_json(tmp_path: Path) -> None:
     assert {"a": 1} in records
 
 
+def _reset_claude_ps_caches(monkeypatch: pytest.MonkeyPatch) -> None:
+    """把 running_claude_pids / background_agent_session_ids 共用的 ps 快取全部歸零。
+
+    三層快取（``_pids_cache``、``_ps_claude_snapshot_cache``、``_bg_agent_session_ids_cache``）
+    共用 1 秒 TTL；若只重置其中一層，快速連跑的測試會撈到上一個測試 monkeypatch 的
+    ``subprocess.run`` 留下的舊 ps 快照，斷言會對到錯的 fixture（已實測會發生）。
+    """
+    monkeypatch.setattr("ring.registry._pids_cache", (-1.0, []))
+    monkeypatch.setattr("ring.registry._ps_claude_snapshot_cache", (-1.0, ""))
+    monkeypatch.setattr("ring.registry._bg_agent_session_ids_cache", (-1.0, frozenset()))
+
+
 def test_running_claude_pids_ignores_daemon_and_bg_pty(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Claude daemon / bg-pty host 不該算成 RiNG 可聚焦的 live session。"""
+    """daemon 濾除；bg-pty-host 承載者＋子行程成對出現時，去重成一個 pid，且是子行程。
+
+    子行程 comm 被 daemon-exec 截斷成本機路徑片段（``/Users/me/.l``），靠 args 內的
+    claude 安裝路徑標記（``claude/versions/``）辨識，而非 comm/args[0] basename。
+    """
 
     class Result:
         stdout = "\n".join(
             [
                 "  PID COMM ARGS",
                 (" 101 /Users/me/.local/bin/claude /Users/me/.local/bin/claude daemon run --origin transient"),
-                (
+                (  # 承載者：bg-pty-host + session-id
                     " 102 claude "
                     "claude --bg-pty-host /tmp/cc-daemon/pty/s.sock 72 35 -- "
                     "/Users/me/.local/share/claude/versions/2.1.187 --session-id abc"
                 ),
-                " 103 claude claude --plugin-dir /work/app",
+                (  # 子行程：comm 截斷、同 session-id、無 bg flag，cwd 才誠實
+                    " 103 /Users/me/.l "
+                    "/Users/me/.local/share/claude/versions/2.1.187 --session-id abc "
+                    "--resume /Users/me/.claude/projects/x/abc.jsonl --fork-session"
+                ),
+                " 104 claude claude --plugin-dir /work/app",
             ]
         )
 
-    monkeypatch.setattr("ring.registry._pids_cache", (-1.0, []))
+    _reset_claude_ps_caches(monkeypatch)
     monkeypatch.setattr("ring.registry.subprocess.run", lambda *args, **kwargs: Result())
 
-    assert running_claude_pids() == [103]
+    assert running_claude_pids() == [103, 104], "承載者應被子行程換掉，daemon 應濾除"
+
+
+def test_running_claude_pids_only_carrier_no_child_falls_back_to_carrier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """只有承載者、沒有子行程時（fallback），仍保留承載者這個 pid，好過整個 session 消失。"""
+
+    class Result:
+        stdout = "\n".join(
+            [
+                "  PID COMM ARGS",
+                (
+                    " 201 claude "
+                    "claude --bg-pty-host /tmp/cc-daemon/pty/s.sock 72 35 -- "
+                    "/Users/me/.local/share/claude/versions/2.1.187 --session-id xyz"
+                ),
+            ]
+        )
+
+    _reset_claude_ps_caches(monkeypatch)
+    monkeypatch.setattr("ring.registry.subprocess.run", lambda *args, **kwargs: Result())
+
+    assert running_claude_pids() == [201]
+
+
+def test_running_claude_pids_ignores_bg_pty_host_without_session_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``--bg-pty-host`` 指向 spare sock、無 ``--session-id``＝暖機承載者，仍要濾除。"""
+
+    class Result:
+        stdout = "\n".join(
+            [
+                "  PID COMM ARGS",
+                (" 301 claude claude --bg-pty-host /tmp/cc-daemon/spare/x.sock 72 35"),
+                " 302 claude claude --plugin-dir /work/app",
+            ]
+        )
+
+    _reset_claude_ps_caches(monkeypatch)
+    monkeypatch.setattr("ring.registry.subprocess.run", lambda *args, **kwargs: Result())
+
+    assert running_claude_pids() == [302]
 
 
 def test_running_claude_pids_ignores_bg_spare(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -149,10 +211,81 @@ def test_running_claude_pids_ignores_bg_spare(monkeypatch: pytest.MonkeyPatch) -
             ]
         )
 
-    monkeypatch.setattr("ring.registry._pids_cache", (-1.0, []))
+    _reset_claude_ps_caches(monkeypatch)
     monkeypatch.setattr("ring.registry.subprocess.run", lambda *args, **kwargs: Result())
 
     assert running_claude_pids() == [105]
+
+
+def test_is_claude_session_line_recognizes_truncated_comm_via_path_marker() -> None:
+    """comm 被截斷（daemon-exec）時，靠 args 的 claude 安裝路徑標記辨識，不靠 comm/args[0]。"""
+    assert registry._is_claude_session_line("claude", "claude --plugin-dir /work/app") is True
+    # comm 截斷、args[0] 只是版本號（不是 "claude"）→ 靠 ClaudeCode.app / claude/versions/ 標記
+    assert (
+        registry._is_claude_session_line(
+            "/Users/weilee/.l",
+            "/Applications/Claude Code.app/Contents/Resources/ClaudeCode.app/2.1.187 --session-id abc",
+        )
+        is True
+    )
+    assert (
+        registry._is_claude_session_line(
+            "/Users/weilee/.l", "/Users/me/.local/share/claude/versions/2.1.187 --session-id abc"
+        )
+        is True
+    )
+    # 無 claude 相關線索 → 不是
+    assert registry._is_claude_session_line("/Users/weilee/.l", "2.1.187 --session-id abc") is False
+    assert registry._is_claude_session_line("zsh", "-zsh") is False
+
+
+def test_is_claude_session_line_third_branch_requires_session_id() -> None:
+    """第三分支（basename token fallback）必須同時帶 --session-id，否則誤判 grep/less 等無關 process。"""
+    assert registry._is_claude_session_line("grep", "grep -r claude .") is False
+    assert registry._is_claude_session_line("less", "less claude") is False
+    assert registry._is_claude_session_line("/Users/x/.l", "/opt/homebrew/bin/claude --session-id abc") is True
+
+
+def test_arg_session_id_parses_token_after_flag() -> None:
+    assert registry._arg_session_id("claude --bg-pty-host x.sock --session-id abc --fork-session") == "abc"
+    assert registry._arg_session_id("claude --plugin-dir /work/app") is None
+    assert registry._arg_session_id("claude --session-id") is None  # flag 是最後一個 token，沒有值
+
+
+def test_is_claude_background_process_four_branches() -> None:
+    """取捨 B 的四分支：daemon run／bg-spare／bg-pty-host 無 session-id → True；其餘 False。"""
+    assert registry._is_claude_background_process("claude daemon run --origin transient") is True
+    assert registry._is_claude_background_process("claude --bg-spare tok123") is True
+    assert registry._is_claude_background_process("claude --bg-pty-host /tmp/spare/x.sock 72 35") is True
+    assert (
+        registry._is_claude_background_process("claude --bg-pty-host /tmp/pty/x.sock 72 35 --session-id abc") is False
+    )
+    assert registry._is_claude_background_process("claude --plugin-dir /work/app") is False
+
+
+def test_background_agent_session_ids_only_collects_bg_pty_host_with_session_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """真背景 agent（bg-pty-host + session-id）的 session-id 入集合；spare/daemon/前景都不入。"""
+
+    class Result:
+        stdout = "\n".join(
+            [
+                "  PID COMM ARGS",
+                " 101 claude claude daemon run --origin transient",
+                " 102 claude claude --bg-pty-host /tmp/spare/x.sock 72 35",  # 暖機，無 session-id
+                (
+                    " 103 claude claude --bg-pty-host /tmp/pty/s.sock 72 35 -- "
+                    "/Users/me/.local/share/claude/versions/2.1.187 --session-id abc"
+                ),
+                " 104 claude claude --plugin-dir /work/app",  # 前景，無 session-id
+            ]
+        )
+
+    _reset_claude_ps_caches(monkeypatch)
+    monkeypatch.setattr("ring.registry.subprocess.run", lambda *args, **kwargs: Result())
+
+    assert registry.background_agent_session_ids() == {"abc"}
 
 
 def test_delete_session_state_removes_hook_registry_only(
