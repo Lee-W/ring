@@ -246,6 +246,34 @@ def test_is_claude_session_line_recognizes_truncated_comm_via_path_marker() -> N
     assert registry._is_claude_session_line("zsh", "-zsh") is False
 
 
+def test_is_claude_session_line_rejects_tool_call_shell_wrapper() -> None:
+    """回歸測試：Claude Code 執行 Bash 工具呼叫時 spawn 的 shell wrapper 不是 claude session。
+
+    真實樣本取自 2026-07-13/14 現場取證（proc_logger.log，pid 47310）：Claude Code 每次
+    Bash 工具呼叫都會 spawn ``/bin/zsh -c "source .../.claude/shell-snapshots/....sh || ...``，
+    comm 為完整路徑 ``/bin/zsh``、存活 0-10 秒、cwd 為專案目錄。這條 args 裡含
+    ``/.claude/`` 子字串（shell-snapshots 路徑本身在 ``~/.claude/`` 之下），命中舊版
+    ``_CLAUDE_PATH_MARKERS`` 的 ``"/.claude/"`` 標記而被誤判為 claude session process，
+    造成 board 上 session 數在每次工具呼叫時 flap（synthetic row 或 live 名額被灌水）。
+    """
+    real_args = (
+        "/bin/zsh -c source /Users/weilee/.claude/shell-snapshots/"
+        "snapshot-zsh-1783953040611-x2s834.sh 2>/dev/null || true && "
+        "setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && "
+        'eval \'MYPID=$$\necho "shell pid: $MYPID"\nlsof -a -p "$MYPID" -d cwd -Fn\' < /dev/null'
+    )
+    assert registry._is_claude_session_line("/bin/zsh", real_args) is False
+    # 常見 shell 各種 comm 形狀（含 login shell 前綴 "-"）一律不是 claude session，
+    # 即使 args 剛好也帶 claude 相關子字串。
+    assert registry._is_claude_session_line("/bin/bash", "/bin/bash -c source /Users/x/.claude/foo.sh") is False
+    assert registry._is_claude_session_line("-zsh", "-zsh -c source /Users/x/.claude/foo.sh") is False
+    # 但截斷 comm 的 daemon 承載者（既有測試護著的情境）不受影響：basename 不是已知
+    # shell 名稱，仍照原本的 path marker 邏輯判定為 claude session。
+    assert (
+        registry._is_claude_session_line("/Users/weilee/.l", "/Users/me/.local/share/claude/versions/2.1.187") is True
+    )
+
+
 def test_is_claude_session_line_third_branch_requires_session_id() -> None:
     """第三分支（basename token fallback）必須同時帶 --session-id，否則誤判 grep/less 等無關 process。"""
     assert registry._is_claude_session_line("grep", "grep -r claude .") is False

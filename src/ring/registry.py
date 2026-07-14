@@ -531,6 +531,26 @@ _bg_agent_session_ids_cache: tuple[float, frozenset[str]] = (-1.0, frozenset())
 # daemon-exec 的二進位常被截斷（如 `/Users/weilee/.l`），單看 comm 不可靠。
 _CLAUDE_PATH_MARKERS = ("ClaudeCode.app", "claude/versions/", "/.claude/")
 
+# Claude Code 每次 Bash 工具呼叫都會 spawn 一個短命（0-10 秒）的 shell 承載
+# `source ~/.claude/shell-snapshots/snapshot-*.sh` 之類的初始化腳本，cwd 就是
+# 專案目錄——外觀酷似真正的 claude session。這個 shell 的 comm 是完整路徑
+# （例如 `/bin/zsh`），但 args 裡含 `/.claude/` 子字串，會命中上面的
+# `_CLAUDE_PATH_MARKERS`，被誤判為 claude session process，導致 board 上 session
+# 數在每次任何 session 跑指令時 flap（synthetic row 出現又消失 / live 名額被灌水）。
+# 真實樣本見 2026-07-13/14 現場取證（proc_logger.log）。這裡的守門：comm basename
+# 一旦是已知 shell 名稱，一律不是 claude session——真正的 claude session comm
+# 只會是 `claude` 或被截斷的安裝路徑片段（如 `/Users/weilee/.l`），從不會是
+# shell 執行檔本身。
+_SHELL_COMM_BASENAMES = frozenset({"sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "fish"})
+
+
+def _is_shell_comm(comm: str) -> bool:
+    """comm basename 是否為常見 shell（含 login shell 的 ``-`` 前綴，如 ``-zsh``）。"""
+    base = os.path.basename(comm.strip())
+    if base.startswith("-"):
+        base = base[1:]
+    return base in _SHELL_COMM_BASENAMES
+
 
 def _is_claude_session_line(comm: str, args: str) -> bool:
     """判定一行 ``ps`` 輸出是否為 claude session process（承載者或子行程皆算）。
@@ -543,9 +563,15 @@ def _is_claude_session_line(comm: str, args: str) -> bool:
     ``less claude`` 這類完全無關但恰好帶 ``claude`` 字面的 process 會被誤收；
     真正被截斷 comm 的 claude session（daemon 承載者與其子行程）必然帶
     ``--session-id``，所以這個限定不會犧牲 fallback 能力。
+
+    comm basename 為 shell（見 ``_is_shell_comm``）時提前回傳 ``False``：Bash 工具
+    呼叫 spawn 的 shell wrapper args 常含 ``/.claude/``（source shell-snapshots 腳本），
+    會誤觸下面的 path marker 分支，必須在那之前擋下。
     """
     if os.path.basename(comm.strip()) == "claude":
         return True
+    if _is_shell_comm(comm):
+        return False
     if any(marker in args for marker in _CLAUDE_PATH_MARKERS):
         return True
     tokens = args.split()
