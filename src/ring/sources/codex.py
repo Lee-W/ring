@@ -10,7 +10,12 @@ class CodexSource:
     name = "codex"
 
     def discover(self) -> list[Session]:
-        return registry._codex_threads(registry._codex_procs())
+        procs = registry._codex_procs()
+        if procs is None:
+            # 這輪 ps 掃描失敗（未知）。拿空清單去掃會把每個 thread 判成 ENDED，
+            # 覆蓋掉 hook 已保護的 row。未知不等於離場——這輪不貢獻任何 row。
+            return []
+        return registry._codex_threads(procs)
 
 
 source = CodexSource()

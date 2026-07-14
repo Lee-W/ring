@@ -123,6 +123,65 @@ def test_scan_marks_recent_transcript_ended_without_live_proc(monkeypatch: pytes
     assert sessions[0].status is Status.ENDED
 
 
+def test_scan_source_contributes_nothing_when_proc_scan_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """ps/lsof 掃描失敗那輪，hook 保住的 WAITING row 不得被 scan 的 ENDED row 蓋掉。
+
+    掃描失敗（``None``＝未知）時，scan source 沒有「保留上一輪狀態」的介面，只能把每個
+    transcript 判成 ENDED。若把 ``None`` 攤平成 ``[]`` 照常產 row，那批 ENDED row 會經由
+    ``_merge_duplicate_session`` 覆蓋掉 ``_hook_sessions`` 已保護好的 WAITING row，session
+    就從看板上消失、下一輪掃描成功時又復活。未知不等於離場：這輪不貢獻任何 row。
+    """
+    now = time.time()
+    projects = tmp_path / "projects"
+    registry_dir = tmp_path / "sessions"
+
+    # transcript 最後一筆是 end_turn（tail kind = "waiting"，不受 merge 的 interrupted 守衛
+    # 保護），且 mtime 比 hook 事件新——這正是 _merge_duplicate_session 會讓 scan row 覆蓋
+    # hook row 的條件，也是看板上最常見的「🔴 等你」狀態。
+    d = projects / "-work-app"
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / "s1.jsonl"
+    f.write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "cwd": "/work/app",
+                "message": {"stop_reason": "end_turn", "content": [{"type": "text", "text": "done"}]},
+            }
+        )
+        + "\n"
+    )
+    os.utime(f, (now, now))
+
+    registry_dir.mkdir(parents=True, exist_ok=True)
+    (registry_dir / "s1.json").write_text(
+        json.dumps(
+            {
+                "session_id": "s1",
+                "provider": "claude-code",
+                "cwd": "/work/app",
+                "status": "waiting",
+                "last_active": now - 5,  # hook 事件略舊於 transcript mtime
+                "last_action": "—",
+                "tty": "/dev/ttys010",
+            }
+        )
+    )
+
+    monkeypatch.setattr(registry, "CLAUDE_PROJECTS", projects)
+    monkeypatch.setattr(registry, "RING_REGISTRY", registry_dir)
+    monkeypatch.setattr(registry, "_tmux_targets", lambda: {})
+    # 這輪 ps/lsof 掃描失敗：偵測器與 scan source 兩邊都拿到「未知」。
+    monkeypatch.setattr(registry, "_claude_procs", lambda: None)
+    monkeypatch.setattr(registry, "_codex_procs", lambda: None)
+    monkeypatch.setattr(registry, "collect_provider_procs", lambda: {"claude-code": None})
+
+    by_id = {s.session_id: s for s in discover_sessions()}
+
+    assert by_id["s1"].status is Status.WAITING, "掃描失敗不得讓 WAITING session 離場"
+    assert by_id["s1"].source == "hook", "掃描失敗那輪 scan source 不該產出 row 蓋掉 hook row"
+
+
 def test_scan_action_parsed_from_jsonl(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     projects = tmp_path / "projects"
     _write_session(projects, "-work-app", "s", "/work/app", time.time())
