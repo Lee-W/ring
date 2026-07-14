@@ -306,7 +306,9 @@ Claude Code 註冊這幾個事件，對應到狀態：
 | `PermissionRequest` / `PreToolUse` 的 `AskUserQuestion` | 🔴 等你（權限 / 選項需要你決策） |
 | `SessionEnd` | 從看板消失 |
 
-Codex 目前註冊 Codex 支援的互動事件：`PreToolUse`、`PermissionRequest`、`Stop`。
+Codex 目前註冊 Codex 支援的互動事件：`PreToolUse`、`PermissionRequest`、`Stop`。Codex 的
+`PermissionRequest` 也會在既有 policy 自動放行前送出；因此裸事件維持 🟢 工作中，只有 payload
+明確標示 `requires_action` / `waiting_for` 時才轉成 🔴 等你。
 
 hook 只對**新開的 session** 生效，所以裝完要重開。確認方法：
 

@@ -44,8 +44,9 @@ from ring.transcript import _extract_todo, _latest_action, _tail_records
 _HOOK_EVENTS = list(HOOK_EVENTS)
 
 # Codex 的 hooks.json 用跟 Claude 同樣的 PascalCase 事件名，但只支援其中一小撮。
-# 保守取有實證可用的：PermissionRequest（→ 🔴 等核可）、PreToolUse（→ 動作/清除）、
-# Stop（→ 🟡 回合結束、清掉 waiting）。多裝 Codex 不認的事件有風險，故不照搬 Claude 全套。
+# 保守取有實證可用的：PermissionRequest（裸事件只代表權限準備判定；明確需互動才 → 🔴）、
+# PreToolUse（→ 動作/清除）、Stop（→ 🟡 回合結束、清掉 waiting）。多裝 Codex 不認的事件
+# 有風險，故不照搬 Claude 全套。
 _CODEX_HOOK_EVENTS = ["PreToolUse", "PermissionRequest", "Stop"]
 
 # hook command 的 timeout（秒）。給足，因為 notify_backend="agent-hooks" 時權限 modal 會

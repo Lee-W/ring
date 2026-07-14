@@ -294,7 +294,9 @@ Claude Code events:
 | `PermissionRequest` / `PreToolUse` with `AskUserQuestion` | 🔴 waiting |
 | `SessionEnd` | removed from the board |
 
-Codex currently installs the supported interactive events: `PreToolUse`, `PermissionRequest`, and `Stop`.
+Codex currently installs the supported interactive events: `PreToolUse`, `PermissionRequest`, and `Stop`. Codex
+also emits `PermissionRequest` before an existing policy auto-approves the call; a bare event therefore stays
+🟢 working, and it only turns 🔴 waiting when the payload explicitly carries `requires_action` / `waiting_for`.
 
 Verify that hooks are writing:
 

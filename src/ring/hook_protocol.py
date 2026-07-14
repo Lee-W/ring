@@ -105,6 +105,13 @@ class CommonHookAdapter:
             status = Status.WORKING
         elif explicit_requires_action is not None:
             status = Status.WAITING if explicit_requires_action else Status.IDLE
+        elif event == "PermissionRequest" and self.provider == "codex":
+            # Codex 會在權限「準備判定」時送 PermissionRequest；即使既有 policy
+            # 隨後自動放行、畫面從未停下來等人，也會經過這個 hook。裸事件因此只能
+            # 證明 agent 還在處理工具呼叫，不能當成使用者需要回應。若 payload 有
+            # requires_action / waiting_for 等明確訊號，已由上面的分支判成 WAITING；
+            # 明確的 requires_action=false 也在上面判成 IDLE，不會落到這裡的 WORKING。
+            status = Status.WORKING
         elif event == "Notification":
             status = Status.WAITING if _is_action_required_notification(data) else Status.IDLE
         elif event == "PreToolUse":

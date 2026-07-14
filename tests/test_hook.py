@@ -348,6 +348,35 @@ def test_codex_provider_writes_qualified_session(monkeypatch: pytest.MonkeyPatch
     assert data["status"] == Status.IDLE.value
 
 
+def test_codex_bare_permission_request_stays_working(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Codex 權限 policy 自動放行時也會送 hook；裸事件不代表真的停下來等人。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(monkeypatch, {"session_id": "thread-1", "event": "PermissionRequest", "cwd": "/repo"})
+
+    assert hook.run_hook(provider="codex") == 0
+
+    data = json.loads((tmp_path / "codex:thread-1.json").read_text())
+    assert data["status"] == Status.WORKING.value
+
+
+def test_codex_explicit_permission_request_writes_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "thread-1",
+            "event": "PermissionRequest",
+            "cwd": "/repo",
+            "requires_action": True,
+        },
+    )
+
+    assert hook.run_hook(provider="codex") == 0
+
+    data = json.loads((tmp_path / "codex:thread-1.json").read_text())
+    assert data["status"] == Status.WAITING.value
+
+
 def test_payload_provider_overrides_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
     _feed(monkeypatch, {"provider": "codex", "session_id": "thread-2", "event": "UserPromptSubmit", "cwd": "/repo"})
