@@ -1,3 +1,9 @@
+## 0.11.4 (2026-07-14)
+
+### Fix
+
+- keep bare Codex PermissionRequest events in working status
+
 ## 0.11.3 (2026-07-14)
 
 ### Fix
