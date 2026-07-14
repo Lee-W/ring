@@ -56,7 +56,9 @@ def discover_sessions() -> list[Session]:
             found.append(s)
         # 否則：仍在隱藏保留期內、沒有新活動 → 不收進看板。
 
-    bg_agent_ids = registry.background_agent_session_ids()
+    # None＝這輪掃描失敗（未知）；保守當成「沒有已知背景 agent」，不影響上面已經
+    # 由 hook/scan 各自來源判定好的 status，只影響 kind="agent" 標籤與 IDLE→ENDED 降級。
+    bg_agent_ids = registry.background_agent_session_ids() or set()
     for s in found:
         if s.session_id in bg_agent_ids:
             s.kind = "agent"

@@ -70,7 +70,7 @@ HOOK_HEARTBEAT_STALE_GRACE_SECONDS = 60.0
 # 要支援新工具的存活偵測＝註冊一個偵測器，_hook_sessions / sources 零改動。
 # 同義 provider 名先正規化（例如 "claude" → "claude-code"）。
 _PROVIDER_ALIASES: dict[str, str] = {"claude": "claude-code"}
-_PROVIDER_PROCS: dict[str, Callable[[], list[tuple[str, str]]]] = {}
+_PROVIDER_PROCS: dict[str, Callable[[], list[tuple[str, str]] | None]] = {}
 
 
 def _canonical_provider(provider: str) -> str:
@@ -253,7 +253,7 @@ def prune_hidden_sessions(
         return stale
 
 
-def register_provider_procs(provider: str, detector: Callable[[], list[tuple[str, str]]]) -> None:
+def register_provider_procs(provider: str, detector: Callable[[], list[tuple[str, str]] | None]) -> None:
     """註冊某 provider 的 live-process 偵測器（回傳 ``[(cwd, tty), …]``）。
 
     有偵測器的 provider 才會在 ``_hook_sessions`` 走 process-based 存活清理；沒註冊的
@@ -262,8 +262,12 @@ def register_provider_procs(provider: str, detector: Callable[[], list[tuple[str
     _PROVIDER_PROCS[_canonical_provider(provider)] = detector
 
 
-def collect_provider_procs() -> dict[str, list[tuple[str, str]]]:
-    """所有已註冊 provider 的當下 live procs，鍵為標準 provider 名。"""
+def collect_provider_procs() -> dict[str, list[tuple[str, str]] | None]:
+    """所有已註冊 provider 的當下 live procs，鍵為標準 provider 名。
+
+    值為 ``None`` 代表該 provider 這輪偵測失敗（未知），呼叫端（``_hook_sessions``）
+    必須把它與「真的偵測到零個 live process」分開處理，不能兩者都判離場。
+    """
     return {provider: detector() for provider, detector in _PROVIDER_PROCS.items()}
 
 
@@ -549,18 +553,26 @@ def _is_claude_session_line(comm: str, args: str) -> bool:
     return any(os.path.basename(tok) == "claude" for tok in tokens)
 
 
-def _ps_claude_snapshot() -> str:
-    """``ps -Ao pid,comm,args`` 的短快取原始輸出，供多個 claude proc 判定函式共用。"""
+def _ps_claude_snapshot() -> str | None:
+    """``ps -Ao pid,comm,args`` 的短快取原始輸出，供多個 claude proc 判定函式共用。
+
+    回傳 ``None`` 代表這次 ``ps`` 呼叫失敗（逾時／例外）——這是「不知道」，不是
+    「系統上沒有任何 process」，呼叫端必須分開處理，不能把 ``None`` 當空字串解析出
+    零筆存活 process。失敗一律不進快取，好讓下一輪立刻重試，不會被短 TTL 快取卡住。
+    """
     global _ps_claude_snapshot_cache
     now = time.monotonic()
     if 0.0 <= now - _ps_claude_snapshot_cache[0] <= _SUBPROCESS_CACHE_TTL:
         return _ps_claude_snapshot_cache[1]
     try:
-        out = subprocess.run(["ps", "-Ao", "pid,comm,args"], capture_output=True, text=True, timeout=3).stdout
+        result = subprocess.run(["ps", "-Ao", "pid,comm,args"], capture_output=True, text=True, timeout=3)
     except (OSError, subprocess.SubprocessError):
-        out = ""
-    _ps_claude_snapshot_cache = (now, out)
-    return out
+        return None
+    if result.returncode != 0:
+        # 非零 exit 跟逾時／例外一樣是「這次沒問到」，不是「問到了、答案是沒有 process」。
+        return None
+    _ps_claude_snapshot_cache = (now, result.stdout)
+    return result.stdout
 
 
 def _parse_ps_claude_lines(out: str) -> list[tuple[int, str, bool]]:
@@ -596,19 +608,25 @@ def _arg_session_id(args: str) -> str | None:
     return None
 
 
-def running_claude_pids() -> list[int]:
+def running_claude_pids() -> list[int] | None:
     """目前活著、使用者可聚焦的 claude CLI pid（daemon / bg-spare / bg 暖機承載者濾除）。
 
     承載者（``--bg-pty-host`` + ``--session-id``）與其子行程常成對出現、共用同一個
     session-id：兩者都算「真 session」不濾除，但只留一個 pid，偏好子行程——子行程
     的 cwd（lsof 量得到）誠實，承載者的 cwd 常是 daemon 自己的 cwd，非專案目錄。
     只有承載者、沒有子行程時（fallback）仍保留承載者這個 pid，好過整個 session 消失。
+
+    回傳 ``None`` 代表這輪 ``ps`` 掃描失敗（未知），不是「沒有任何 claude process」；
+    呼叫端不得把 ``None`` 當空清單使用來判定 session 離場。失敗不快取，下一輪重試。
     """
     global _pids_cache
     now = time.monotonic()
     if 0.0 <= now - _pids_cache[0] <= _SUBPROCESS_CACHE_TTL:
         return _pids_cache[1]
-    entries = _parse_ps_claude_lines(_ps_claude_snapshot())
+    snapshot = _ps_claude_snapshot()
+    if snapshot is None:
+        return None
+    entries = _parse_ps_claude_lines(snapshot)
 
     pids: list[int] = []
     sid_index: dict[str, int] = {}  # session-id → 該 pid 在 pids 裡的位置，供子行程晚到時換掉
@@ -633,35 +651,50 @@ def running_claude_pids() -> list[int]:
     return pids
 
 
-def running_foreground_claude_pids() -> list[int]:
+def running_foreground_claude_pids() -> list[int] | None:
     """目前仍有可聚焦終端的 Claude session pid。
 
     ``running_claude_pids`` 也包含 agents mode 的背景 session，因為 scan 需要靠它們
     找到對應 transcript；但 hook registry 不能拿背景 agent 的 cwd／數量替同專案的
     舊前景 row 證明存活，否則一個 agent 就可能讓 crash 數小時的 session 繼續顯示。
+
+    回傳 ``None`` 代表這輪掃描失敗（未知），呼叫端不得當空清單處理。
     """
     bg_ids = background_agent_session_ids()
+    if bg_ids is None:
+        return None
+    base_pids = running_claude_pids()
+    if base_pids is None:
+        return None
     if not bg_ids:
-        return running_claude_pids()
-    args_by_pid = {pid: args for pid, args, _is_bg_host in _parse_ps_claude_lines(_ps_claude_snapshot())}
+        return base_pids
+    snapshot = _ps_claude_snapshot()
+    if snapshot is None:
+        return None
+    args_by_pid = {pid: args for pid, args, _is_bg_host in _parse_ps_claude_lines(snapshot)}
     return [
         pid
-        for pid in running_claude_pids()
+        for pid in base_pids
         if (session_id := _arg_session_id(args_by_pid.get(pid, ""))) is None or session_id not in bg_ids
     ]
 
 
-def background_agent_session_ids() -> set[str]:
+def background_agent_session_ids() -> set[str] | None:
     """所有背景 agent（``--bg-pty-host`` 承載且已載入真 session）的 session-id 集合。
 
     給 ``discover_sessions()`` 對應貼 ``kind="agent"`` 標籤用。與 ``running_claude_pids``
     共用同一份 ``ps`` 快照（``_ps_claude_snapshot``），不額外多打一次 ``ps``。
+
+    回傳 ``None`` 代表這輪掃描失敗（未知），不是「沒有背景 agent」。
     """
     global _bg_agent_session_ids_cache
     now = time.monotonic()
     if 0.0 <= now - _bg_agent_session_ids_cache[0] <= _SUBPROCESS_CACHE_TTL:
         return set(_bg_agent_session_ids_cache[1])
-    entries = _parse_ps_claude_lines(_ps_claude_snapshot())
+    snapshot = _ps_claude_snapshot()
+    if snapshot is None:
+        return None
+    entries = _parse_ps_claude_lines(snapshot)
     ids = frozenset(
         session_id
         for _pid, args, is_bg_host in entries
@@ -698,17 +731,23 @@ def _is_claude_background_process(args: str) -> bool:
     return False
 
 
-def running_codex_pids() -> list[int]:
+def running_codex_pids() -> list[int] | None:
+    """目前活著的 codex CLI pid。回傳 ``None`` 代表這輪 ``ps`` 掃描失敗（未知），
+    不是「沒有任何 codex process」；失敗不快取，下一輪重試。
+    """
     global _codex_pids_cache
     now = time.monotonic()
     if 0.0 <= now - _codex_pids_cache[0] <= _SUBPROCESS_CACHE_TTL:
         return _codex_pids_cache[1]
     try:
-        out = subprocess.run(["ps", "-Ao", "pid=,comm=,args="], capture_output=True, text=True, timeout=3).stdout
+        result = subprocess.run(["ps", "-Ao", "pid=,comm=,args="], capture_output=True, text=True, timeout=3)
     except (OSError, subprocess.SubprocessError):
-        out = ""
+        return None
+    if result.returncode != 0:
+        # 非零 exit 跟逾時／例外一樣是「這次沒問到」，不是「問到了、答案是沒有 process」。
+        return None
     pids: list[int] = []
-    for line in out.splitlines():
+    for line in result.stdout.splitlines():
         parts = line.split(None, 2)
         if len(parts) >= 2 and os.path.basename(parts[1].strip()) == "codex":
             args = parts[2] if len(parts) == 3 else ""
@@ -735,8 +774,13 @@ def _is_codex_internal_process(args: str) -> bool:
 
 
 def running_agent_pids() -> list[int]:
-    """所有內建來源看得到的 live agent CLI 行程。"""
-    return [*running_claude_pids(), *running_codex_pids()]
+    """所有內建來源看得到的 live agent CLI 行程（顯示用途的彙總計數）。
+
+    這裡刻意攤平 ``None``（掃描失敗／未知）成空清單——本函式只餵給 header 計數等
+    顯示用途，不是存活判定；真正的 ENDED 判定路徑（``_hook_sessions``）用的是
+    未攤平的 ``running_claude_pids`` / ``running_codex_pids`` 原始回傳值。
+    """
+    return [*(running_claude_pids() or []), *(running_codex_pids() or [])]
 
 
 def _pid_cwd(pid: int) -> str:
@@ -808,26 +852,35 @@ def _pid_tty(pid: int) -> str:
     return tty if tty.startswith("/dev/") else f"/dev/{tty}"
 
 
-def _claude_procs() -> list[tuple[str, str]]:
+def _claude_procs() -> list[tuple[str, str]] | None:
     """每個可聚焦的前景 Claude：(cwd, tty)。cwd 判活躍/分流，tty 給終端跳轉。
 
     背景 agent 不在這裡按 cwd 配對；它們由 source 依 process args 的 session id 精準
     認領，避免背景 process 的啟動 cwd 讓同專案舊 transcript 誤判成仍在場。
     同一個 cwd 可能同時開好幾個 session，所以之後在 cwd 群組裡只有 mtime 最新的
     這幾個算活著，其餘同專案的舊 session＝已離場。
+
+    回傳 ``None`` 代表這輪 ``ps`` 掃描失敗（未知）——呼叫端（尤其是
+    ``_hook_sessions`` 的存活判定）不得把它當「沒有任何 claude process」處理。
     """
+    pids = running_foreground_claude_pids()
+    if pids is None:
+        return None
     procs: list[tuple[str, str]] = []
-    for pid in running_foreground_claude_pids():
+    for pid in pids:
         cwd = _pid_cwd(pid)
         if cwd:
             procs.append((cwd, _pid_tty(pid)))
     return procs
 
 
-def _codex_procs() -> list[tuple[str, str]]:
-    """每個還活著的 Codex CLI：(cwd, tty)。"""
+def _codex_procs() -> list[tuple[str, str]] | None:
+    """每個還活著的 Codex CLI：(cwd, tty)。回傳 ``None`` 代表這輪掃描失敗（未知）。"""
+    pids = running_codex_pids()
+    if pids is None:
+        return None
     procs: list[tuple[str, str]] = []
-    for pid in running_codex_pids():
+    for pid in pids:
         cwd = _pid_cwd(pid)
         if cwd:
             procs.append((cwd, _pid_tty(pid)))
@@ -1119,7 +1172,7 @@ def _synthetic_sessions(procs: list[tuple[str, str]], existing: list[Session]) -
 def _hook_sessions(
     procs: list[tuple[str, str]] | None = None,
     *,
-    procs_by_provider: dict[str, list[tuple[str, str]]] | None = None,
+    procs_by_provider: dict[str, list[tuple[str, str]] | None] | None = None,
     purge_session_start_phantoms: bool = True,
 ) -> list[Session]:
     if not RING_REGISTRY.is_dir():
@@ -1173,12 +1226,27 @@ def _hook_sessions(
     #   3. 該 cwd 只有「單一」hook row 時，無論 tty 是否對得上都不靠 tty 殺——hook 寫進來
     #      的 tty 不一定可靠（終端 tty 會被作業系統重配，甚至跨 session 錯置），拿它隱藏
     #      唯一活著的 session 會讓整列憑空消失。
+    #   4. 「這個 provider 這輪 ps／lsof 掃描失敗」（值為 ``None``）是「未知」，不是
+    #      「真的偵測到零個 live process」——未知時完全不動這個 provider 底下任何一筆
+    #      row 的狀態，保留既有狀態，避免單次系統瞬間卡頓（ps timeout）把整版 session
+    #      誤判 ENDED（見 ring-vanishing-sessions 診斷）。
     if out:
         proc_counts: dict[tuple[str, str], int] = {}
         proc_ttys: dict[tuple[str, str], set[str]] = {}
         proc_cwds_by_provider: dict[str, list[str]] = {}
+        unknown_providers: set[str] = set()
         for pk in _PROVIDER_PROCS:
-            provider_procs = procs_by_provider.get(pk, []) if procs_by_provider is not None else (procs or [])
+            if procs_by_provider is not None:
+                provider_procs = procs_by_provider.get(pk, [])
+            else:
+                # 沒有帶 procs_by_provider 時，直接沿用 procs 這個 sentinel-None（單純
+                # 代表「呼叫端沒給」，不是「這輪掃描失敗」），維持既有「當空清單」語意。
+                provider_procs = procs if procs is not None else []
+            if provider_procs is None:
+                # 這輪掃描失敗（ps/lsof timeout 或例外）——標成未知，底下的存活判定
+                # 對這個 provider 一律跳過，不把任何 row 判 ENDED。
+                unknown_providers.add(pk)
+                continue
             for cwd, tty in provider_procs:
                 real_cwd = _real(cwd)
                 key = (pk, real_cwd)
@@ -1190,7 +1258,10 @@ def _hook_sessions(
         # 背景 agent 的 process 沒有可聚焦終端，不能拿來替同 cwd 的舊前景 hook row
         # 證明存活；它只精準認領 args 裡明載的 session id。Claude scan 仍使用包含背景
         # agent 的 session-id 配對，因此沒有 hook row 的 agent 也不會從看板消失。
-        background_ids = background_agent_session_ids()
+        # 這次呼叫失敗（``None``＝未知）時保守當成「沒有已知背景 agent」——claude-code
+        # 這個 provider 本身這輪多半也偵測失敗，會被上面的 unknown_providers 整批保護，
+        # 這裡的 fallback 只是避免拿 None 做 in 運算炸掉。
+        background_ids = background_agent_session_ids() or set()
         rows_by_key: dict[tuple[str, str], list[Session]] = {}
         for s in out:
             pk = _canonical_provider(s.provider)
@@ -1201,9 +1272,11 @@ def _hook_sessions(
             rows_by_key.setdefault((pk, _real(s.cwd)), []).append(s)
 
         for key, rows in rows_by_key.items():
+            pk, row_cwd = key
+            if pk in unknown_providers:
+                continue  # 這輪掃描失敗，未知不等於離場，保留既有狀態
             live_n = proc_counts.get(key, 0)
             if live_n == 0:
-                pk, row_cwd = key
                 if _has_ancestor_live_process(row_cwd, proc_cwds_by_provider.get(pk, [])):
                     # hook payload 的 cwd 落在使用者 cd 進去的子目錄，但 claude process 實際
                     # cwd（lsof 量到的）仍停在啟動目錄——兩者都正規化過，子目錄底下自然量不到

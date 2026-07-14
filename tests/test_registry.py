@@ -3,6 +3,7 @@ import sqlite3
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -131,6 +132,7 @@ def test_running_claude_pids_ignores_daemon_and_bg_pty(monkeypatch: pytest.Monke
     """
 
     class Result:
+        returncode = 0
         stdout = "\n".join(
             [
                 "  PID COMM ARGS",
@@ -161,6 +163,7 @@ def test_running_claude_pids_only_carrier_no_child_falls_back_to_carrier(
     """只有承載者、沒有子行程時（fallback），仍保留承載者這個 pid，好過整個 session 消失。"""
 
     class Result:
+        returncode = 0
         stdout = "\n".join(
             [
                 "  PID COMM ARGS",
@@ -182,6 +185,7 @@ def test_running_claude_pids_ignores_bg_pty_host_without_session_id(monkeypatch:
     """``--bg-pty-host`` 指向 spare sock、無 ``--session-id``＝暖機承載者，仍要濾除。"""
 
     class Result:
+        returncode = 0
         stdout = "\n".join(
             [
                 "  PID COMM ARGS",
@@ -205,6 +209,7 @@ def test_running_claude_pids_ignores_bg_spare(monkeypatch: pytest.MonkeyPatch) -
     """
 
     class Result:
+        returncode = 0
         stdout = "\n".join(
             [
                 "  PID COMM ARGS",
@@ -271,6 +276,7 @@ def test_background_agent_session_ids_only_collects_bg_pty_host_with_session_id(
     """真背景 agent（bg-pty-host + session-id）的 session-id 入集合；spare/daemon/前景都不入。"""
 
     class Result:
+        returncode = 0
         stdout = "\n".join(
             [
                 "  PID COMM ARGS",
@@ -301,7 +307,7 @@ def test_running_codex_pids_excludes_internal_app_processes(monkeypatch: pytest.
         ]
     )
     monkeypatch.setattr(registry, "_codex_pids_cache", (-1.0, []))
-    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout=ps))
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout=ps, returncode=0))
 
     assert registry.running_codex_pids() == [101, 102]
 
@@ -941,6 +947,107 @@ def test_hook_sessions_cleanup_is_provider_specific(monkeypatch: pytest.MonkeyPa
     )
 
     assert sessions[0].status is Status.ENDED
+
+
+def test_hook_sessions_keeps_status_when_provider_scan_unknown(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """``procs_by_provider`` 某 provider 值為 ``None``（這輪掃描失敗／未知）時，該 provider
+    底下任何一筆 hook row 都不該被判 ENDED——維持既有狀態，這是本次修的核心行為，
+    直接對照 ``_hook_sessions`` 的存活判定邏輯，不經 subprocess，隔離驗證。
+    """
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(registry_dir, "live", "/work/app", "/dev/ttys001")
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+
+    sessions = _hook_sessions(procs_by_provider={"claude-code": None, "codex": []})
+
+    assert sessions[0].status is Status.WAITING, "provider 掃描未知（None）不等於沒有 process，不該判 ENDED"
+
+
+def _fake_run_timeout(calls: dict[str, int]) -> Callable[..., Any]:
+    def fake_run(*_args: object, **_kwargs: object) -> Any:
+        calls["n"] += 1
+        raise subprocess.TimeoutExpired(cmd="ps", timeout=3)
+
+    return fake_run
+
+
+def _fake_run_nonzero_exit(calls: dict[str, int]) -> Callable[..., Any]:
+    def fake_run(*_args: object, **_kwargs: object) -> Any:
+        calls["n"] += 1
+        return SimpleNamespace(stdout="", returncode=1)
+
+    return fake_run
+
+
+@pytest.mark.parametrize("make_fake_run", [_fake_run_timeout, _fake_run_nonzero_exit], ids=["timeout", "nonzero-exit"])
+def test_hook_sessions_survives_ps_scan_failure_without_caching_it(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    make_fake_run: Any,
+) -> None:
+    """故障注入回歸測試（對照 ring-vanishing-sessions 診斷假說 1）。
+
+    ``ps`` 這一輪失敗（逾時或非零 exit）時：
+    (a) 既有 hook session 不會被判 ENDED——掃描失敗＝未知，不是「沒有任何 process」。
+    (b) 失敗不會被快取——下一輪呼叫會真的重打一次 ``ps``，不會被 1 秒 TTL 卡住而
+        繼續沿用失敗結果。
+
+    修法前：``_ps_claude_snapshot()`` 失敗回傳 ``""`` 且快取，``running_foreground_
+    claude_pids()`` 等於零個活著的 claude，``_hook_sessions`` 判定該 cwd 唯一一筆
+    row 離場——這個測試在修法前會紅（session 被判 ENDED），修法後綠。
+    """
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(registry_dir, "live", "/work/app", "/dev/ttys001")
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+    _reset_claude_ps_caches(monkeypatch)
+    monkeypatch.setattr(registry, "_codex_pids_cache", (-1.0, []))
+
+    calls = {"n": 0}
+    monkeypatch.setattr("ring.registry.subprocess.run", make_fake_run(calls))
+
+    sessions = _hook_sessions(procs_by_provider=registry.collect_provider_procs())
+    by_id = {s.session_id: s.status for s in sessions}
+    assert by_id["live"] is Status.WAITING, "ps 掃描失敗這輪，既有 session 狀態應維持不變，不能判 ENDED"
+
+    calls_after_first_round = calls["n"]
+    assert calls_after_first_round >= 1, "ps 應該真的被呼叫過，不是提早短路沒測到"
+
+    # 下一輪：不 reset 快取（模擬同一支長跑程式的下一輪刷新），若失敗被誤快取，
+    # 這裡 subprocess.run 呼叫次數就不會再增加。
+    _hook_sessions(procs_by_provider=registry.collect_provider_procs())
+    assert calls["n"] > calls_after_first_round, "失敗不該被快取；下一輪必須重新真的呼叫 ps 才能自動復原"
+
+
+def test_hook_sessions_recovers_real_end_after_ps_timeout_clears(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ps 逾時的下一輪若真的掃到零個 process，仍要正確判 ENDED——證明「未知」的保守處理
+    沒有把失敗狀態誤快取住、卡死成永遠不殺，掃描一旦恢復正常就能立刻反映真實存活。
+    """
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(registry_dir, "gone", "/work/app", "/dev/ttys001")
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+    _reset_claude_ps_caches(monkeypatch)
+    monkeypatch.setattr(registry, "_codex_pids_cache", (-1.0, []))
+    monkeypatch.setattr(
+        "ring.registry.subprocess.run",
+        lambda *a, **k: (_ for _ in ()).throw(subprocess.TimeoutExpired(cmd="ps", timeout=3)),
+    )
+
+    first = _hook_sessions(procs_by_provider=registry.collect_provider_procs())
+    assert {s.session_id: s.status for s in first}["gone"] is Status.WAITING
+
+    _reset_claude_ps_caches(monkeypatch)
+    monkeypatch.setattr(registry, "_codex_pids_cache", (-1.0, []))
+    monkeypatch.setattr(
+        "ring.registry.subprocess.run",
+        lambda *a, **k: SimpleNamespace(stdout="  PID COMM ARGS\n", returncode=0),
+    )
+
+    second = _hook_sessions(procs_by_provider=registry.collect_provider_procs())
+    assert {s.session_id: s.status for s in second}["gone"] is Status.ENDED, (
+        "ps 恢復正常且真的沒有任何 process 時，應正確判 ENDED，不能被前一輪的失敗卡住"
+    )
 
 
 # ---------------------------------------------------------------------------
