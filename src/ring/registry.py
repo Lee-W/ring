@@ -524,6 +524,7 @@ def _tmux_process_tree_targets(sessions: list[Session]) -> dict[str, str]:
 _pids_cache: tuple[float, list[int]] = (-1.0, [])
 _codex_pids_cache: tuple[float, list[int]] = (-1.0, [])
 _ps_claude_snapshot_cache: tuple[float, str] = (-1.0, "")
+_ps_codex_snapshot_cache: tuple[float, str] = (-1.0, "")
 _bg_agent_session_ids_cache: tuple[float, frozenset[str]] = (-1.0, frozenset())
 
 # args 內任一出現即可判定「這是 claude 安裝二進位在跑」的路徑標記。ps comm 對
@@ -565,7 +566,7 @@ def _ps_claude_snapshot() -> str | None:
     if 0.0 <= now - _ps_claude_snapshot_cache[0] <= _SUBPROCESS_CACHE_TTL:
         return _ps_claude_snapshot_cache[1]
     try:
-        result = subprocess.run(["ps", "-Ao", "pid,comm,args"], capture_output=True, text=True, timeout=3)
+        result = subprocess.run(["ps", "-Ao", "pid,tty,comm,args"], capture_output=True, text=True, timeout=3)
     except (OSError, subprocess.SubprocessError):
         return None
     if result.returncode != 0:
@@ -575,28 +576,52 @@ def _ps_claude_snapshot() -> str | None:
     return result.stdout
 
 
-def _parse_ps_claude_lines(out: str) -> list[tuple[int, str, bool]]:
-    """把 ``ps`` 輸出解析成 claude session 行：``(pid, args, is_bg_pty_host)``。
+def _normalize_tty(raw: str) -> str:
+    """把 ``ps`` 的 tty 欄位正規化成 iTerm2 認得的 ``/dev/ttysNNN``；查無 tty 回空字串。"""
+    tty = raw.strip()
+    if not tty or tty in ("??", "?"):
+        return ""
+    return tty if tty.startswith("/dev/") else f"/dev/{tty}"
+
+
+def _parse_ps_claude_lines(out: str) -> list[tuple[int, str, str, bool]]:
+    """把 ``ps`` 輸出解析成 claude session 行：``(pid, tty, args, is_bg_pty_host)``。
+
+    tty 欄位（``ps -Ao pid,tty,comm,args`` 的第二欄）已正規化，供 ``_claude_procs``
+    直接查表用，不必再對每個 pid 各開一次 ``ps -o tty= -p PID``。
 
     不論是否為背景 process（daemon / bg-spare / bg-pty-host）都收進來——背景判定
     交給呼叫端各自決定要不要濾除；``_hook_sessions`` 的活性判定與
     ``running_claude_pids`` 對「該濾誰」的答案不同，不能在這裡先幫忙決定。
     """
-    entries: list[tuple[int, str, bool]] = []
+    entries: list[tuple[int, str, str, bool]] = []
     for line in out.splitlines()[1:]:
-        parts = line.split(None, 2)
-        if len(parts) < 2:
+        parts = line.split(None, 3)
+        if len(parts) < 3:
             continue
-        comm = parts[1].strip()
-        args = parts[2] if len(parts) == 3 else ""
+        tty = _normalize_tty(parts[1])
+        comm = parts[2].strip()
+        args = parts[3] if len(parts) == 4 else ""
         if not _is_claude_session_line(comm, args):
             continue
         try:
             pid = int(parts[0])
         except ValueError:
             continue
-        entries.append((pid, args, "--bg-pty-host" in args.split()))
+        entries.append((pid, tty, args, "--bg-pty-host" in args.split()))
     return entries
+
+
+def _claude_tty_map() -> dict[int, str] | None:
+    """pid → tty，來自 ``_ps_claude_snapshot()`` 共用的快照，不再多開一次 ``ps``。
+
+    回傳 ``None`` 代表這輪 ``ps`` 掃描失敗（未知）；成功但某 pid 沒出現在快照裡
+    （已死）時，該 pid 直接不在回傳 dict 內——呼叫端用 ``.get(pid, "")`` 取值即可。
+    """
+    snapshot = _ps_claude_snapshot()
+    if snapshot is None:
+        return None
+    return {pid: tty for pid, tty, _args, _is_bg_host in _parse_ps_claude_lines(snapshot)}
 
 
 def _arg_session_id(args: str) -> str | None:
@@ -631,7 +656,7 @@ def running_claude_pids() -> list[int] | None:
     pids: list[int] = []
     sid_index: dict[str, int] = {}  # session-id → 該 pid 在 pids 裡的位置，供子行程晚到時換掉
     sid_is_bg_host: dict[str, bool] = {}
-    for pid, args, is_bg_host in entries:
+    for pid, _tty, args, is_bg_host in entries:
         if _is_claude_background_process(args):
             continue
         session_id = _arg_session_id(args)
@@ -671,7 +696,7 @@ def running_foreground_claude_pids() -> list[int] | None:
     snapshot = _ps_claude_snapshot()
     if snapshot is None:
         return None
-    args_by_pid = {pid: args for pid, args, _is_bg_host in _parse_ps_claude_lines(snapshot)}
+    args_by_pid = {pid: args for pid, _tty, args, _is_bg_host in _parse_ps_claude_lines(snapshot)}
     return [
         pid
         for pid in base_pids
@@ -697,7 +722,7 @@ def background_agent_session_ids() -> set[str] | None:
     entries = _parse_ps_claude_lines(snapshot)
     ids = frozenset(
         session_id
-        for _pid, args, is_bg_host in entries
+        for _pid, _tty, args, is_bg_host in entries
         if is_bg_host and (session_id := _arg_session_id(args)) is not None
     )
     _bg_agent_session_ids_cache = (now, ids)
@@ -731,6 +756,45 @@ def _is_claude_background_process(args: str) -> bool:
     return False
 
 
+def _ps_codex_snapshot() -> str | None:
+    """``ps -Ao pid=,tty=,comm=,args=`` 的短快取原始輸出，供 codex pid／tty 共用。
+
+    含 tty 欄，讓 ``_codex_tty_map`` 能從同一份快照查表，不必再對每個 pid 各開一次
+    ``ps -o tty= -p PID``。回傳 ``None`` 代表這次 ``ps`` 呼叫失敗（逾時／例外／非零
+    exit）——是「不知道」，不是「沒有任何 process」；失敗不快取，下一輪重試。
+    """
+    global _ps_codex_snapshot_cache
+    now = time.monotonic()
+    if 0.0 <= now - _ps_codex_snapshot_cache[0] <= _SUBPROCESS_CACHE_TTL:
+        return _ps_codex_snapshot_cache[1]
+    try:
+        result = subprocess.run(["ps", "-Ao", "pid=,tty=,comm=,args="], capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        # 非零 exit 跟逾時／例外一樣是「這次沒問到」，不是「問到了、答案是沒有 process」。
+        return None
+    _ps_codex_snapshot_cache = (now, result.stdout)
+    return result.stdout
+
+
+def _parse_ps_codex_lines(out: str) -> list[tuple[int, str, str]]:
+    """把 ``_ps_codex_snapshot()`` 的輸出解析成 ``(pid, tty, args)``（僅 comm 為 codex 的行）。"""
+    entries: list[tuple[int, str, str]] = []
+    for line in out.splitlines():
+        parts = line.split(None, 3)
+        if len(parts) < 3 or os.path.basename(parts[2].strip()) != "codex":
+            continue
+        tty = _normalize_tty(parts[1])
+        args = parts[3] if len(parts) == 4 else ""
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+        entries.append((pid, tty, args))
+    return entries
+
+
 def running_codex_pids() -> list[int] | None:
     """目前活著的 codex CLI pid。回傳 ``None`` 代表這輪 ``ps`` 掃描失敗（未知），
     不是「沒有任何 codex process」；失敗不快取，下一輪重試。
@@ -739,26 +803,28 @@ def running_codex_pids() -> list[int] | None:
     now = time.monotonic()
     if 0.0 <= now - _codex_pids_cache[0] <= _SUBPROCESS_CACHE_TTL:
         return _codex_pids_cache[1]
-    try:
-        result = subprocess.run(["ps", "-Ao", "pid=,comm=,args="], capture_output=True, text=True, timeout=3)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        # 非零 exit 跟逾時／例外一樣是「這次沒問到」，不是「問到了、答案是沒有 process」。
+    snapshot = _ps_codex_snapshot()
+    if snapshot is None:
         return None
     pids: list[int] = []
-    for line in result.stdout.splitlines():
-        parts = line.split(None, 2)
-        if len(parts) >= 2 and os.path.basename(parts[1].strip()) == "codex":
-            args = parts[2] if len(parts) == 3 else ""
-            if _is_codex_internal_process(args):
-                continue
-            try:
-                pids.append(int(parts[0]))
-            except ValueError:
-                pass
+    for pid, _tty, args in _parse_ps_codex_lines(snapshot):
+        if _is_codex_internal_process(args):
+            continue
+        pids.append(pid)
     _codex_pids_cache = (now, pids)
     return pids
+
+
+def _codex_tty_map() -> dict[int, str] | None:
+    """pid → tty，來自 ``_ps_codex_snapshot()`` 共用的快照，不再多開一次 ``ps``。
+
+    回傳 ``None`` 代表這輪掃描失敗（未知）；成功但某 pid 沒出現在快照裡（已死）
+    時，該 pid 直接不在回傳 dict 內——呼叫端用 ``.get(pid, "")`` 取值即可。
+    """
+    snapshot = _ps_codex_snapshot()
+    if snapshot is None:
+        return None
+    return {pid: tty for pid, tty, _args in _parse_ps_codex_lines(snapshot)}
 
 
 def _is_codex_internal_process(args: str) -> bool:
@@ -783,20 +849,42 @@ def running_agent_pids() -> list[int]:
     return [*(running_claude_pids() or []), *(running_codex_pids() or [])]
 
 
-def _pid_cwd(pid: int) -> str:
+def _pids_cwd(pids: list[int]) -> dict[int, str] | None:
+    """批次查多個 pid 的 cwd：一次 ``lsof -a -p pid1,pid2,... -d cwd -Fn``（N 次 → 1 次）。
+
+    PoC 已驗證（本機 lsof 4.91／macOS）：``-p`` 接受逗號分隔的多 pid；輸出以
+    ``p<pid>`` 分段、其後 ``n<path>`` 行給該 pid 的 cwd。**其中一個 pid 已死時，
+    lsof 對整批呼叫仍回傳 exit code 1**（連全部都死也是 1），但存活 pid 的區段照樣
+    完整輸出——所以本函式刻意不看 ``returncode``，只要 subprocess 本身沒丟例外就
+    解析 stdout。
+
+    回傳 ``None`` 代表這次 lsof **呼叫本身**失敗（逾時／例外）——是「這輪不知道任何
+    pid 的 cwd」（未知），呼叫端不得把它當「都沒有 cwd」用來判定 session 離場。
+    批次呼叫成功但某個 pid 沒出現在輸出裡＝那個 pid 剛死／查無 cwd，是真資訊，不是
+    未知，直接不進回傳的 dict（呼叫端用 ``.get(pid, "")`` 取值，缺項自然視為無 cwd）。
+    """
+    if not pids:
+        return {}
     try:
         out = subprocess.run(
-            ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+            ["lsof", "-a", "-p", ",".join(str(pid) for pid in pids), "-d", "cwd", "-Fn"],
             capture_output=True,
             text=True,
             timeout=3,
         ).stdout
     except (OSError, subprocess.SubprocessError):
-        return ""
+        return None
+    result: dict[int, str] = {}
+    current_pid: int | None = None
     for line in out.splitlines():
-        if line.startswith("n"):
-            return line[1:]
-    return ""
+        if line.startswith("p"):
+            try:
+                current_pid = int(line[1:])
+            except ValueError:
+                current_pid = None
+        elif line.startswith("n") and current_pid is not None:
+            result.setdefault(current_pid, line[1:])
+    return result
 
 
 def _real(path: str) -> str:
@@ -840,16 +928,16 @@ def _has_ancestor_live_process(row_cwd: str, live_cwds: list[str]) -> bool:
 
 
 def _pid_tty(pid: int) -> str:
-    """claude process 的控制終端，正規化成 iTerm2 認得的 "/dev/ttysNNN"。"""
+    """claude process 的控制終端，正規化成 iTerm2 認得的 "/dev/ttysNNN"。
+
+    單 pid、按需查詢用（例如 hook 事件當下要跳轉終端）；``discover_sessions()``
+    每輪刷新的熱路徑改走 ``_claude_tty_map`` / ``_codex_tty_map``，不逐 pid 開 ``ps``。
+    """
     try:
-        tty = subprocess.run(
-            ["ps", "-o", "tty=", "-p", str(pid)], capture_output=True, text=True, timeout=3
-        ).stdout.strip()
+        tty = subprocess.run(["ps", "-o", "tty=", "-p", str(pid)], capture_output=True, text=True, timeout=3).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
-    if not tty or tty in ("??", "?"):
-        return ""
-    return tty if tty.startswith("/dev/") else f"/dev/{tty}"
+    return _normalize_tty(tty)
 
 
 def _claude_procs() -> list[tuple[str, str]] | None:
@@ -860,30 +948,50 @@ def _claude_procs() -> list[tuple[str, str]] | None:
     同一個 cwd 可能同時開好幾個 session，所以之後在 cwd 群組裡只有 mtime 最新的
     這幾個算活著，其餘同專案的舊 session＝已離場。
 
-    回傳 ``None`` 代表這輪 ``ps`` 掃描失敗（未知）——呼叫端（尤其是
-    ``_hook_sessions`` 的存活判定）不得把它當「沒有任何 claude process」處理。
+    cwd／tty 各只批次查一次（``_pids_cwd`` 一次 lsof、``_claude_tty_map`` 沿用共用
+    ps 快照），不再逐 pid 各開一次 lsof + 一次 ps。
+
+    回傳 ``None`` 代表這輪掃描失敗（未知）——``ps``（pid 清單／tty）或 lsof（cwd）
+    任一整批失敗都算，呼叫端（尤其是 ``_hook_sessions`` 的存活判定）不得把它當
+    「沒有任何 claude process」處理。批次呼叫成功但個別 pid 沒查到 cwd/tty（剛死）
+    不算未知，那個 pid 直接不貢獻一列，語意與逐 pid 版本一致。
     """
     pids = running_foreground_claude_pids()
     if pids is None:
         return None
+    cwd_by_pid = _pids_cwd(pids)
+    if cwd_by_pid is None:
+        return None
+    tty_by_pid = _claude_tty_map()
+    if tty_by_pid is None:
+        return None
     procs: list[tuple[str, str]] = []
     for pid in pids:
-        cwd = _pid_cwd(pid)
+        cwd = cwd_by_pid.get(pid, "")
         if cwd:
-            procs.append((cwd, _pid_tty(pid)))
+            procs.append((cwd, tty_by_pid.get(pid, "")))
     return procs
 
 
 def _codex_procs() -> list[tuple[str, str]] | None:
-    """每個還活著的 Codex CLI：(cwd, tty)。回傳 ``None`` 代表這輪掃描失敗（未知）。"""
+    """每個還活著的 Codex CLI：(cwd, tty)。回傳 ``None`` 代表這輪掃描失敗（未知）。
+
+    cwd／tty 各只批次查一次，理由與 ``_claude_procs`` 相同。
+    """
     pids = running_codex_pids()
     if pids is None:
         return None
+    cwd_by_pid = _pids_cwd(pids)
+    if cwd_by_pid is None:
+        return None
+    tty_by_pid = _codex_tty_map()
+    if tty_by_pid is None:
+        return None
     procs: list[tuple[str, str]] = []
     for pid in pids:
-        cwd = _pid_cwd(pid)
+        cwd = cwd_by_pid.get(pid, "")
         if cwd:
-            procs.append((cwd, _pid_tty(pid)))
+            procs.append((cwd, tty_by_pid.get(pid, "")))
     return procs
 
 
@@ -1143,7 +1251,7 @@ def _synthetic_sessions(procs: list[tuple[str, str]], existing: list[Session]) -
     out: list[Session] = []
     seen: set[str] = set()
     for cwd, tty in procs:
-        if not cwd:  # _pid_cwd 失敗的情況，沒 cwd 撐不起一列
+        if not cwd:  # _pids_cwd 查無此 pid cwd 的情況，沒 cwd 撐不起一列
             continue
         rkey = _real(cwd)
         if rkey in existing_cwds:  # 已經有 row 了（hook 或 scan 覆蓋）

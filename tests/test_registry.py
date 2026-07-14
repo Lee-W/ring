@@ -135,19 +135,19 @@ def test_running_claude_pids_ignores_daemon_and_bg_pty(monkeypatch: pytest.Monke
         returncode = 0
         stdout = "\n".join(
             [
-                "  PID COMM ARGS",
-                (" 101 /Users/me/.local/bin/claude /Users/me/.local/bin/claude daemon run --origin transient"),
+                "  PID TTY      COMM ARGS",
+                (" 101 ??       /Users/me/.local/bin/claude /Users/me/.local/bin/claude daemon run --origin transient"),
                 (  # 承載者：bg-pty-host + session-id
-                    " 102 claude "
+                    " 102 ??       claude "
                     "claude --bg-pty-host /tmp/cc-daemon/pty/s.sock 72 35 -- "
                     "/Users/me/.local/share/claude/versions/2.1.187 --session-id abc"
                 ),
                 (  # 子行程：comm 截斷、同 session-id、無 bg flag，cwd 才誠實
-                    " 103 /Users/me/.l "
+                    " 103 ttys001 /Users/me/.l "
                     "/Users/me/.local/share/claude/versions/2.1.187 --session-id abc "
                     "--resume /Users/me/.claude/projects/x/abc.jsonl --fork-session"
                 ),
-                " 104 claude claude --plugin-dir /work/app",
+                " 104 ttys002 claude claude --plugin-dir /work/app",
             ]
         )
 
@@ -166,9 +166,9 @@ def test_running_claude_pids_only_carrier_no_child_falls_back_to_carrier(
         returncode = 0
         stdout = "\n".join(
             [
-                "  PID COMM ARGS",
+                "  PID TTY      COMM ARGS",
                 (
-                    " 201 claude "
+                    " 201 ttys001 claude "
                     "claude --bg-pty-host /tmp/cc-daemon/pty/s.sock 72 35 -- "
                     "/Users/me/.local/share/claude/versions/2.1.187 --session-id xyz"
                 ),
@@ -188,9 +188,9 @@ def test_running_claude_pids_ignores_bg_pty_host_without_session_id(monkeypatch:
         returncode = 0
         stdout = "\n".join(
             [
-                "  PID COMM ARGS",
-                (" 301 claude claude --bg-pty-host /tmp/cc-daemon/spare/x.sock 72 35"),
-                " 302 claude claude --plugin-dir /work/app",
+                "  PID TTY      COMM ARGS",
+                (" 301 ??       claude claude --bg-pty-host /tmp/cc-daemon/spare/x.sock 72 35"),
+                " 302 ttys001 claude claude --plugin-dir /work/app",
             ]
         )
 
@@ -212,9 +212,9 @@ def test_running_claude_pids_ignores_bg_spare(monkeypatch: pytest.MonkeyPatch) -
         returncode = 0
         stdout = "\n".join(
             [
-                "  PID COMM ARGS",
-                (" 104 claude /Users/me/.local/share/claude/versions/2.1.206 --bg-spare tok123"),
-                " 105 claude claude --plugin-dir /work/app",
+                "  PID TTY      COMM ARGS",
+                (" 104 ??       claude /Users/me/.local/share/claude/versions/2.1.206 --bg-spare tok123"),
+                " 105 ttys001 claude claude --plugin-dir /work/app",
             ]
         )
 
@@ -279,14 +279,14 @@ def test_background_agent_session_ids_only_collects_bg_pty_host_with_session_id(
         returncode = 0
         stdout = "\n".join(
             [
-                "  PID COMM ARGS",
-                " 101 claude claude daemon run --origin transient",
-                " 102 claude claude --bg-pty-host /tmp/spare/x.sock 72 35",  # 暖機，無 session-id
+                "  PID TTY      COMM ARGS",
+                " 101 ??       claude claude daemon run --origin transient",
+                " 102 ??       claude claude --bg-pty-host /tmp/spare/x.sock 72 35",  # 暖機，無 session-id
                 (
-                    " 103 claude claude --bg-pty-host /tmp/pty/s.sock 72 35 -- "
+                    " 103 ttys001 claude claude --bg-pty-host /tmp/pty/s.sock 72 35 -- "
                     "/Users/me/.local/share/claude/versions/2.1.187 --session-id abc"
                 ),
-                " 104 claude claude --plugin-dir /work/app",  # 前景，無 session-id
+                " 104 ttys002 claude claude --plugin-dir /work/app",  # 前景，無 session-id
             ]
         )
 
@@ -300,13 +300,14 @@ def test_running_codex_pids_excludes_internal_app_processes(monkeypatch: pytest.
     """sandbox / app-server 共用 codex binary，但不能各自復活一筆舊 thread。"""
     ps = "\n".join(
         [
-            "101 codex codex",
-            "102 codex codex resume thread-id",
-            "201 codex /Applications/Codex.app/Resources/codex sandbox -c policy -- command",
-            "202 codex /Applications/Codex.app/Resources/codex app-server --listen stdio://",
+            "101 ttys001 codex codex",
+            "102 ttys002 codex codex resume thread-id",
+            "201 ttys003 codex /Applications/Codex.app/Resources/codex sandbox -c policy -- command",
+            "202 ttys004 codex /Applications/Codex.app/Resources/codex app-server --listen stdio://",
         ]
     )
     monkeypatch.setattr(registry, "_codex_pids_cache", (-1.0, []))
+    monkeypatch.setattr(registry, "_ps_codex_snapshot_cache", (-1.0, ""))
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout=ps, returncode=0))
 
     assert registry.running_codex_pids() == [101, 102]
@@ -329,6 +330,133 @@ def test_running_foreground_claude_pids_excludes_background_agent_children(
     monkeypatch.setattr(registry, "background_agent_session_ids", lambda: {"agent-a"})
 
     assert registry.running_foreground_claude_pids() == [101]
+
+
+def test_pids_cwd_batches_live_pids_and_skips_dead_ones(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PoC 已驗證：macOS lsof 對批次呼叫裡混了死 pid 時，整體 exit code 仍是 1，但存活
+    pid 的區段照樣完整輸出。``_pids_cwd`` 刻意不看 ``returncode``，只解析 stdout；死掉的
+    pid 沒出現在輸出裡＝那個 pid 不存在（真資訊），不是「這輪查不到、未知」。
+    """
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kwargs: object) -> Any:
+        calls.append(cmd)
+        # pid 22 已死：lsof 只回得出 11 的區段，returncode 仍非 0（PoC 實測行為）。
+        return SimpleNamespace(stdout="p11\nfcwd\nn/work/eleven\n", returncode=1)
+
+    monkeypatch.setattr("ring.registry.subprocess.run", fake_run)
+
+    result = registry._pids_cwd([11, 22])
+
+    assert result == {11: "/work/eleven"}, "死 pid 不進回傳 dict，不是回傳未知"
+    assert len(calls) == 1, f"多個 pid 應合併成一次 lsof 呼叫，實際呼叫 {len(calls)} 次"
+    assert calls[0][:3] == ["lsof", "-a", "-p"]
+    assert calls[0][3] == "11,22", "多個 pid 應以逗號合併成單一 -p 參數，不是逐 pid 各開一次"
+
+
+def test_pids_cwd_returns_none_on_subprocess_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """批次呼叫本身失敗（逾時／例外）＝這輪整批未知，不能回空 dict 跟「查到但沒有 cwd」混淆。"""
+    monkeypatch.setattr(
+        "ring.registry.subprocess.run",
+        lambda *a, **k: (_ for _ in ()).throw(subprocess.TimeoutExpired(cmd="lsof", timeout=3)),
+    )
+
+    assert registry._pids_cwd([11, 22]) is None
+
+
+def test_pids_cwd_empty_pid_list_skips_subprocess_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    """沒有活著的 pid 時，不必為了問「零個 pid 的 cwd」白開一次 lsof。"""
+    calls = {"n": 0}
+
+    def fake_run(*_args: object, **_kwargs: object) -> Any:
+        calls["n"] += 1
+        raise AssertionError("pid 清單為空時不該呼叫 subprocess.run")
+
+    monkeypatch.setattr("ring.registry.subprocess.run", fake_run)
+
+    assert registry._pids_cwd([]) == {}
+    assert calls["n"] == 0
+
+
+def test_claude_procs_issues_one_ps_and_one_lsof_call_regardless_of_pid_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """效能回歸測試：修法前 ``_claude_procs()`` 對每個 pid 各開一次 lsof + 一次 ps，
+    subprocess 呼叫次數隨 session 數線性成長；修法後固定是 1 次 ps 快照（給 pid 清單、
+    背景 agent 判定、tty 共用）＋ 1 次批次 lsof（給 cwd），不隨 pid 數增加。拿掉批次化
+    改回逐 pid 呼叫，這個測試會因為 ps/lsof 呼叫次數 > 1 而變紅。
+    """
+    _reset_claude_ps_caches(monkeypatch)
+
+    ps_snapshot = "\n".join(
+        [
+            "  PID TTY      COMM ARGS",
+            " 101 ttys001 claude claude --session-id s1",
+            " 102 ttys002 claude claude --session-id s2",
+            " 103 ttys003 claude claude --session-id s3",
+        ]
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kwargs: object) -> Any:
+        calls.append(cmd)
+        if cmd[0] == "ps":
+            return SimpleNamespace(stdout=ps_snapshot, returncode=0)
+        if cmd[0] == "lsof":
+            out = "\n".join(
+                ["p101", "fcwd", "n/work/one", "p102", "fcwd", "n/work/two", "p103", "fcwd", "n/work/three"]
+            )
+            return SimpleNamespace(stdout=out, returncode=0)
+        raise AssertionError(f"unexpected subprocess call: {cmd}")
+
+    monkeypatch.setattr("ring.registry.subprocess.run", fake_run)
+
+    procs = registry._claude_procs()
+
+    assert procs == [
+        ("/work/one", "/dev/ttys001"),
+        ("/work/two", "/dev/ttys002"),
+        ("/work/three", "/dev/ttys003"),
+    ]
+    ps_calls = [c for c in calls if c[0] == "ps"]
+    lsof_calls = [c for c in calls if c[0] == "lsof"]
+    assert len(ps_calls) == 1, f"ps 應只呼叫 1 次（3 個 pid 共用同一份快照），實際 {len(ps_calls)} 次"
+    assert len(lsof_calls) == 1, f"lsof 應只呼叫 1 次（批次查全部 pid 的 cwd），實際 {len(lsof_calls)} 次"
+
+
+def test_codex_procs_issues_one_ps_and_one_lsof_call_regardless_of_pid_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_codex_procs()`` 版本的同一條效能回歸測試，見 ``_claude_procs`` 對應測試說明。"""
+    monkeypatch.setattr(registry, "_codex_pids_cache", (-1.0, []))
+    monkeypatch.setattr(registry, "_ps_codex_snapshot_cache", (-1.0, ""))
+
+    ps_snapshot = "\n".join(
+        [
+            "201 ttys011 codex codex",
+            "202 ttys012 codex codex",
+        ]
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kwargs: object) -> Any:
+        calls.append(cmd)
+        if cmd[0] == "ps":
+            return SimpleNamespace(stdout=ps_snapshot, returncode=0)
+        if cmd[0] == "lsof":
+            out = "\n".join(["p201", "fcwd", "n/work/alpha", "p202", "fcwd", "n/work/beta"])
+            return SimpleNamespace(stdout=out, returncode=0)
+        raise AssertionError(f"unexpected subprocess call: {cmd}")
+
+    monkeypatch.setattr("ring.registry.subprocess.run", fake_run)
+
+    procs = registry._codex_procs()
+
+    assert procs == [("/work/alpha", "/dev/ttys011"), ("/work/beta", "/dev/ttys012")]
+    ps_calls = [c for c in calls if c[0] == "ps"]
+    lsof_calls = [c for c in calls if c[0] == "lsof"]
+    assert len(ps_calls) == 1, f"ps 應只呼叫 1 次，實際 {len(ps_calls)} 次"
+    assert len(lsof_calls) == 1, f"lsof 應只呼叫 1 次，實際 {len(lsof_calls)} 次"
 
 
 def test_delete_session_state_removes_hook_registry_only(
@@ -1001,6 +1129,7 @@ def test_hook_sessions_survives_ps_scan_failure_without_caching_it(
     monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
     _reset_claude_ps_caches(monkeypatch)
     monkeypatch.setattr(registry, "_codex_pids_cache", (-1.0, []))
+    monkeypatch.setattr(registry, "_ps_codex_snapshot_cache", (-1.0, ""))
 
     calls = {"n": 0}
     monkeypatch.setattr("ring.registry.subprocess.run", make_fake_run(calls))
@@ -1029,6 +1158,7 @@ def test_hook_sessions_recovers_real_end_after_ps_timeout_clears(
     monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
     _reset_claude_ps_caches(monkeypatch)
     monkeypatch.setattr(registry, "_codex_pids_cache", (-1.0, []))
+    monkeypatch.setattr(registry, "_ps_codex_snapshot_cache", (-1.0, ""))
     monkeypatch.setattr(
         "ring.registry.subprocess.run",
         lambda *a, **k: (_ for _ in ()).throw(subprocess.TimeoutExpired(cmd="ps", timeout=3)),
@@ -1039,6 +1169,7 @@ def test_hook_sessions_recovers_real_end_after_ps_timeout_clears(
 
     _reset_claude_ps_caches(monkeypatch)
     monkeypatch.setattr(registry, "_codex_pids_cache", (-1.0, []))
+    monkeypatch.setattr(registry, "_ps_codex_snapshot_cache", (-1.0, ""))
     monkeypatch.setattr(
         "ring.registry.subprocess.run",
         lambda *a, **k: SimpleNamespace(stdout="  PID COMM ARGS\n", returncode=0),
