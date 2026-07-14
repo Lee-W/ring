@@ -1,3 +1,14 @@
+## 0.11.3 (2026-07-14)
+
+### Fix
+
+- stop Bash tool-call shell wrapper from being misjudged as a claude session
+- keep sessions on the board when a process scan fails
+
+### Perf
+
+- batch lsof/ps calls in claude and codex process discovery
+
 ## 0.11.2 (2026-07-13)
 
 ### Fix
