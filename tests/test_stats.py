@@ -129,11 +129,18 @@ def test_hook_logs_only_transitions(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     events = tmp_path / "events.jsonl"
     monkeypatch.setattr("ring.stats.EVENTS_PATH", events)
 
-    for event, n in (("UserPromptSubmit", 1), ("PostToolUse", 1), ("PermissionRequest", 2), ("Stop", 3)):
-        _feed(monkeypatch, {"session_id": "s1", "hook_event_name": event, "cwd": "/x/maigo"})
+    steps: list[tuple[dict[str, Any], int]] = [
+        ({"hook_event_name": "UserPromptSubmit"}, 1),
+        ({"hook_event_name": "PostToolUse"}, 1),  # 維持 working → 不記
+        ({"hook_event_name": "PermissionRequest"}, 1),  # 裸事件 → working，不記
+        ({"hook_event_name": "Notification", "notification_type": "permission_prompt"}, 2),  # → waiting
+        ({"hook_event_name": "Stop"}, 3),  # → idle
+    ]
+    for extra, n in steps:
+        _feed(monkeypatch, {"session_id": "s1", "cwd": "/x/maigo", **extra})
         assert hook.run_hook() == 0
         lines = events.read_text().splitlines() if events.exists() else []
-        assert len(lines) == n  # PostToolUse 維持 working → 不記
+        assert len(lines) == n
 
     statuses = [json.loads(line)["status"] for line in events.read_text().splitlines()]
     assert statuses == ["working", "waiting", "idle"]
