@@ -165,14 +165,94 @@ def test_regular_notification_writes_idle(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert data["status"] == Status.IDLE.value
 
 
-def test_permission_request_writes_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def _bare_permission_request(session_id: str = "s1", *, subagent: bool = False) -> dict[str, Any]:
+    """真實 Claude Code 裸 PermissionRequest 的欄位形狀（取自 hook_payloads.jsonl 實錄）。
+
+    權限「判定」時就發、多數瞬間被 policy 自動放行——subagent 觸發的帶 agent_id/agent_type，
+    主執行緒的不帶。兩種都沒有 requires_action / waiting_for 這類顯式訊號。
+    """
+    payload: dict[str, Any] = {
+        "session_id": session_id,
+        "transcript_path": f"/nonexistent/{session_id}.jsonl",
+        "cwd": "/x",
+        "prompt_id": "f6faddb7-473f-4345-9518-4e4c3ea58554",
+        "permission_mode": "acceptEdits",
+        "effort": {"level": "high"},
+        "hook_event_name": "PermissionRequest",
+        "tool_name": "Bash",
+        "tool_input": {"command": "grep -n foo src/*.py", "description": "Search for foo"},
+        "permission_suggestions": [],
+    }
+    if subagent:
+        payload["agent_id"] = "a490599d8a4bbc07c"
+        payload["agent_type"] = "general-purpose"
+    return payload
+
+
+def test_claude_bare_permission_request_writes_working(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """主執行緒的裸 PermissionRequest（無 agent_id）→ 🟢 WORKING：權限判定不等於停下來等人。"""
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
-    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/x"})
+    _feed(monkeypatch, _bare_permission_request())
+
+    assert hook.run_hook() == 0
+
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WORKING.value
+    assert "waiting_detail" not in data
+
+
+def test_claude_subagent_bare_permission_request_writes_working(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """subagent 觸發的裸 PermissionRequest（帶 agent_id/agent_type）→ 🟢 WORKING。
+
+    這是 48 小時內單一 session 翻轉 105 次的假「等你」來源：subagent 跑唯讀工具，
+    每次呼叫都發 PermissionRequest、幾秒內自動放行，不該閃紅。
+    """
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(monkeypatch, _bare_permission_request(subagent=True))
+
+    assert hook.run_hook() == 0
+
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WORKING.value
+    assert "waiting_detail" not in data
+
+
+def test_ask_user_question_permission_request_writes_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """AskUserQuestion 包在 PermissionRequest 裡 → 🔴 WAITING，detail 帶問題內容。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "cwd": "/x",
+            "permission_mode": "acceptEdits",
+            "hook_event_name": "PermissionRequest",
+            "tool_name": "AskUserQuestion",
+            "tool_input": {"questions": [{"question": "要用哪個 auth 方案？", "options": [{"label": "A"}]}]},
+        },
+    )
 
     assert hook.run_hook() == 0
 
     data = json.loads((tmp_path / "s1.json").read_text())
     assert data["status"] == Status.WAITING.value
+    assert "要用哪個 auth 方案" in data["waiting_detail"]
+
+
+def _permission_prompt_notification(session_id: str = "s1", cwd: str = "/proj") -> dict[str, Any]:
+    """真實 Claude Code permission_prompt Notification 的欄位形狀（取自 hook_payloads.jsonl 實錄）。
+
+    真的停下來等人時，裸 PermissionRequest 後 ~6 秒必有這個事件——它才是「等你」的訊號。
+    """
+    return {
+        "session_id": session_id,
+        "cwd": cwd,
+        "hook_event_name": "Notification",
+        "notification_type": "permission_prompt",
+        "message": "Claude needs your permission",
+    }
 
 
 class _SpyNotifier:
@@ -198,7 +278,7 @@ def test_waiting_event_delivers_notification_in_hook(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
     spy = _SpyNotifier()
     monkeypatch.setattr("ring.notify._NOTIFIERS", [spy])
-    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/proj"})
+    _feed(monkeypatch, _permission_prompt_notification())
 
     assert hook.run_hook() == 0
 
@@ -232,18 +312,18 @@ def test_waiting_flap_within_cooldown_suppresses_second_hook_notification(
     spy = _SpyNotifier()
     monkeypatch.setattr("ring.notify._NOTIFIERS", [spy])
 
-    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/proj"})
+    _feed(monkeypatch, _permission_prompt_notification())
     assert hook.run_hook() == 0
     assert len(spy.sent) == 1
 
-    # 翻轉：權限請求自動解決 → 離開 waiting（Stop → idle）。時間戳要跟著帶進新 row。
+    # 翻轉：權限請求解決 → 離開 waiting（Stop → idle）。時間戳要跟著帶進新 row。
     _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "Stop", "cwd": "/proj"})
     assert hook.run_hook() == 0
     row = json.loads((tmp_path / "s1.json").read_text())
     assert "waiting_notified_at" in row, "離開 waiting 時要保留上次通知時間戳，否則冷卻判斷失憶"
 
     # 幾秒內又翻回 waiting（遠小於預設 180 秒冷卻期）→ 不再發
-    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/proj"})
+    _feed(monkeypatch, _permission_prompt_notification())
     assert hook.run_hook() == 0
 
     assert len(spy.sent) == 1, "冷卻期內再轉 waiting 不該再發一則系統通知"
@@ -255,7 +335,7 @@ def test_waiting_realerts_after_cooldown_expired(monkeypatch: pytest.MonkeyPatch
     spy = _SpyNotifier()
     monkeypatch.setattr("ring.notify._NOTIFIERS", [spy])
 
-    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/proj"})
+    _feed(monkeypatch, _permission_prompt_notification())
     assert hook.run_hook() == 0
     assert len(spy.sent) == 1
 
@@ -265,7 +345,7 @@ def test_waiting_realerts_after_cooldown_expired(monkeypatch: pytest.MonkeyPatch
     row["waiting_notified_at"] = row["waiting_notified_at"] - 999.0
     row_path.write_text(json.dumps(row))
 
-    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/proj"})
+    _feed(monkeypatch, _permission_prompt_notification())
     assert hook.run_hook() == 0
 
     assert len(spy.sent) == 2, "冷卻期滿後再轉 waiting 要照常通知"
@@ -281,11 +361,11 @@ def test_waiting_cooldown_zero_notifies_every_transition(monkeypatch: pytest.Mon
     spy = _SpyNotifier()
     monkeypatch.setattr("ring.notify._NOTIFIERS", [spy])
 
-    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/proj"})
+    _feed(monkeypatch, _permission_prompt_notification())
     assert hook.run_hook() == 0
     _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "Stop", "cwd": "/proj"})
     assert hook.run_hook() == 0
-    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/proj"})
+    _feed(monkeypatch, _permission_prompt_notification())
     assert hook.run_hook() == 0
 
     assert len(spy.sent) == 2
@@ -302,7 +382,7 @@ def test_waiting_notifies_when_legacy_row_lacks_timestamp_field(
         json.dumps({"session_id": "s1", "provider": "claude-code", "cwd": "/proj", "status": "working"})
     )
 
-    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/proj"})
+    _feed(monkeypatch, _permission_prompt_notification())
     assert hook.run_hook() == 0
 
     assert len(spy.sent) == 1
@@ -349,7 +429,7 @@ def test_codex_provider_writes_qualified_session(monkeypatch: pytest.MonkeyPatch
 
 
 def test_codex_bare_permission_request_stays_working(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Codex 權限 policy 自動放行時也會送 hook；裸事件不代表真的停下來等人。"""
+    """Codex 權限 policy 自動放行時也會送 hook；裸事件不代表真的停下來等人（規則不分 provider）。"""
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
     _feed(monkeypatch, {"session_id": "thread-1", "event": "PermissionRequest", "cwd": "/repo"})
 
@@ -452,7 +532,8 @@ def test_delegates_to_agent_hooks_when_backend_set(monkeypatch: pytest.MonkeyPat
     assert calls[0][0][:2] == ["agent-hooks", "callback"]
     assert "--provider" in calls[0][0]
     assert calls[0][1] is not None and "PermissionRequest" in calls[0][1]  # 原始 payload 被透傳
-    assert json.loads((tmp_path / "s1.json").read_text())["status"] == Status.WAITING.value  # 狀態照寫
+    # 狀態照寫（裸 PermissionRequest 現在是 🟢 WORKING；委派與狀態記錄互不影響）
+    assert json.loads((tmp_path / "s1.json").read_text())["status"] == Status.WORKING.value
 
 
 def test_no_delegation_when_backend_not_agent_hooks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -855,24 +936,71 @@ def test_uninstall_hooks_invalid_json(monkeypatch: pytest.MonkeyPatch, tmp_path:
 # ---------------------------------------------------------------------------
 
 
-def test_waiting_detail_captures_bash_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """PermissionRequest 帶 tool_input.command → registry 存 `Bash: <指令>`。"""
+def test_permission_prompt_notification_uses_stashed_permission_detail(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """裸 PermissionRequest 的指令摘要暫存起來；後續 permission_prompt Notification
+    轉 WAITING 時拿它當 waiting_detail，取代籠統的「Claude needs your permission」。"""
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
-    _feed(
-        monkeypatch,
-        {
-            "session_id": "s1",
-            "hook_event_name": "PermissionRequest",
-            "cwd": "/x",
-            "tool_name": "Bash",
-            "tool_input": {"command": "rm -rf node_modules"},
-        },
-    )
+    payload = _bare_permission_request()
+    payload["tool_input"] = {"command": "rm -rf node_modules"}
+    _feed(monkeypatch, payload)
+    assert hook.run_hook() == 0
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WORKING.value
+    assert data["pending_permission_detail"] == "Bash: rm -rf node_modules"
+
+    _feed(monkeypatch, _permission_prompt_notification(cwd="/x"))
     assert hook.run_hook() == 0
     data = json.loads((tmp_path / "s1.json").read_text())
     assert data["status"] == Status.WAITING.value
     assert data["waiting_detail"] == "Bash: rm -rf node_modules"
     assert data["waiting_kind"] == "permission"
+
+
+def test_permission_prompt_notification_after_post_tool_use_falls_back_to_message(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """PostToolUse 代表權限已放行 → 清掉暫存；之後的 permission_prompt Notification
+    屬於新的等待，detail 回到 Notification 自己的籠統訊息。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    payload = _bare_permission_request()
+    payload["tool_input"] = {"command": "rm -rf node_modules"}
+    _feed(monkeypatch, payload)
+    assert hook.run_hook() == 0
+
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PostToolUse", "tool_name": "Bash", "cwd": "/x"})
+    assert hook.run_hook() == 0
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert "pending_permission_detail" not in data
+
+    _feed(monkeypatch, _permission_prompt_notification(cwd="/x"))
+    assert hook.run_hook() == 0
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WAITING.value
+    assert data["waiting_detail"] == "Claude needs your permission"
+    assert data["waiting_kind"] == "permission"
+
+
+def test_stale_stashed_permission_detail_not_used(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """暫存超過新鮮期（120 秒）→ 不拿來當 waiting_detail，回籠統訊息。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    payload = _bare_permission_request()
+    payload["tool_input"] = {"command": "rm -rf node_modules"}
+    _feed(monkeypatch, payload)
+    assert hook.run_hook() == 0
+
+    # 把暫存時間戳改成遠早於新鮮期（模擬時間流逝，不 patch 時鐘）
+    row_path = tmp_path / "s1.json"
+    row = json.loads(row_path.read_text())
+    row["pending_permission_detail_at"] -= 999.0
+    row_path.write_text(json.dumps(row))
+
+    _feed(monkeypatch, _permission_prompt_notification(cwd="/x"))
+    assert hook.run_hook() == 0
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WAITING.value
+    assert data["waiting_detail"] == "Claude needs your permission"
 
 
 def test_waiting_detail_captures_question_text(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -916,18 +1044,14 @@ def test_waiting_kind_detects_plan_approval(monkeypatch: pytest.MonkeyPatch, tmp
 
 
 def test_waiting_detail_collapses_multiline_and_truncates(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """暫存的指令摘要沿用 _action_detail 的整形：多行壓單行、超長截斷。"""
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
-    long_cmd = "echo start\n" + "x" * 400
-    _feed(
-        monkeypatch,
-        {
-            "session_id": "s1",
-            "hook_event_name": "PermissionRequest",
-            "cwd": "/x",
-            "tool_name": "Bash",
-            "tool_input": {"command": long_cmd},
-        },
-    )
+    payload = _bare_permission_request()
+    payload["tool_input"] = {"command": "echo start\n" + "x" * 400}
+    _feed(monkeypatch, payload)
+    assert hook.run_hook() == 0
+
+    _feed(monkeypatch, _permission_prompt_notification(cwd="/x"))
     assert hook.run_hook() == 0
     detail = json.loads((tmp_path / "s1.json").read_text())["waiting_detail"]
     assert "\n" not in detail

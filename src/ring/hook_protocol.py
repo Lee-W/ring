@@ -44,7 +44,6 @@ _ALWAYS_STATUS = {
     "UserPromptSubmit": Status.WORKING,
     "Stop": Status.IDLE,
     "SessionEnd": Status.ENDED,
-    "PermissionRequest": Status.WAITING,
 }
 
 _ACTION_REQUIRED_NOTIFICATION_TYPES = {
@@ -105,13 +104,17 @@ class CommonHookAdapter:
             status = Status.WORKING
         elif explicit_requires_action is not None:
             status = Status.WAITING if explicit_requires_action else Status.IDLE
-        elif event == "PermissionRequest" and self.provider == "codex":
-            # Codex 會在權限「準備判定」時送 PermissionRequest；即使既有 policy
-            # 隨後自動放行、畫面從未停下來等人，也會經過這個 hook。裸事件因此只能
-            # 證明 agent 還在處理工具呼叫，不能當成使用者需要回應。若 payload 有
-            # requires_action / waiting_for 等明確訊號，已由上面的分支判成 WAITING；
-            # 明確的 requires_action=false 也在上面判成 IDLE，不會落到這裡的 WORKING。
-            status = Status.WORKING
+        elif event == "PermissionRequest":
+            # PermissionRequest 在權限「準備判定」時就發，不分 provider：Claude Code
+            # 連 subagent 的唯讀工具呼叫都會經過（帶 agent_id/agent_type），Codex 則在
+            # policy 判定前發。多數在幾秒內被 policy 自動放行、畫面從未停下來等人——
+            # 裸事件因此只能證明 agent 還在處理工具呼叫，不能當成使用者需要回應
+            # → WORKING。payload 本身就要求互動（AskUserQuestion / questions / options）
+            # 才直接判 WAITING。Claude Code 真的停下來等人時，會在數秒後補發
+            # notification_type=permission_prompt 的 Notification，由下面的 Notification
+            # 分支兜底轉 WAITING（內建 debounce）。顯式 requires_action / waiting_for
+            # 訊號已由上面的分支先處理（true → WAITING、false → IDLE），不會落到這裡。
+            status = Status.WAITING if _is_action_required_payload(data) else Status.WORKING
         elif event == "Notification":
             status = Status.WAITING if _is_action_required_notification(data) else Status.IDLE
         elif event == "PreToolUse":
@@ -238,12 +241,14 @@ def _waiting_kind(data: Mapping[str, Any], event: str, status: Status) -> str:
 
     if "plan" in waiting_for or "plan" in tool_name or "plan" in detail:
         return "plan"
+    if tool_name == "askuserquestion":
+        # 先於 PermissionRequest 判斷：AskUserQuestion 也會以 PermissionRequest 事件
+        # 進來（權限判定包著問題），但使用者要回的是「問題」不是「權限」。
+        return "question"
     if event == "PermissionRequest" or notification_type == "permission_prompt":
         return "permission"
     if waiting_for in {"approval", "permission"}:
         return "permission"
-    if tool_name == "askuserquestion":
-        return "question"
     if waiting_for in {
         "choice",
         "choices",
