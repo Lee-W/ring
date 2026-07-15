@@ -33,9 +33,8 @@ def test_register_source_appends(monkeypatch: pytest.MonkeyPatch) -> None:
     assert sources.sources()[-1].name == "mytool"
 
 
-def test_default_sources_include_claude_code_and_codex() -> None:
-    assert any(s.name == "claude-code" for s in sources.sources())
-    assert any(s.name == "codex" for s in sources.sources())
+def test_default_sources_include_supported_clis() -> None:
+    assert {s.name for s in sources.sources()} >= {"claude-code", "codex", "ollama", "llama.cpp"}
 
 
 class _StaticSource:

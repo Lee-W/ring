@@ -872,7 +872,10 @@ def running_agent_pids() -> list[int]:
     顯示用途，不是存活判定；真正的 ENDED 判定路徑（``_hook_sessions``）用的是
     未攤平的 ``running_claude_pids`` / ``running_codex_pids`` 原始回傳值。
     """
-    return [*(running_claude_pids() or []), *(running_codex_pids() or [])]
+    # 延後 import，避免 registry（Session model）與 sources package 初始化時循環相依。
+    from ring.sources.local_llm import running_pids as running_local_llm_pids
+
+    return [*(running_claude_pids() or []), *(running_codex_pids() or []), *running_local_llm_pids()]
 
 
 def _pids_cwd(pids: list[int]) -> dict[int, str] | None:

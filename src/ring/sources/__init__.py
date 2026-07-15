@@ -13,9 +13,11 @@ from ring.sources.base import SessionSource
 from ring.sources.claude_code import source as _claude_code
 from ring.sources.codex import source as _codex
 from ring.sources.hook_registry import source as _hook_registry
+from ring.sources.local_llm import llama_cpp_source as _llama_cpp
+from ring.sources.local_llm import ollama_source as _ollama
 
 # 註冊表（順序＝彙整順序）。hook registry 先於 zero-config source，精準事件優先。
-_SOURCES: list[SessionSource] = [_hook_registry, _claude_code, _codex]
+_SOURCES: list[SessionSource] = [_hook_registry, _claude_code, _codex, _ollama, _llama_cpp]
 
 
 def register_source(source: SessionSource, *, first: bool = False) -> None:

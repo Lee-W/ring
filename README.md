@@ -244,10 +244,16 @@ RiNG 會從已註冊的 source 收集 session；目前內建這幾種：
 |------|------|----------|
 | **Claude Code zero-config**（預設） | 掃 `~/.claude/projects/**/*.jsonl` 的 mtime + 記錄裡的 `cwd` 欄位 | 免設定；可辨識近期活動與回合結束。需要回應的通知要靠 hook 才精準 |
 | **Codex zero-config**（預設） | 讀 `~/.codex/state_5.sqlite` threads + rollout JSONL，並用 live `codex` process 配 tty | 免設定；可辨識 live / ended / 回合結束。同 cwd 多 session 建議裝 hook 取得精準跳轉 |
+| **Ollama zero-config**（預設） | 偵測有控制終端的 `ollama run` process | 行程存活層級；顯示 cwd、TTY 與模型，不把 `ollama serve` 當 session |
+| **llama.cpp zero-config**（預設） | 偵測有控制終端的 `llama-cli` process | 行程存活層級；顯示 cwd、TTY 與模型，不把 `llama-server` 當 session |
 | **hook registry**（opt-in，精準） | RiNG hook 在 `Notification` / `UserPromptSubmit` / `Stop` / `SessionEnd` 即時寫 `~/.config/ring/sessions/` | 準（🔴 等你 / 🟢 工作中 / 🟡 跑完停著 / ⚫ 已離場） |
 
 zero-config 不必設定就能用；想要精準的「誰在等你」，就讓 provider 的 hook 餵進 RiNG registry。
 RiNG 內建 Claude Code / Codex hook 安裝器；其他工具可直接走 provider-neutral `ring hook` protocol。
+
+Ollama 與 llama.cpp 本身沒有 RiNG 可讀的 session transcript 或互動 hook，因此 zero-config 列固定以
+🟡 顯示：它代表互動式 CLI 還活著，不代表 RiNG 能分辨它正在生成或等下一個 prompt。CLI 結束後列
+就會移除。若外層 agent 能送出生命週期事件，可用下方的中立 hook protocol 取得精準狀態。
 
 ## 狀態機
 
@@ -448,7 +454,7 @@ core 不綁死任何特定工具或終端。三個維度都可插拔，每個都
 
 | 維度 | 在做什麼 | 內建 |
 |------|----------|------|
-| `SessionSource` | 從哪裡找到 session | Claude Code、Codex、RiNG hook registry |
+| `SessionSource` | 從哪裡找到 session | Claude Code、Codex、Ollama、llama.cpp、RiNG hook registry |
 | `Focuser` | 跳轉時把焦點帶去哪個終端 | tmux、iTerm2、Terminal.app、Linux X11（wmctrl）|
 | `Notifier` | 等你時怎麼發系統通知 | terminal-notifier、osascript、notify-send、ntfy、webhook |
 
@@ -475,7 +481,8 @@ core 不綁死任何特定工具或終端。三個維度都可插拔，每個都
 ### 其他 agent CLI（`SessionSource`）
 
 內建 `HookRegistrySource`（讀 `~/.config/ring/sessions/`）、`ClaudeCodeSource`（掃
-`~/.claude`）與 `CodexSource`（讀 `~/.codex/state_5.sqlite`）。要監測其他工具，
+`~/.claude`）、`CodexSource`（讀 `~/.codex/state_5.sqlite`），以及 Ollama / llama.cpp
+互動式 CLI 的 process source。要監測其他工具，
 可以優先餵 `ring hook`；若工具沒有 hook，再寫一個 source 吐出 `Session`、註冊即可：
 
 ```python
