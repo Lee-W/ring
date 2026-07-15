@@ -1,3 +1,10 @@
+## 0.12.0 (2026-07-15)
+
+### Feat
+
+- add opt-in raw hook payload debug log
+- detect Ollama and llama.cpp CLI sessions
+
 ## 0.11.4 (2026-07-14)
 
 ### Fix

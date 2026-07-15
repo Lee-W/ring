@@ -2,7 +2,7 @@
 # import 的 module（見 [tool.uv.build-backend] module-name）與 CLI 指令仍是 `ring`。
 [project]
 name = "ring-cli"
-version = "0.11.4"
+version = "0.12.0"
 description = "RiNG — Realtime Instance Notification Grid for active agent CLI sessions."
 readme = "README.en.md"
 requires-python = ">=3.13"
