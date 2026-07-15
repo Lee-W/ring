@@ -31,6 +31,7 @@ from ring.config import get_config
 from ring.hook_protocol import HOOK_EVENTS, adapter_for, provider_from_payload
 from ring.i18n import gettext as _
 from ring.i18n import set_lang
+from ring.payload_log import maybe_log_raw_payload
 from ring.registry import (
     RING_REGISTRY,
     Session,
@@ -157,6 +158,9 @@ def run_hook(provider: str = "claude-code") -> int:
         return 0
 
     selected_provider = provider_from_payload(data, fallback=provider)
+    # 取證 log：診斷用、預設關閉（見 payload_log.py）。故意放在任何狀態判定/改寫之前，
+    # 記下 hook 實際收到的原始資料——不影響、不參與下面的正規化流程。
+    maybe_log_raw_payload(selected_provider, data)
     _record_session_state(data, selected_provider)
     return _delegate_to_agent_hooks(raw, selected_provider)
 
