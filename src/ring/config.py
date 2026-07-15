@@ -27,6 +27,10 @@
     notify_also = ["ntfy"]            # 主後端之外「加發」的後端（例如桌面通知＋手機各一份）
     focusers = ["Neovim", "tmux", "iTerm2", "Terminal", "linux-wm"]  # 跳轉嘗試順序；省略＝內建預設
     plugins = ["my_ring_plugin"]      # 啟動時 import 的外部 plugin 模組（自行 register_*）
+    debug_payload_log = false         # 診斷用：記錄 hook 收到的原始 payload
+                                      #   （見 payload_log.py，寫到 ~/.config/ring/hook_payloads.jsonl）；
+                                      #   預設關閉，payload 可能含使用者輸入才要開；
+                                      #   環境變數 RING_DEBUG_PAYLOAD_LOG 可覆寫（優先於本鍵）
 """
 
 from __future__ import annotations
@@ -77,6 +81,7 @@ class Config:
     notify_also: tuple[str, ...] = ()  # 主後端之外加發的後端名（如 ["ntfy"]）
     focusers: tuple[str, ...] = ()  # 空＝用內建預設順序
     plugins: tuple[str, ...] = ()  # 啟動時 import 的外部 plugin 模組（entry point 之外的本機路）
+    debug_payload_log: bool = False  # 診斷用：記錄 hook 收到的原始 payload；預設關閉
     colors: dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_COLORS))
 
 
@@ -148,6 +153,7 @@ def load(path: Path | None = None) -> Config:
         notify_also=_as_str_tuple(raw.get("notify_also")),
         focusers=_as_str_tuple(raw.get("focusers")),
         plugins=_as_str_tuple(raw.get("plugins")),
+        debug_payload_log=_as_bool(raw.get("debug_payload_log"), d.debug_payload_log),
         colors=_parse_colors(raw.get("colors")),
     )
 
@@ -218,6 +224,7 @@ _SETTERS: dict[str, Callable[[str], object]] = {
     "notify_also": _coerce_str_list,
     "focusers": _coerce_str_list,
     "plugins": _coerce_str_list,
+    "debug_payload_log": _coerce_bool,
 }
 
 
