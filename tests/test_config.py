@@ -160,3 +160,10 @@ def test_codex_permission_wait_seconds_parses_and_defaults(tmp_path: Path) -> No
     p.write_text("codex_permission_wait_seconds = 3\n")
     assert load(p).codex_permission_wait_seconds == 3
     assert load(tmp_path / "nope.toml").codex_permission_wait_seconds == 10
+
+
+def test_detect_stop_questions_parses_and_defaults(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("detect_stop_questions = false\n")
+    assert load(p).detect_stop_questions is False
+    assert load(tmp_path / "nope.toml").detect_stop_questions is True

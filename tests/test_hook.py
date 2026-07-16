@@ -1156,3 +1156,182 @@ def test_codex_subsequent_event_overwrites_last_event_and_clears_stash(
     assert data["status"] == Status.WORKING.value
     assert data["last_event"] == "PostToolUse"
     assert "pending_permission_detail" not in data
+
+
+# ---------------------------------------------------------------------------
+# Stop 事件的「回合結尾純文字提問」偵測（question_detect.py）
+# ---------------------------------------------------------------------------
+
+
+def test_stop_trailing_question_writes_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """claude-code Stop、結尾是問句 → 🔴 等你，kind=question，detail 含問句本文。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "Stop",
+            "cwd": "/x",
+            "last_assistant_message": "先做了 A。\n\n要不要順便修 B？",
+        },
+    )
+    assert hook.run_hook() == 0
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WAITING.value
+    assert data["waiting_kind"] == "question"
+    assert "要不要順便修 B？" in data["waiting_detail"]
+
+
+def test_stop_trailing_statement_writes_idle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """結尾是陳述句 → 維持 🟡，不誤報。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "Stop",
+            "cwd": "/x",
+            "last_assistant_message": "已經修好了，測試都綠了。",
+        },
+    )
+    assert hook.run_hook() == 0
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.IDLE.value
+    assert "waiting_kind" not in data
+
+
+def test_stop_question_mid_message_statement_at_end_writes_idle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """問句在訊息中段、結尾是陳述句 → 不容誤報，維持 🟡。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "Stop",
+            "cwd": "/x",
+            "last_assistant_message": "先確認一下：你要 A 還是 B？我會用 A 繼續做。",
+        },
+    )
+    assert hook.run_hook() == 0
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.IDLE.value
+
+
+def test_stop_missing_transcript_falls_back_idle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """沒有 last_assistant_message、transcript_path 指向不存在的檔 → 安全退回 🟡，不炸。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "Stop",
+            "cwd": "/x",
+            "transcript_path": str(tmp_path / "missing.jsonl"),
+        },
+    )
+    assert hook.run_hook() == 0
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.IDLE.value
+
+
+def test_stop_malformed_transcript_falls_back_idle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """transcript 檔存在但不是合法 JSONL → 安全退回 🟡，不炸。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text("not json at all\n{{{broken\n", encoding="utf-8")
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "Stop",
+            "cwd": "/x",
+            "transcript_path": str(transcript),
+        },
+    )
+    assert hook.run_hook() == 0
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.IDLE.value
+
+
+def test_stop_transcript_fallback_detects_trailing_question(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """payload 沒帶 last_assistant_message 時，退回讀 transcript 尾端的 assistant 文字。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text(
+        '{"type": "assistant", "message": {"content": [{"type": "text", "text": "要繼續嗎？"}]}}\n',
+        encoding="utf-8",
+    )
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "Stop",
+            "cwd": "/x",
+            "transcript_path": str(transcript),
+        },
+    )
+    assert hook.run_hook() == 0
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WAITING.value
+    assert data["waiting_kind"] == "question"
+    assert "要繼續嗎？" in data["waiting_detail"]
+
+
+def test_codex_stop_trailing_question_writes_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """codex Stop payload 也帶 last_assistant_message（見 hook_payloads.jsonl 實錄），
+    結尾是問句時同樣升 🔴，行為與 claude-code 一致。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "thread-1",
+            "hook_event_name": "Stop",
+            "cwd": "/repo",
+            "last_assistant_message": "修完了 footer。要不要一起看看手機版？",
+        },
+    )
+    assert hook.run_hook(provider="codex") == 0
+    data = json.loads((tmp_path / "codex:thread-1.json").read_text())
+    assert data["status"] == Status.WAITING.value
+    assert data["waiting_kind"] == "question"
+    assert "要不要一起看看手機版？" in data["waiting_detail"]
+
+
+def test_stop_trailing_question_with_trailing_code_fence(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """問句後面跟著程式碼區塊收尾 → 圍欄先剝掉，還是要偵測到問句。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "Stop",
+            "cwd": "/x",
+            "last_assistant_message": "這樣可以嗎？\n\n```bash\nls -la\n```",
+        },
+    )
+    assert hook.run_hook() == 0
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WAITING.value
+    assert data["waiting_kind"] == "question"
+    assert "這樣可以嗎？" in data["waiting_detail"]
+
+
+def test_stop_trailing_question_disabled_by_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """detect_stop_questions=false → 就算結尾是問句也維持 🟡。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    monkeypatch.setattr(hook, "get_config", lambda: Config(detect_stop_questions=False))
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "Stop",
+            "cwd": "/x",
+            "last_assistant_message": "要不要順便修 B？",
+        },
+    )
+    assert hook.run_hook() == 0
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.IDLE.value
+    assert "waiting_kind" not in data

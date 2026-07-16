@@ -131,6 +131,26 @@ def _latest_action(records: list[dict[str, Any]]) -> str:
     return "—"
 
 
+def _last_assistant_text(records: list[dict[str, Any]]) -> str:
+    """從新到舊找最後一筆帶文字的 assistant 記錄，回傳其 text block 合併後的完整文字。
+
+    跳過沒有 text block 的 assistant 記錄（例如純 tool_use）；找不到回空字串。
+    給 Stop 事件「回合結尾純文字提問」偵測用——跟 ``_latest_action`` 不同，這裡要完整
+    文字（不截斷、不退回 tool_use 摘要），才能判斷訊息結尾是不是問句。
+    """
+    for record in reversed(records):
+        if record.get("type") != "assistant":
+            continue
+        texts = [
+            str(b.get("text", ""))
+            for b in _blocks(record)
+            if isinstance(b, dict) and b.get("type") == "text" and b.get("text")
+        ]
+        if texts:
+            return "\n".join(texts)
+    return ""
+
+
 def _extract_todo(records: list[dict[str, Any]]) -> tuple[int, int] | None:
     """從新到舊找最新的 TodoWrite，回傳 (done, total)。真進度訊號。"""
     for record in reversed(records):
