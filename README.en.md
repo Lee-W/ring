@@ -301,9 +301,22 @@ Claude Code events:
 | `PermissionRequest` / `PreToolUse` with `AskUserQuestion` | 🔴 waiting |
 | `SessionEnd` | removed from the board |
 
-Codex currently installs the supported interactive events: `PreToolUse`, `PermissionRequest`, and `Stop`. Codex
-also emits `PermissionRequest` before an existing policy auto-approves the call; a bare event therefore stays
-🟢 working, and it only turns 🔴 waiting when the payload explicitly carries `requires_action` / `waiting_for`.
+Codex currently installs the supported interactive events: `PreToolUse`, `PermissionRequest`, `PostToolUse`,
+and `Stop`. Codex also emits `PermissionRequest` before an existing policy auto-approves the call, so a bare
+event stays 🟢 working at the hook level. Codex hooks have no "user approved" event and no heartbeat — while
+an approval prompt is pending, the hook channel is **completely silent**. RiNG therefore treats the silence
+itself as the signal: when the last hook event is a `PermissionRequest` and nothing has followed for more than
+`codex_permission_wait_seconds` (default 10s), the board marks the session 🔴 waiting with the pending command
+as its detail; any subsequent event (the next tool call, `Stop`) naturally clears it.
+
+Known Codex-side limitations (verified against 0.144.4; the hook payload has no field that could distinguish
+these):
+
+- **Approve and deny are indistinguishable**: neither emits a hook event. After you approve a long-running
+  command, 🔴 lingers until the command finishes (`PostToolUse`); after a deny with no immediate follow-up
+  action, 🔴 lingers until the next event or `Stop`.
+- The system notification for this timeout-promoted 🔴 is sent by the TUI's alert scheduler (there is no hook
+  event to notify from); headless `--watch` does not send this particular notification.
 
 Verify that hooks are writing:
 
@@ -384,6 +397,7 @@ legend = true
 active_window_seconds = 21600
 working_threshold_seconds = 90
 waiting_window_seconds = 1800
+codex_permission_wait_seconds = 10  # bare Codex PermissionRequest + hook silence beyond this → 🔴 waiting; 0 = off
 notify_sound = true
 notify_sound_name = "Glass"
 notify_ignore_dnd = false

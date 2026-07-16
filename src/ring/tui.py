@@ -289,11 +289,29 @@ class RingApp(App[None]):
         return labeled_project(s.project, get_label(s.session_id))
 
     def _ring_on_waiting_alerts(self, alerts: list[Session]) -> None:
-        """有 session 需要提醒 → RiNG 真的「ring」你（響鈴 + toast 通知）。"""
-        if alerts:
-            self.bell()
-            names = ", ".join(sorted(self._display_name(s) for s in alerts))
-            self.notify(_("🔔 {names} 在等你回話", names=names), timeout=8)
+        """有 session 需要提醒 → RiNG 真的「ring」你（響鈴 + toast 通知）。
+
+        系統通知原則上由 ``ring hook`` 在轉 🔴 的事件當下發（這裡不重複發，只響
+        in-app 鈴）。唯一的例外是 codex 的核可等待：它是讀取側的靜默逾時判定
+        （registry._promote_codex_permission_wait），沒有對應 hook 事件可發通知，
+        所以由這裡代發系統通知——初次與重複提醒都走 WaitingAlertScheduler 同一條路。
+        codex + waiting_kind="permission" 只可能來自逾時判定（hook 對 codex 裸
+        PermissionRequest 一律記 working；AskUserQuestion 形狀的是 "question"），
+        不會跟 hook 端的通知重複。失敗安靜吞，不影響看板。
+        """
+        if not alerts:
+            return
+        self.bell()
+        names = ", ".join(sorted(self._display_name(s) for s in alerts))
+        self.notify(_("🔔 {names} 在等你回話", names=names), timeout=8)
+        promoted = [s for s in alerts if s.provider == "codex" and s.waiting_kind == "permission"]
+        if promoted:
+            try:
+                from ring.notify import notify_waiting
+
+                notify_waiting(promoted)
+            except Exception:
+                pass
 
     def _activate_own_window(self) -> None:
         """把 RiNG 自己的終端視窗帶到前景（best-effort，失敗安靜吞）。

@@ -312,9 +312,20 @@ Claude Code 註冊這幾個事件，對應到狀態：
 | `PermissionRequest` / `PreToolUse` 的 `AskUserQuestion` | 🔴 等你（權限 / 選項需要你決策） |
 | `SessionEnd` | 從看板消失 |
 
-Codex 目前註冊 Codex 支援的互動事件：`PreToolUse`、`PermissionRequest`、`Stop`。Codex 的
-`PermissionRequest` 也會在既有 policy 自動放行前送出；因此裸事件維持 🟢 工作中，只有 payload
-明確標示 `requires_action` / `waiting_for` 時才轉成 🔴 等你。
+Codex 目前註冊 Codex 支援的互動事件：`PreToolUse`、`PermissionRequest`、`PostToolUse`、`Stop`。
+Codex 的 `PermissionRequest` 也會在既有 policy 自動放行前送出，所以裸事件在 hook 層維持 🟢
+工作中。Codex 的 hook 沒有「使用者已核可」事件、沒有心跳，等核可期間 hook 通道**完全靜默**
+——RiNG 因此把靜默本身當訊號：最後一個 hook 事件是 `PermissionRequest`、又超過
+`codex_permission_wait_seconds`（預設 10 秒）沒有任何後續事件，看板就把它標成 🔴 等你，
+detail 帶當初要跑的指令摘要；任何後續事件（下一個工具、`Stop`）到了就自然轉回。
+
+Codex 側的已知限制（0.144.4 實證，hook payload 無任何欄位可區分）：
+
+- **分不出核可還是拒絕**：你按下 allow 或 deny 時，hook 都不會收到事件。allow 之後若那條指令
+  本身跑很久，🔴 會多亮到指令跑完（`PostToolUse`）為止；deny 之後若 agent 沒有立即的後續動作，
+  🔴 會亮到下一個事件或 `Stop` 才清。
+- 核可等待轉 🔴 的系統通知由 TUI 的提醒排程器代發（沒有 hook 事件可在當下發）；headless
+  `--watch` 不發這一種通知。
 
 hook 只對**新開的 session** 生效，所以裝完要重開。確認方法：
 
@@ -411,6 +422,7 @@ legend = true                    # 是否預設顯示圖例
 active_window_seconds = 21600    # 只看最近這段時間動過的 session（預設 6h）
 working_threshold_seconds = 90   # 多久沒動 → 🟢 工作中 變 🟡 閒置
 waiting_window_seconds = 1800    # 跑完停著升等你的時間窗上限（預設 30 分）
+codex_permission_wait_seconds = 10  # Codex 裸 PermissionRequest 後 hook 靜默超過這秒數 → 🔴 等你；0 = 關閉
 notify_sound = true              # 系統通知是否播放聲音
 notify_sound_name = "Glass"      # macOS / terminal-notifier sound name
 notify_ignore_dnd = false        # macOS terminal-notifier 是否穿透勿擾 / Focus

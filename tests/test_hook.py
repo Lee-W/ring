@@ -1095,3 +1095,64 @@ def test_notification_message_used_as_waiting_detail(monkeypatch: pytest.MonkeyP
     assert data["status"] == Status.WAITING.value
     assert data["waiting_detail"] == "Claude needs your permission to use Edit"
     assert data["waiting_kind"] == "permission"
+
+
+# ---------------------------------------------------------------------------
+# codex 核可等待：hook 側寫入 last_event 與暫存 detail（讀取側判定的原料）
+# ---------------------------------------------------------------------------
+
+
+def _codex_bare_permission_request(session_id: str = "thread-1") -> dict[str, Any]:
+    """真實 Codex 0.144.4 裸 PermissionRequest 的欄位形狀（取自 hook_payloads.jsonl 實錄）。
+
+    schema 固定欄位（additionalProperties=false）：無 requires_action / waiting_for，
+    tool_name / tool_input 必有。
+    """
+    return {
+        "session_id": session_id,
+        "turn_id": "019f63f6-5f51-7792-aedf-dedbbcd0251d",
+        "transcript_path": f"/nonexistent/rollout-{session_id}.jsonl",
+        "cwd": "/repo",
+        "hook_event_name": "PermissionRequest",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {"command": "cp /tmp/fix.py pelicanconf.py", "description": "修 CSS 路徑"},
+    }
+
+
+def test_codex_bare_permission_request_writes_last_event_and_stash(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """codex 裸 PermissionRequest → 🟢 working，但 row 要留下讀取側逾時判定的原料：
+    last_event（判定「還停在權限請求」）＋ pending_permission_detail（升紅時的 detail）。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(monkeypatch, _codex_bare_permission_request())
+
+    assert hook.run_hook(provider="codex") == 0
+
+    data = json.loads((tmp_path / "codex:thread-1.json").read_text())
+    assert data["status"] == Status.WORKING.value
+    assert data["last_event"] == "PermissionRequest"
+    assert data["pending_permission_detail"] == "Bash: cp /tmp/fix.py pelicanconf.py"
+    assert "waiting_detail" not in data
+
+
+def test_codex_subsequent_event_overwrites_last_event_and_clears_stash(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """核可後的 PostToolUse 覆寫 last_event 並清掉暫存 → 讀取側的逾時判定自然失效。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(monkeypatch, _codex_bare_permission_request())
+    assert hook.run_hook(provider="codex") == 0
+
+    _feed(
+        monkeypatch,
+        {"session_id": "thread-1", "hook_event_name": "PostToolUse", "tool_name": "Bash", "cwd": "/repo"},
+    )
+    assert hook.run_hook(provider="codex") == 0
+
+    data = json.loads((tmp_path / "codex:thread-1.json").read_text())
+    assert data["status"] == Status.WORKING.value
+    assert data["last_event"] == "PostToolUse"
+    assert "pending_permission_detail" not in data

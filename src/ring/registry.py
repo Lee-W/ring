@@ -8,7 +8,9 @@
 2. zero-config fallback：直接掃 ``~/.claude/projects/**/*.jsonl``，用檔案 mtime
    推活躍度，從記錄裡的 ``cwd`` 欄位還原真實路徑（避開目錄名以 ``-`` 編碼
    造成的 hyphen 還原歧義）。scan 模式不把「回完一輪」當成 🔴 WAITING；
-   WAITING 只保留給 hook 可確認的權限 / 選項等互動。
+   WAITING 一律由 hook 資料驅動：hook 事件直接標的權限 / 選項互動，加上
+   codex 的核可等待靜默逾時判定（``_promote_codex_permission_wait``——它讀的
+   也是 hook row，是推遲判定而非 scan 猜測）。
 
 額外富化：
 - ``tmux_target``：靠 tmux pane 的 current_path 對 cwd，給你「去哪」的座標。
@@ -53,6 +55,8 @@ _CFG = get_config()
 ACTIVE_WINDOW_SECONDS = _CFG.active_window_seconds  # 只看最近這段時間動過的 session（預設 6h）
 WORKING_THRESHOLD_SECONDS = _CFG.working_threshold_seconds  # 多久沒動 → 🟢 工作中 變 🟡 閒置
 WAITING_WINDOW_SECONDS = _CFG.waiting_window_seconds  # IDLE 升 WAITING 的時間窗上限（預設 30 分）
+# codex 裸 PermissionRequest 後 hook 靜默超過這秒數 → 判定真的停下來等核可（0 = 關閉）
+CODEX_PERMISSION_WAIT_SECONDS = _CFG.codex_permission_wait_seconds
 _SUBPROCESS_CACHE_TTL = 1.0  # ps / tmux 結果的短快取，省掉同一次刷新內的重複呼叫
 
 # Claude Code SessionStart payload 的 source 值（不是 provider）。舊版 bug 曾把它誤當
@@ -349,13 +353,43 @@ def _apply_waiting(
     """對話尾是 end_turn 且在時間窗內時，將 live/idle scan row 收斂為 IDLE。
 
     純函式、可單測，不依賴 module-level 常數。
-    不把回合結束升成 WAITING；WAITING 只保留給 hook 確認的權限 / 選項互動：
+    不把回合結束升成 WAITING；WAITING 一律由 hook 資料驅動（hook 直接標的權限 /
+    選項互動，或 ``_promote_codex_permission_wait`` 對 hook row 的靜默逾時判定），
+    scan 猜測永遠不標：
     - WORKING（< 90s）：若尾端已是 end_turn，代表回合其實結束了，收斂成 IDLE。
     - ENDED：超過活躍窗，不升。
     """
     if status in {Status.WORKING, Status.IDLE} and tail_kind == "waiting" and idle_seconds < waiting_window:
         return Status.IDLE
     return status
+
+
+def _promote_codex_permission_wait(
+    provider: str,
+    status: Status,
+    last_event: str,
+    age_seconds: float,
+    threshold: float,
+) -> bool:
+    """codex hook row 的核可等待判定：裸 PermissionRequest 後靜默逾時 → 該升 🔴 嗎。
+
+    Codex（0.144.4 實證）的 hook 是封閉的 10 事件枚舉：沒有「使用者已核可」事件、沒有
+    心跳，rollout 檔在等核可期間也完全靜默。policy 自動放行時，下一個事件（PostToolUse /
+    下一個 PreToolUse / Stop）幾秒內就會到；真的停下來等人時 hook 通道只會一直沉默。
+    所以「最後一個 hook 事件是 PermissionRequest 且已靜默超過門檻」本身就是可靠的等待
+    訊號——這是對 hook 資料的推遲判定，不是 scan 猜測。任何後續 hook 事件會覆寫
+    last_event，自然清紅。
+
+    只對 codex 啟用：claude-code 真的停下來等人時會補發 permission_prompt Notification
+    （hook 直接標 🔴），不需要、也不該重複走這條路。純函式、可單測。
+    """
+    return (
+        provider == "codex"
+        and status is Status.WORKING
+        and last_event == "PermissionRequest"
+        and threshold > 0
+        and age_seconds > threshold
+    )
 
 
 def _hook_heartbeat_stale(
@@ -1329,26 +1363,40 @@ def _hook_sessions(
                 if purge_session_start_phantoms:
                     f.unlink(missing_ok=True)
                 continue
-            out.append(
-                Session(
-                    session_id=str(data["session_id"]),
-                    cwd=str(data.get("cwd", "")),
-                    status=Status(data.get("status", "idle")),
-                    last_active=float(data.get("last_active", 0.0)),
-                    last_action=str(data.get("last_action", "—")),
-                    source="hook",
-                    tmux_pane=str(data.get("tmux_pane", "")) or None,
-                    tty=str(data.get("tty", "")) or None,
-                    hook_pid=int(data["hook_pid"]) if str(data.get("hook_pid", "")).isdigit() else None,
-                    heartbeat_at=float(data.get("heartbeat_at", data.get("last_active", 0.0))),
-                    source_path=str(data.get("source_path", "")),
-                    todo=tuple(todo) if isinstance(todo, list) and len(todo) == 2 else None,
-                    provider=provider,
-                    waiting_kind=str(data.get("waiting_kind", "")),
-                    waiting_detail=str(data.get("waiting_detail", "")),
-                    origin_cwd=str(data.get("origin_cwd", "")),
-                )
+            row = Session(
+                session_id=str(data["session_id"]),
+                cwd=str(data.get("cwd", "")),
+                status=Status(data.get("status", "idle")),
+                last_active=float(data.get("last_active", 0.0)),
+                last_action=str(data.get("last_action", "—")),
+                source="hook",
+                tmux_pane=str(data.get("tmux_pane", "")) or None,
+                tty=str(data.get("tty", "")) or None,
+                hook_pid=int(data["hook_pid"]) if str(data.get("hook_pid", "")).isdigit() else None,
+                heartbeat_at=float(data.get("heartbeat_at", data.get("last_active", 0.0))),
+                source_path=str(data.get("source_path", "")),
+                todo=tuple(todo) if isinstance(todo, list) and len(todo) == 2 else None,
+                provider=provider,
+                waiting_kind=str(data.get("waiting_kind", "")),
+                waiting_detail=str(data.get("waiting_detail", "")),
+                origin_cwd=str(data.get("origin_cwd", "")),
             )
+            if _promote_codex_permission_wait(
+                _canonical_provider(provider),
+                row.status,
+                str(data.get("last_event", "")),
+                time.time() - row.last_active,
+                CODEX_PERMISSION_WAIT_SECONDS,
+            ):
+                row.status = Status.WAITING
+                row.waiting_kind = "permission"
+                pending_detail = data.get("pending_permission_detail")
+                if isinstance(pending_detail, str) and pending_detail:
+                    # hook 在裸 PermissionRequest 當下暫存的指令摘要（120s TTL 只管
+                    # 「下一個事件來時還新不新鮮」；這裡 hook 靜默 = 同一筆請求還掛著，
+                    # 摘要必然還是它，直接沿用）。
+                    row.waiting_detail = pending_detail
+            out.append(row)
         except (KeyError, ValueError):
             continue
     for s in out:
