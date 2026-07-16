@@ -301,6 +301,15 @@ Claude Code events:
 | `PermissionRequest` / `PreToolUse` with `AskUserQuestion` | 🔴 waiting |
 | `SessionEnd` | removed from the board |
 
+`Stop` has one more exception: an agent sometimes doesn't use `AskUserQuestion` or trigger a permission
+request, and just asks a plain-text question before stopping (e.g. "want me to fix B too?"). RiNG looks at
+the **end** of the last assistant message for this: if it ends in a question mark (`？` / `?`, with any
+trailing fenced code block stripped first) the session is promoted to 🔴 waiting (`waiting_kind="question"`),
+with the question as its detail; a question that only appears mid-message, with a statement at the end,
+does not count — conservative on purpose, biased toward missing a case rather than a false positive. This
+applies to both Claude Code and Codex (`Stop` payloads from both carry `last_assistant_message`); the
+`detect_stop_questions` config key can turn it off (on by default).
+
 Codex currently installs the supported interactive events: `PreToolUse`, `PermissionRequest`, `PostToolUse`,
 and `Stop`. Codex also emits `PermissionRequest` before an existing policy auto-approves the call, so a bare
 event stays 🟢 working at the hook level. Codex hooks have no "user approved" event and no heartbeat — while
@@ -398,6 +407,7 @@ active_window_seconds = 21600
 working_threshold_seconds = 90
 waiting_window_seconds = 1800
 codex_permission_wait_seconds = 10  # bare Codex PermissionRequest + hook silence beyond this → 🔴 waiting; 0 = off
+detect_stop_questions = true     # promote Stop to 🔴 waiting when it ends in a plain-text question; false = Stop always 🟡
 notify_sound = true
 notify_sound_name = "Glass"
 notify_ignore_dnd = false

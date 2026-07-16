@@ -11,6 +11,9 @@
     waiting_window_seconds = 1800     # 跑完停著升等你的時間窗上限（預設 30 分）
     codex_permission_wait_seconds = 10  # Codex 裸 PermissionRequest 後 hook 靜默超過這秒數
                                       #   → 看板判定真的停下來等核可（🔴 等你）；0 = 關閉
+    detect_stop_questions = true      # Stop 事件時，若最後一則 assistant 訊息「結尾」是純文字
+                                      #   提問（沒用 AskUserQuestion、沒有權限請求）→ 🔴 等你
+                                      #   （waiting_kind="question"）；關閉則 Stop 一律 🟡
     notify_sound = true               # 系統通知帶聲音
     notify_sound_name = "Glass"       # macOS / terminal-notifier sound name
     notify_ignore_dnd = false         # terminal-notifier 是否加 -ignoreDnD（穿透勿擾 / Focus）
@@ -70,6 +73,9 @@ class Config:
     # 下一個事件幾秒內就到；真的停下來等人時 hook 通道完全靜默。所以「最後一個事件是
     # PermissionRequest 且已靜默超過這個門檻」就判定在等核可。0 = 關閉這個判定。
     codex_permission_wait_seconds: int = 10
+    # Stop 事件時，若最後一則 assistant 訊息結尾是純文字提問（見 question_detect.py）
+    # → 升級成 🔴 等你（waiting_kind="question"）。預設開；關閉則 Stop 一律維持 🟡。
+    detect_stop_questions: bool = True
     notify_sound: bool = True
     notify_sound_name: str = "Glass"
     notify_ignore_dnd: bool = False
@@ -148,6 +154,7 @@ def load(path: Path | None = None) -> Config:
         codex_permission_wait_seconds=_as_int(
             raw.get("codex_permission_wait_seconds"), d.codex_permission_wait_seconds
         ),
+        detect_stop_questions=_as_bool(raw.get("detect_stop_questions"), d.detect_stop_questions),
         notify_sound=_as_bool(raw.get("notify_sound"), d.notify_sound),
         notify_sound_name=(
             raw["notify_sound_name"] if isinstance(raw.get("notify_sound_name"), str) else d.notify_sound_name
@@ -222,6 +229,7 @@ _SETTERS: dict[str, Callable[[str], object]] = {
     "working_threshold_seconds": _coerce_int,
     "waiting_window_seconds": _coerce_int,
     "codex_permission_wait_seconds": _coerce_int,
+    "detect_stop_questions": _coerce_bool,
     "notify_sound": _coerce_bool,
     "notify_sound_name": str,
     "notify_ignore_dnd": _coerce_bool,
