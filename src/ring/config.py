@@ -9,6 +9,8 @@
     active_window_seconds = 21600     # 只看最近這段時間動過的 session（預設 6h）
     working_threshold_seconds = 90    # 多久沒動就從 🟢 工作中 變 🟡 閒置
     waiting_window_seconds = 1800     # 跑完停著升等你的時間窗上限（預設 30 分）
+    codex_permission_wait_seconds = 10  # Codex 裸 PermissionRequest 後 hook 靜默超過這秒數
+                                      #   → 看板判定真的停下來等核可（🔴 等你）；0 = 關閉
     notify_sound = true               # 系統通知帶聲音
     notify_sound_name = "Glass"       # macOS / terminal-notifier sound name
     notify_ignore_dnd = false         # terminal-notifier 是否加 -ignoreDnD（穿透勿擾 / Focus）
@@ -64,6 +66,10 @@ class Config:
     active_window_seconds: int = 6 * 60 * 60
     working_threshold_seconds: int = 90
     waiting_window_seconds: int = 1800  # 跑完停著升等你的時間窗上限（預設 30 分）
+    # Codex 的 hook 沒有「使用者已核可」事件也沒有心跳（0.144.4 實證）：policy 自動放行時
+    # 下一個事件幾秒內就到；真的停下來等人時 hook 通道完全靜默。所以「最後一個事件是
+    # PermissionRequest 且已靜默超過這個門檻」就判定在等核可。0 = 關閉這個判定。
+    codex_permission_wait_seconds: int = 10
     notify_sound: bool = True
     notify_sound_name: str = "Glass"
     notify_ignore_dnd: bool = False
@@ -139,6 +145,9 @@ def load(path: Path | None = None) -> Config:
         active_window_seconds=_as_int(raw.get("active_window_seconds"), d.active_window_seconds),
         working_threshold_seconds=_as_int(raw.get("working_threshold_seconds"), d.working_threshold_seconds),
         waiting_window_seconds=_as_int(raw.get("waiting_window_seconds"), d.waiting_window_seconds),
+        codex_permission_wait_seconds=_as_int(
+            raw.get("codex_permission_wait_seconds"), d.codex_permission_wait_seconds
+        ),
         notify_sound=_as_bool(raw.get("notify_sound"), d.notify_sound),
         notify_sound_name=(
             raw["notify_sound_name"] if isinstance(raw.get("notify_sound_name"), str) else d.notify_sound_name
@@ -212,6 +221,7 @@ _SETTERS: dict[str, Callable[[str], object]] = {
     "active_window_seconds": _coerce_int,
     "working_threshold_seconds": _coerce_int,
     "waiting_window_seconds": _coerce_int,
+    "codex_permission_wait_seconds": _coerce_int,
     "notify_sound": _coerce_bool,
     "notify_sound_name": str,
     "notify_ignore_dnd": _coerce_bool,

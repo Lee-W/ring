@@ -402,6 +402,8 @@ def run_config(args: list[str]) -> int:
 def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int:
     # 系統通知由 ``ring hook`` 在 session 轉 🔴 等你的當下就地發出（見 hook._ring_waiting_now）；
     # watch 只負責顯示看板，不再輪詢發通知——這樣關掉看板也照樣 ring 你。
+    # 例外：codex 核可等待是讀取側的靜默逾時判定，沒有 hook 事件可發通知，由 TUI 的
+    # 提醒排程器代發（tui._ring_on_waiting_alerts）；headless watch 仍不發，是已知限制。
     frames = 0
     footer_text = _("每 {interval}s 刷新 · Ctrl-C 離場", interval=int(interval))
     if not HAVE_RICH:

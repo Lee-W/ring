@@ -1401,3 +1401,191 @@ def test_hook_sessions_loads_waiting_detail(monkeypatch: pytest.MonkeyPatch, tmp
     assert by_id["s2"].waiting_kind == ""
     assert by_id["s2"].waiting_icon == ""
     assert by_id["s2"].waiting_detail == ""
+
+
+# ---------------------------------------------------------------------------
+# codex 核可等待：hook 靜默逾時判定（_promote_codex_permission_wait）
+# ---------------------------------------------------------------------------
+
+
+def _write_codex_permission_row(
+    registry_dir: Path,
+    sid: str = "codex:thread-1",
+    cwd: str = "/work/app",
+    *,
+    age_seconds: float,
+    last_event: str = "PermissionRequest",
+    status: str = "working",
+    pending_detail: str = "Bash: cp /tmp/fix.py pelicanconf.py",
+    provider: str = "codex",
+) -> None:
+    """寫一筆「hook 收過裸 PermissionRequest」形狀的 registry row（欄位取自 hook 實寫格式）。"""
+    registry_dir.mkdir(parents=True, exist_ok=True)
+    row: dict[str, Any] = {
+        "session_id": sid,
+        "provider": provider,
+        "cwd": cwd,
+        "status": status,
+        "last_event": last_event,
+        "last_active": time.time() - age_seconds,
+        "last_action": "—",
+    }
+    if pending_detail:
+        row["pending_permission_detail"] = pending_detail
+        row["pending_permission_detail_at"] = row["last_active"]
+    (registry_dir / f"{sid}.json").write_text(json.dumps(row))
+
+
+def test_hook_sessions_promotes_codex_permission_wait_after_threshold(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """codex 裸 PermissionRequest 後 hook 靜默超過門檻 → 讀取側判定真的在等核可（🔴）。
+
+    Codex（0.144.4）等核可期間 hook 通道完全靜默，policy 自動放行則幾秒內必有後續事件；
+    「最後事件是 PermissionRequest ＋ 逾時」因此是可靠訊號。detail 帶 hook 暫存的指令摘要。
+    """
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", tmp_path)
+    monkeypatch.setattr("ring.registry.CODEX_PERMISSION_WAIT_SECONDS", 10)
+    _write_codex_permission_row(tmp_path, age_seconds=30.0)
+
+    sessions = _hook_sessions([("/work/app", "")])
+
+    assert sessions[0].status is Status.WAITING
+    assert sessions[0].waiting_kind == "permission"
+    assert sessions[0].waiting_detail == "Bash: cp /tmp/fix.py pelicanconf.py"
+
+
+def test_hook_sessions_keeps_codex_permission_request_working_within_threshold(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """門檻內的裸 PermissionRequest 維持 🟢：多半是 policy 正要自動放行，別閃紅。"""
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", tmp_path)
+    monkeypatch.setattr("ring.registry.CODEX_PERMISSION_WAIT_SECONDS", 10)
+    _write_codex_permission_row(tmp_path, age_seconds=2.0)
+
+    sessions = _hook_sessions([("/work/app", "")])
+
+    assert sessions[0].status is Status.WORKING
+    assert sessions[0].waiting_kind == ""
+
+
+def test_hook_sessions_codex_promotion_threshold_configurable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """門檻由 config 的 codex_permission_wait_seconds 決定：調大 → 同樣的靜默不再升紅。"""
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", tmp_path)
+    _write_codex_permission_row(tmp_path, age_seconds=30.0)
+
+    monkeypatch.setattr("ring.registry.CODEX_PERMISSION_WAIT_SECONDS", 60)
+    assert _hook_sessions([("/work/app", "")])[0].status is Status.WORKING
+
+    monkeypatch.setattr("ring.registry.CODEX_PERMISSION_WAIT_SECONDS", 5)
+    assert _hook_sessions([("/work/app", "")])[0].status is Status.WAITING
+
+
+def test_hook_sessions_codex_promotion_disabled_when_threshold_zero(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """codex_permission_wait_seconds = 0 = 關閉判定：再久的靜默也不升紅。"""
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", tmp_path)
+    monkeypatch.setattr("ring.registry.CODEX_PERMISSION_WAIT_SECONDS", 0)
+    _write_codex_permission_row(tmp_path, age_seconds=3600.0)
+
+    assert _hook_sessions([("/work/app", "")])[0].status is Status.WORKING
+
+
+def test_hook_sessions_claude_permission_request_not_promoted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """claude-code 不走逾時判定：它真的停下來等人時有 permission_prompt Notification 兜底。
+
+    subagent 的唯讀工具呼叫常留下裸 PermissionRequest 且之後長時間沒事件（工具在跑），
+    對 claude 升紅會把 flapping 假象重新引進來。
+    """
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", tmp_path)
+    monkeypatch.setattr("ring.registry.CODEX_PERMISSION_WAIT_SECONDS", 10)
+    _write_codex_permission_row(tmp_path, sid="s1", age_seconds=30.0, provider="claude-code")
+
+    sessions = _hook_sessions([("/work/app", "")])
+
+    assert sessions[0].status is Status.WORKING
+
+
+def test_hook_sessions_codex_promotion_cleared_by_subsequent_event(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """核可後的任何後續事件（PostToolUse / PreToolUse / Stop）覆寫 last_event → 不再升紅。"""
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", tmp_path)
+    monkeypatch.setattr("ring.registry.CODEX_PERMISSION_WAIT_SECONDS", 10)
+    _write_codex_permission_row(tmp_path, age_seconds=30.0, last_event="PostToolUse")
+
+    sessions = _hook_sessions([("/work/app", "")])
+
+    assert sessions[0].status is Status.WORKING
+    assert sessions[0].waiting_kind == ""
+
+
+def test_hook_sessions_codex_promotion_without_stashed_detail(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """沒有暫存 detail（理論上 codex payload 必有 tool_input，防衛性）→ 照樣升紅，detail 留空。"""
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", tmp_path)
+    monkeypatch.setattr("ring.registry.CODEX_PERMISSION_WAIT_SECONDS", 10)
+    _write_codex_permission_row(tmp_path, age_seconds=30.0, pending_detail="")
+
+    sessions = _hook_sessions([("/work/app", "")])
+
+    assert sessions[0].status is Status.WAITING
+    assert sessions[0].waiting_detail == ""
+
+
+def test_hook_sessions_old_row_without_last_event_not_promoted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """舊版 hook 寫的 row 沒有 last_event 欄位 → 缺資料不判定，維持原狀（fail-safe）。"""
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", tmp_path)
+    monkeypatch.setattr("ring.registry.CODEX_PERMISSION_WAIT_SECONDS", 10)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "codex:old.json").write_text(
+        json.dumps(
+            {
+                "session_id": "codex:old",
+                "provider": "codex",
+                "cwd": "/work/app",
+                "status": "working",
+                "last_active": time.time() - 300.0,
+                "last_action": "—",
+            }
+        )
+    )
+
+    assert _hook_sessions([("/work/app", "")])[0].status is Status.WORKING
+
+
+def test_codex_permission_wait_end_to_end_from_real_hook_write(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """端到端：真實 schema 形狀的 codex 裸 PermissionRequest 走 ``ring hook`` 實寫 row，
+    讀取側靜默逾時後升 🔴 帶指令摘要——不依賴測試手寫的 row 格式。"""
+    import io
+
+    import ring.hook as hook_mod
+    from ring.config import Config
+
+    monkeypatch.setattr(hook_mod, "RING_REGISTRY", tmp_path)
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", tmp_path)
+    monkeypatch.setattr("ring.hook.get_config", lambda: Config())
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [])
+    monkeypatch.setattr("ring.stats.EVENTS_PATH", tmp_path / "events.jsonl")
+    payload = {
+        "session_id": "thread-1",
+        "turn_id": "019f63f6-5f51-7792-aedf-dedbbcd0251d",
+        "transcript_path": "/nonexistent/rollout.jsonl",
+        "cwd": "/repo",
+        "hook_event_name": "PermissionRequest",
+        "model": "gpt-5.6-sol",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {"command": "cp /tmp/fix.py pelicanconf.py", "description": "修 CSS 路徑"},
+    }
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+    assert hook_mod.run_hook(provider="codex") == 0
+
+    monkeypatch.setattr("ring.registry.CODEX_PERMISSION_WAIT_SECONDS", 0.05)
+    time.sleep(0.1)
+    sessions = _hook_sessions([("/repo", "")])
+
+    assert sessions[0].session_id == "codex:thread-1"
+    assert sessions[0].status is Status.WAITING
+    assert sessions[0].waiting_kind == "permission"
+    assert sessions[0].waiting_detail == "Bash: cp /tmp/fix.py pelicanconf.py"

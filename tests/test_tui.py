@@ -868,3 +868,48 @@ async def test_permission_reply_ack_suppresses_stale_waiting_until_new_hook(
         app._reload()
         assert app._sessions[0].status.value == "waiting"
         assert "a" not in app._permission_acks
+
+
+@pytest.mark.asyncio
+async def test_codex_promoted_waiting_sends_system_notification(monkeypatch: pytest.MonkeyPatch) -> None:
+    """codex 核可等待（讀取側逾時判定）沒有 hook 事件可發通知 → TUI 提醒排程器代發系統通知；
+    claude 的等待照舊只響 in-app 鈴（系統通知由 hook 發過了，不重複）。"""
+    state: dict[str, list[Session]] = {
+        "sessions": [
+            Session("codex:t1", "/x/p", Status.WORKING, 0.0, "-", "hook", provider="codex"),
+            Session("c1", "/y/q", Status.WORKING, 0.0, "-", "hook", provider="claude-code"),
+        ]
+    }
+    monkeypatch.setattr(tui, "board", lambda show_all: state["sessions"])
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+    sent: list[list[Session]] = []
+    monkeypatch.setattr("ring.notify.notify_waiting", lambda sessions: sent.append(sessions))
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test():
+        state["sessions"] = [
+            Session(
+                "codex:t1",
+                "/x/p",
+                Status.WAITING,
+                0.0,
+                "-",
+                "hook",
+                provider="codex",
+                waiting_kind="permission",
+                waiting_detail="Bash: cp /tmp/fix.py pelicanconf.py",
+            ),
+            Session(
+                "c1",
+                "/y/q",
+                Status.WAITING,
+                0.0,
+                "-",
+                "hook",
+                provider="claude-code",
+                waiting_kind="permission",
+            ),
+        ]
+        app._reload()
+        assert len(sent) == 1, "只有 codex 的逾時升紅要代發系統通知"
+        assert [s.session_id for s in sent[0]] == ["codex:t1"]
