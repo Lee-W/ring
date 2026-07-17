@@ -8,7 +8,7 @@
     legend = true
     active_window_seconds = 21600     # 只看最近這段時間動過的 session（預設 6h）
     working_threshold_seconds = 90    # 多久沒動就從 🟢 工作中 變 🟡 閒置
-    waiting_window_seconds = 1800     # 跑完停著升等你的時間窗上限（預設 30 分）
+    waiting_window_seconds = 1800     # 零設定掃描中，近期回合結束列收斂成 IDLE 的時間窗
     codex_permission_wait_seconds = 10  # Codex 裸 PermissionRequest 後 hook 靜默超過這秒數
                                       #   → 看板判定真的停下來等核可（🔴 等你）；0 = 關閉
     detect_stop_questions = true      # Stop 事件時，若最後一則 assistant 訊息「結尾」是純文字
@@ -68,7 +68,7 @@ class Config:
     legend: bool = True
     active_window_seconds: int = 6 * 60 * 60
     working_threshold_seconds: int = 90
-    waiting_window_seconds: int = 1800  # 跑完停著升等你的時間窗上限（預設 30 分）
+    waiting_window_seconds: int = 1800  # 零設定掃描中，近期回合結束列收斂成 IDLE 的時間窗
     # Codex 的 hook 沒有「使用者已核可」事件也沒有心跳（0.144.4 實證）：policy 自動放行時
     # 下一個事件幾秒內就到；真的停下來等人時 hook 通道完全靜默。所以「最後一個事件是
     # PermissionRequest 且已靜默超過這個門檻」就判定在等核可。0 = 關閉這個判定。

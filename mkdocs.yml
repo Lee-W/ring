@@ -1,0 +1,99 @@
+site_name: RiNG
+site_description: RiNG — Realtime Instance Notification Grid for active agent CLI sessions.
+site_author: Wei Lee
+site_url: https://lee-w.github.io/ring/
+copyright: Copyright &copy; 2026 The authors
+
+nav:
+  - Home: index.md
+  - Full Guide: guide.md
+  - Session States: session-states.md
+  - Contributing: contributing.md
+
+theme:
+  name: material
+  language: zh-TW
+  features:
+    - announce.dismiss
+    - content.code.annotate
+    - content.code.copy
+    - content.code.select
+    - content.footnote.tooltips
+    - content.tabs.link
+    - content.tooltips
+    - navigation.footer
+    - navigation.indexes
+    - navigation.path
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/weather-sunny
+        name: 切換至深色模式
+    - scheme: slate
+      toggle:
+        icon: material/weather-night
+        name: 切換至淺色模式
+
+plugins:
+  - search
+  - i18n:
+      docs_structure: suffix
+      fallback_to_default: false
+      languages:
+        - locale: zh-TW
+          default: true
+          name: 台灣華語
+          build: true
+          nav_translations:
+            Home: 首頁
+            Full Guide: 完整使用手冊
+            Session States: Session 狀態
+            Contributing: 貢獻指南
+        - locale: en
+          name: English
+          build: true
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      base_path:
+        - .
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      combine_header_slug: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
