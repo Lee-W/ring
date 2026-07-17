@@ -1,12 +1,13 @@
 name: Release
 
-# On push to main, commitizen bumps the version from conventional commits,
-# writes the CHANGELOG, tags, then we build and publish to PyPI and cut a
-# GitHub Release. Everything runs in one job, so it does not rely on the tag
-# push triggering a second workflow and the default GITHUB_TOKEN is enough.
+# Manually triggered from the Actions tab. Commitizen bumps the version from
+# conventional commits, writes the CHANGELOG, tags, then we build and publish
+# to PyPI and cut a GitHub Release. Everything runs in one job, so it does not
+# rely on the tag push triggering a second workflow and the default
+# GITHUB_TOKEN is enough. If there's no version change (nothing releasable),
+# the remaining steps are skipped.
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
@@ -18,9 +19,8 @@ permissions:
 
 jobs:
   release:
-    # Don't bump again on commitizen's own "bump:" commit. (Commits pushed with
-    # GITHUB_TOKEN don't re-trigger workflows anyway; this is belt-and-suspenders.)
-    if: "!startsWith(github.event.head_commit.message, 'bump:')"
+    # Guard against an accidental dispatch from a non-main branch/ref.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
