@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 dist/
+site/
 
 # gettext：.mo 是要 commit 的 ship 產物（無 build step，wheel 直接帶）；.pot 是抽字串模板。
 # 覆蓋全域 ~/.gitignore 的 *.mo / *.pot 規則。

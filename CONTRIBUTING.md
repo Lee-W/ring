@@ -1,5 +1,6 @@
 # Contributing to RiNG
 
+<!-- --8<-- [start:body] -->
 謝謝你願意幫 RiNG 變好。這份文件整理本 repo 的開發流程、測試方式與送 PR 前的檢查項目。
 
 ## 開發環境
@@ -32,6 +33,19 @@ uv run pytest tests/test_cli.py
 uv run pytest tests/test_cli.py::test_name
 ```
 
+## 文件建置
+
+文件使用 Material for MkDocs 與 `mkdocs-static-i18n`。`uv sync --all-groups` 會安裝文件依賴；本機預覽與正式檢查分別執行：
+
+```sh
+uv run poe docs:serve  # 在本機啟動可自動重載的文件站
+uv run poe docs:build  # 以 strict mode 建置到 site/
+```
+
+台灣華語是預設語言，來源檔使用 `name.md`；英文翻譯使用 `name.en.md`。兩種語言的文件內連結都應寫成未帶語言 suffix 的路徑，例如 `[Session 狀態](session-states.md)`，由 i18n plugin 自動連到目前語言。新增頁面時也要更新 `mkdocs.yml` 的 `nav`；menu 標題翻譯放在 `nav_translations`。
+
+送出文件變更前請執行 strict build。不要 commit `site/` 產物；GitHub Pages workflow 會從 lockfile 安裝 `docs` dependency group 並重新建置。
+
 ## Pre-commit Hooks
 
 建議安裝 hooks，讓格式化、lint、lockfile、commit message 檢查在本機先跑過。
@@ -49,7 +63,7 @@ uv run poe setup-pre-commit
 - Ruff 目標版本是 Python 3.13，行寬 120。
 - Mypy 使用 strict mode；新增 API 時請補齊型別。
 - CLI 行為、輸出格式、hook protocol、JSON keys 會被使用者腳本依賴；改動時請優先維持相容，必要 breaking change 要清楚標示。
-- 專案刻意允許台灣漢語註解與 UI 字串；新增英文 UI 時也要注意 i18n。
+- 專案刻意允許台灣華語註解與 UI 字串；新增英文 UI 時也要注意 i18n。
 
 ## 測試準則
 
@@ -79,16 +93,17 @@ uv run poe all
 改到使用者可見字串時，請更新翻譯檔。
 
 ```sh
-uv run poe i18n-extract
-uv run poe i18n-check
-uv run poe i18n-compile
+uv run poe i18n:extract
+uv run poe i18n:check
+uv run poe i18n:compile
 ```
 
 注意：不要用 `pybabel update`。這會把空 `msgstr` 塞進 `.po`，可能弄壞 i18n 測試。新字串請手動把已翻譯條目加進各語言 `.po`，再重新 compile 並 commit `.po` 與 `.mo`。
 
 ## Commit 與 Changelog
 
-本專案使用 Commitizen / Conventional Commits，commit message 例如：
+本專案使用 [Commitizen](https://commitizen-tools.github.io/commitizen/) /
+[Conventional Commits](https://www.conventionalcommits.org/)，commit message 例如：
 
 ```text
 feat: add webhook retry backoff
@@ -108,6 +123,7 @@ test: cover tmux permission parsing
 - `uv.lock` 與依賴設定一致。
 - 使用者可見字串已處理 i18n。
 - README / docs 已同步更新 CLI 旗標、設定鍵、輸出格式或行為變更。
+- 文件變更已通過 `uv run poe docs:build`，中英文頁面、導覽與內部連結保持同步。
 - 有 breaking change 時，PR 說明清楚列出影響與遷移方式。
 
 ## 回報 Issue
@@ -120,3 +136,4 @@ test: cover tmux permission parsing
 - 若和 hook / focus / permission reply 有關，請附 `ring doctor` 的相關段落。
 
 請不要貼出含有 token、private key、完整私有 transcript 或其他敏感資訊的內容。
+<!-- --8<-- [end:body] -->
