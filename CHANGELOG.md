@@ -1,3 +1,14 @@
+## 0.13.0 (2026-07-17)
+
+### Feat
+
+- flag turns that end with a question as waiting
+- surface codex approval waits via hook-silence timeout
+
+### Fix
+
+- stop bare PermissionRequest events from flapping sessions into waiting
+
 ## 0.12.0 (2026-07-15)
 
 ### Feat
