@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+import ring.notify_queue as notify_queue
 from ring.config import Config
-from ring.notify import notify_waiting
+from ring.notify import notify_summary, notify_waiting
+from ring.notify.base import is_summary_session
 from ring.registry import Session, Status
 
 
@@ -28,6 +31,13 @@ def _hermetic_config(monkeypatch: pytest.MonkeyPatch) -> None:
         "ring.notify.webhook.get_config",
     ):
         monkeypatch.setattr(target, lambda: Config())
+
+
+@pytest.fixture
+def _hermetic_queue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """把 debounce queue／quiet 狀態檔指到 tmp_path，避免測試碰到機器上的真實狀態。"""
+    monkeypatch.setattr(notify_queue, "_QUEUE_PATH", tmp_path / "notify-queue.json")
+    monkeypatch.setattr(notify_queue, "_QUIET_PATH", tmp_path / "quiet")
 
 
 def _which_only(*available: str) -> Callable[[str], str | None]:
@@ -645,3 +655,172 @@ class TestMessageAndTitle:
 
         monkeypatch.setattr(base, "get_label", lambda sid, **kw: "")
         assert "maigo" in base.notify_title(_s("uuid-1", "maigo"))
+
+
+class TestQuietGate:
+    """notify_waiting 開頭的 quiet gate（求值順序見 notify_waiting docstring）。"""
+
+    def test_quiet_active_enqueues_and_sends_nothing(self, _hermetic_queue: None) -> None:
+        notify_queue.set_quiet(None)
+        with (
+            patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("subprocess.run") as mock_run,
+        ):
+            notify_waiting([_s("a", "proj")])
+        mock_run.assert_not_called()
+        assert notify_queue.peek_count() == 1
+
+    def test_quiet_inactive_sends_normally(self, _hermetic_queue: None) -> None:
+        with (
+            patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            notify_waiting([_s("a", "proj")])
+        mock_run.assert_called_once()
+        assert notify_queue.peek_count() == 0
+
+
+class TestDebounceGate:
+    """notify_waiting 的 debounce leading-edge 合流。"""
+
+    def test_debounce_disabled_sends_every_batch(self, _hermetic_queue: None) -> None:
+        """debounce=0（預設）→ 行為與現況逐一致：每批各自發，不進 queue。"""
+        with (
+            patch("ring.notify.get_config", return_value=Config(notify_debounce_seconds=0)),
+            patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            notify_waiting([_s("a")])
+            notify_waiting([_s("b")])
+        assert mock_run.call_count == 2
+        assert notify_queue.peek_count() == 0
+
+    def test_first_batch_in_window_sends_leading_edge(self, _hermetic_queue: None) -> None:
+        with (
+            patch("ring.notify.get_config", return_value=Config(notify_debounce_seconds=30)),
+            patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            notify_waiting([_s("a")])
+        mock_run.assert_called_once()
+
+    def test_second_batch_within_window_is_enqueued_not_sent(self, _hermetic_queue: None) -> None:
+        with (
+            patch("ring.notify.get_config", return_value=Config(notify_debounce_seconds=30)),
+            patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            notify_waiting([_s("a")])
+            notify_waiting([_s("b")])
+        mock_run.assert_called_once()  # 只有第一批（leading edge）真的發了
+        assert notify_queue.peek_count() == 1  # 第二批進 queue
+
+    def test_batch_after_window_expires_sends_leading_edge_again(self, _hermetic_queue: None) -> None:
+        with (
+            patch("ring.notify.get_config", return_value=Config(notify_debounce_seconds=1)),
+            patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            notify_waiting([_s("a")])
+            with patch("time.time", return_value=time.time() + 2):
+                notify_waiting([_s("b")])
+        assert mock_run.call_count == 2  # 視窗過期後新的一批又是 leading edge
+
+
+class TestNotifySummary:
+    def test_zero_or_negative_count_sends_nothing(self) -> None:
+        with (
+            patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("subprocess.run") as mock_run,
+        ):
+            notify_summary(0, _s("a"))
+        mock_run.assert_not_called()
+
+    def test_sends_exactly_one_notification(self) -> None:
+        with (
+            patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            notify_summary(3, _s("a", "proj"))
+        mock_run.assert_called_once()
+
+    def test_message_contains_count(self) -> None:
+        with (
+            patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            notify_summary(4, _s("a", "proj"))
+        args = mock_run.call_args[0][0]
+        message_val = args[args.index("-message") + 1]
+        assert "4" in message_val
+
+    def test_marks_summary_but_keeps_real_session_id(self) -> None:
+        """實際送給後端的 Session 標了 is_summary=True 走彙總句式，但 session_id 維持真實值
+        （不覆寫成 sentinel）——點擊通知才能正確 focus 回那個仍在等你的 session，
+        不會像舊版 sentinel id 那樣找不到 session 而靜默失敗。"""
+        with (
+            patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("ring.notify.terminal_notifier._ring_executable", return_value="/opt/ring/bin/ring"),
+            patch("ring.notify.terminal_notifier.notify_message") as mock_msg,
+            patch("ring.notify.terminal_notifier.notify_title") as mock_title,
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            mock_msg.return_value = "x"
+            mock_title.return_value = "y"
+            notify_summary(2, _s("real-session-id", "proj"))
+        sent_session = mock_msg.call_args[0][0]
+        assert is_summary_session(sent_session)
+        assert sent_session.session_id == "real-session-id"  # 沒被覆寫成 sentinel
+        # -execute 也是拿真實 session_id 組的，點擊通知會確實嘗試 focus 這個 session。
+        args = mock_run.call_args[0][0]
+        assert args[args.index("-execute") + 1] == "/opt/ring/bin/ring focus real-session-id"
+
+    def test_no_backend_available_does_not_raise(self) -> None:
+        with patch("shutil.which", return_value=None):
+            notify_summary(2, _s("a"))  # 不應拋
+
+    def test_backend_none_sends_nothing(self) -> None:
+        with (
+            patch("ring.notify.get_config", return_value=Config(notify_backend="none")),
+            patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("subprocess.run") as mock_run,
+        ):
+            notify_summary(2, _s("a"))
+        mock_run.assert_not_called()
+
+    def test_ring_focus_resolves_summary_session_to_real_session(self) -> None:
+        """`ring focus` 收到彙總通知帶出來的 session_id，要能正確解析到那個真實 session
+        （不是像舊版 sentinel id 那樣「找不到 session」）——這是 #4 要修的行為本身，不只是
+        「Session 物件標記對不對」。"""
+        from ring.commands.focus import run_focus
+
+        real_session = _s("real-session-id", "proj")
+        with (
+            patch("shutil.which", return_value="/usr/local/bin/terminal-notifier"),
+            patch("ring.notify.terminal_notifier._ring_executable", return_value="/opt/ring/bin/ring"),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            notify_summary(3, real_session)
+        args = mock_run.call_args[0][0]
+        focused_id = args[args.index("-execute") + 1].rsplit(" ", 1)[-1]
+        assert focused_id == "real-session-id"
+
+        # 通知帶出來的 session_id 送進 `ring focus`，要能正確解析回這個真實 session
+        # （模擬點擊通知時的真實路徑：get_by_id 找到它、TUI 在跑 → write_focus_request）。
+        with (
+            patch("ring.sources.get_by_id", return_value=real_session),
+            patch("ring.ipc.read_tui_presence", return_value={"tty": "", "pid": 1, "ts": 0.0}),
+            patch("ring.ipc.write_focus_request") as mock_write_request,
+        ):
+            rc = run_focus([focused_id])
+        assert rc == 0
+        mock_write_request.assert_called_once_with("real-session-id")

@@ -40,6 +40,7 @@ from ring.i18n import gettext as _
 from ring.i18n import set_lang
 from ring.ipc import clear_tui_presence, read_focus_request, write_tui_presence
 from ring.labels import get_label, load_labels, set_label
+from ring.notify_queue import flush_if_due, format_remaining, peek_count, quiet_active, quiet_remaining
 from ring.registry import Session, Status, delete_session_state, hide_session, running_agent_pids
 from ring.watcher import WaitingAlertScheduler
 
@@ -298,12 +299,20 @@ class RingApp(App[None]):
         codex + waiting_kind="permission" 只可能來自逾時判定（hook 對 codex 裸
         PermissionRequest 一律記 working；AskUserQuestion 形狀的是 "question"），
         不會跟 hook 端的通知重複。失敗安靜吞，不影響看板。
+
+        ``notify_waiting(promoted)`` 一定要先呼叫，quiet 判斷放到它後面：
+        ``WaitingAlertScheduler.feed()`` 呼叫當下就已經把這批 session 記成「這輪已提醒
+        過」（不管呼叫端事後有沒有真的送出提醒），若在呼叫 ``notify_waiting`` 之前就
+        因為 quiet active 整段 return，這個 codex 核可等待就會被永久漏掉——它不會被
+        ``enqueue()``，quiet 解除後的彙總 flush 也就永遠等不到它，而不是單純延後
+        （scheduler 要等 repeat 排程才會再排 due，這段期間內若請求被別的方式解決，
+        提醒就徹底消失，沒有任何補發路徑）。``notify_waiting`` 自己的 quiet gate
+        會在 quiet active 時把它 enqueue、不發送——這才是 quiet 期間該有的「延後」行為。
+        quiet active 時只跳過 in-app 鈴／toast（bell / self.notify），系統通知交給
+        ``notify_waiting`` 自己的 gate 決定。
         """
         if not alerts:
             return
-        self.bell()
-        names = ", ".join(sorted(self._display_name(s) for s in alerts))
-        self.notify(_("🔔 {names} 在等你回話", names=names), timeout=8)
         promoted = [s for s in alerts if s.provider == "codex" and s.waiting_kind == "permission"]
         if promoted:
             try:
@@ -312,6 +321,11 @@ class RingApp(App[None]):
                 notify_waiting(promoted)
             except Exception:
                 pass
+        if quiet_active(time.time()):
+            return
+        self.bell()
+        names = ", ".join(sorted(self._display_name(s) for s in alerts))
+        self.notify(_("🔔 {names} 在等你回話", names=names), timeout=8)
 
     def _activate_own_window(self) -> None:
         """把 RiNG 自己的終端視窗帶到前景（best-effort，失敗安靜吞）。
@@ -361,10 +375,31 @@ class RingApp(App[None]):
             self._set_status(msg)
             self.notify(msg, severity="warning", timeout=8)
 
+    def _quiet_badge(self) -> str:
+        """quiet 狀態 ＋ debounce queue 計數的 header badge；都沒有時回空字串（零視覺負擔）。"""
+        now = time.time()
+        parts: list[str] = []
+        if quiet_active(now):
+            remaining = quiet_remaining(now)
+            if remaining is None:
+                parts.append(_("🔇 QUIET"))
+            else:
+                parts.append(_("🔇 QUIET · 剩 {remaining}", remaining=format_remaining(remaining)))
+        count = peek_count()
+        if count > 0:
+            parts.append(_("queue: {n}", n=count))
+        return "  ｜  " + "  ".join(parts) if parts else ""
+
     def _reload(self) -> None:
         # 每次刷新都續寫 presence，避免 TUI 開超過 TTL 後 `ring focus` 誤判 TUI 沒在跑、
         # 退回去跳 session 自己的終端（scan 模式常沒 tty → 跳轉失敗）。
         write_tui_presence()
+        # TUI 輪詢是三個懶惰 flush 觸發源之一：開著看板時比 headless（靠下個 hook 事件）更快
+        # 補發合流的彙總通知。失敗安靜吞，不影響看板本身。
+        try:
+            flush_if_due()
+        except Exception:
+            pass
         self._sessions = board(self._show_all)
         self._apply_permission_acks()
         table = self.query_one(DataTable)
@@ -385,7 +420,7 @@ class RingApp(App[None]):
         # 這裡只留 TUI 自己的 in-app 響鈴 / 訊息列與醒目標記，不重複發系統通知。
         alerts = self._alerts.feed(self._sessions)
         self._ring_on_waiting_alerts(alerts)
-        self.sub_title = _header(len(self._sessions), len(running_agent_pids()))
+        self.sub_title = _header(len(self._sessions), len(running_agent_pids())) + self._quiet_badge()
         labels = load_labels()
         table.clear()
         for s in self._sessions:

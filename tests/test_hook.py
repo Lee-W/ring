@@ -8,7 +8,7 @@ import pytest
 import ring.hook as hook
 from ring.config import Config
 from ring.hook import _is_ring_hook_command, install_hooks, uninstall_hooks
-from ring.registry import Status
+from ring.registry import Session, Status
 
 
 @pytest.fixture(autouse=True)
@@ -18,10 +18,14 @@ def _hermetic_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     同時清空 notifier registry：hook 現在會在 WAITING 事件就地發系統通知，darwin 上
     osascript 永遠可用，不擋會在跑測試時噴真實通知。空 registry → _select_notifier 回
     None → notify_waiting no-op。要驗證「有發」的測試自己注入 spy notifier。
-    stats 的狀態轉換 log 也導去 tmp，避免測試寫進使用者的 events.jsonl。"""
+    stats 的狀態轉換 log 也導去 tmp，避免測試寫進使用者的 events.jsonl。run_hook 開頭的
+    flush_if_due 也要導去 tmp，避免測試碰到機器上真實的 debounce queue / quiet 狀態檔。"""
     monkeypatch.setattr("ring.hook.get_config", lambda: Config())
     monkeypatch.setattr("ring.notify._NOTIFIERS", [])
     monkeypatch.setattr("ring.stats.EVENTS_PATH", tmp_path / "events.jsonl")
+    monkeypatch.setattr("ring.notify_queue._QUEUE_PATH", tmp_path / "notify-queue.json")
+    monkeypatch.setattr("ring.notify_queue._QUIET_PATH", tmp_path / "quiet")
+    monkeypatch.setattr("ring.notify_queue.get_config", lambda: Config())
 
 
 def _feed(monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any]) -> None:
@@ -298,6 +302,39 @@ def test_non_waiting_event_does_not_notify_in_hook(monkeypatch: pytest.MonkeyPat
     assert hook.run_hook() == 0
 
     assert spy.sent == []
+
+
+def test_run_hook_flushes_due_queue_headless(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """headless（沒開 TUI）：queue 有累積時，任何 hook 事件開頭都要懶惰 flush 一次彙總。"""
+    import ring.notify_queue as notify_queue
+
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    notify_queue.enqueue([Session("waiting-1", "/x", Status.WAITING, 0.0, "→ Edit", "hook")])
+    summary_calls: list[int] = []
+    monkeypatch.setattr("ring.notify.notify_summary", lambda count, sample: summary_calls.append(count))
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "Stop", "cwd": "/proj"})
+
+    assert hook.run_hook() == 0
+
+    assert summary_calls == [1]
+    assert notify_queue.peek_count() == 0
+
+
+def test_run_hook_does_not_flush_while_quiet_active(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """quiet active 時跑 hook 主流程 → 不 flush（queue 保留）。"""
+    import ring.notify_queue as notify_queue
+
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    notify_queue.enqueue([Session("waiting-1", "/x", Status.WAITING, 0.0, "→ Edit", "hook")])
+    notify_queue.set_quiet(None)
+    summary_calls: list[int] = []
+    monkeypatch.setattr("ring.notify.notify_summary", lambda count, sample: summary_calls.append(count))
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "Stop", "cwd": "/proj"})
+
+    assert hook.run_hook() == 0
+
+    assert summary_calls == []
+    assert notify_queue.peek_count() == 1
 
 
 def test_waiting_flap_within_cooldown_suppresses_second_hook_notification(

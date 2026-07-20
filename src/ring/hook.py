@@ -154,7 +154,18 @@ def run_hook(provider: str = "claude-code") -> int:
     ``agent-hooks`` 時發生：把原始 payload 透傳給 ``agent-hooks callback``，由它同步出 modal、
     收按鈕、把決策寫到 stdout 回給 Claude（這條路下 ``_ring_waiting_now`` 自動短路、不重複發）。
     其餘情況 RiNG 記狀態 + 發通知後 exit 0（你在終端自己回答）。
+
+    每次執行開頭先嘗試懶惰 flush 合流 queue（見 ``notify_queue.flush_if_due``）——沒有常駐
+    daemon，任何 hook 事件（不限於這次自己是不是 waiting 事件）都是「debounce 視窗過期」的
+    天然觸發點，讓 headless（沒開 TUI）也能補發彙總通知。失敗安靜吞掉，不影響本次事件記錄。
     """
+    try:
+        from ring.notify_queue import flush_if_due
+
+        flush_if_due()
+    except Exception:
+        pass
+
     try:
         raw = sys.stdin.read()
     except OSError:

@@ -16,6 +16,8 @@
 | `ring focus SESSION_ID` | 聚焦指定 session；可用唯一前綴 |
 | `ring config` | 顯示設定檔路徑與生效設定 |
 | `ring config set KEY VALUE` | 寫入單一設定 |
+| `ring quiet` | 顯示暫時全域靜音（quiet）現況 |
+| `ring quiet on` / `off` / `30m` | 開啟 / 解除 quiet，或開啟一段時間後自動解除 |
 | `ring doctor` | 唯讀環境診斷 |
 | `ring digest --since 4h` | 離席摘要：最近 session 狀態與等待統計 |
 | `ring gc --dry-run` | 預覽 RiNG 自己的 stale 狀態檔清理 |
@@ -125,6 +127,33 @@ notify_also = ["ntfy"]                             # 桌面通知照發，再「
 
 `notify_backend = "ntfy"` 則是只推手機、不發桌面通知。要接 Slack / 自家 bot / IFTTT，
 用 `notify_webhook_url` 走通用 webhook 後端（JSON POST，欄位穩定只加不改）。
+
+### 通知合流與暫時靜音（`notify_debounce_seconds` / `ring quiet`）
+
+多個 session 同時轉 🔴 等你時，各自發一則系統通知會被轟炸。兩個獨立、可疊加的機制：
+
+- **通知合流（debounce）**：`notify_debounce_seconds`（預設 `0`，關閉、向後相容）設成正數
+  （例如 `5`）後，n 秒內冒出的多則通知只有第一則立即發（leading edge），之後的合併成一則
+  「另有 N 個 session 在等你」彙總——RiNG 沒有常駐 daemon，彙總由下一個 hook 事件、TUI 輪詢
+  或 quiet 解除時**懶惰補發**，不會吞掉唯一的通知。
+- **暫時全域靜音（`ring quiet`）**：手動靜音一段時間，期間所有通知先進 queue，解除時一併
+  補發彙總；跟 debounce 共用同一個 queue，但兩者互相獨立——quiet 不受
+  `notify_debounce_seconds` 影響，永遠可用。
+
+```sh
+ring quiet            # 顯示目前現況（開/關、剩餘時間）
+ring quiet on         # 開啟，手動解除前一直靜音
+ring quiet 30m        # 開啟 30 分鐘，到期自動解除
+ring quiet off        # 解除，立即補發合流中的彙總通知
+```
+
+```toml
+# ~/.config/ring/config.toml
+notify_debounce_seconds = 5  # 0 = 關閉（預設）；正數＝合流窗口秒數
+```
+
+開著 TUI 時，header 會顯示 quiet 狀態與排隊計數（例如 `🔇 QUIET · 剩 12 分 ｜ queue: 3`），
+沒有靜音、queue 也是空的時候不佔版面。quiet 是全域粒度，不分特定 session。
 
 ### 清理 RiNG 狀態檔（`ring gc`）
 
@@ -305,7 +334,8 @@ RiNG 會優先相信這些欄位；沒有時才退回 event / notification type 
 退回 `osascript`（macOS）或 `notify-send`（Linux）。如果全部不可用，就只保留看板，不讓通知失敗打斷主流程。
 
 - **設定**：`notify_sound`、`notify_sound_name`、`notify_ignore_dnd`、`notify_repeat_seconds`、
-  `notify_repeat_max`、`notify_backend`、`waiting_cooldown_seconds` 都可在 `~/.config/ring/config.toml` 調整。
+  `notify_repeat_max`、`notify_backend`、`waiting_cooldown_seconds`、`notify_debounce_seconds`
+  都可在 `~/.config/ring/config.toml` 調整。
 - **防翻轉轟炸**：背景 subagent 的權限請求可能讓 session 在等你／工作中之間快速翻轉。
   `waiting_cooldown_seconds`（預設 180 秒）讓 `ring hook` 的系統通知與 TUI 的響鈴／提醒，
   在 session 離開等你又很快轉回時，距上次通知未滿冷卻期就不再立即發；設 `0` 關閉冷卻
@@ -357,6 +387,7 @@ notify_backend = "auto"          # auto / terminal-notifier / osascript / notify
 notify_repeat_seconds = [30, 120, 300]  # 持續等你時，幾秒後重複提醒
 notify_repeat_max = 3            # 重複提醒上限；0 = 不限
 waiting_cooldown_seconds = 180   # 離開等你又轉回時，距上次提醒未滿這段時間就不再立即提醒；0 = 關閉
+notify_debounce_seconds = 0      # 跨 session 通知合流窗口秒數；0 = 關閉（預設，向後相容）
 notify_ntfy_url = ""             # 設完整 ntfy topic URL 啟用手機推播（如 https://ntfy.sh/my-topic）
 notify_webhook_url = ""          # 設 URL 啟用通用 webhook 後端（JSON POST）
 notify_also = []                 # 主後端之外「加發」的後端，如 ["ntfy"]（桌面＋手機各一份）

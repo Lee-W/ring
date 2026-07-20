@@ -51,6 +51,29 @@ def test_waiting_cooldown_seconds_negative_clamped_to_zero(tmp_path: Path) -> No
     assert load(p).waiting_cooldown_seconds == 0
 
 
+def test_notify_debounce_seconds_defaults_to_zero(tmp_path: Path) -> None:
+    """沒設 → 預設 0（關閉，向後相容：每次轉入都各自發）。"""
+    assert load(tmp_path / "nope.toml").notify_debounce_seconds == 0
+
+
+def test_notify_debounce_seconds_parses_positive(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("notify_debounce_seconds = 5\n")
+    assert load(p).notify_debounce_seconds == 5
+
+
+def test_notify_debounce_seconds_negative_clamped_to_zero(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text("notify_debounce_seconds = -5\n")
+    assert load(p).notify_debounce_seconds == 0
+
+
+def test_notify_debounce_seconds_bad_type_falls_back_to_zero(tmp_path: Path) -> None:
+    p = tmp_path / "config.toml"
+    p.write_text('notify_debounce_seconds = "soon"\n')
+    assert load(p).notify_debounce_seconds == 0
+
+
 def test_notify_backend_parses_valid(tmp_path: Path) -> None:
     p = tmp_path / "config.toml"
     p.write_text('notify_backend = "osascript"\n')
@@ -167,3 +190,23 @@ def test_detect_stop_questions_parses_and_defaults(tmp_path: Path) -> None:
     p.write_text("detect_stop_questions = false\n")
     assert load(p).detect_stop_questions is False
     assert load(tmp_path / "nope.toml").detect_stop_questions is True
+
+
+def test_unknown_key_warns_and_still_loads(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """打錯字的鍵（未知鍵）→ stderr 印一次警告，config 仍正常載入（不 raise）。"""
+    p = tmp_path / "config.toml"
+    p.write_text('intervl = 1.5\nlang = "en"\n')
+    cfg = load(p)
+    err = capsys.readouterr().err
+    assert cfg.lang == "en"  # 已知鍵仍照常生效
+    assert cfg.interval == Config().interval  # 打錯字的鍵被忽略，用預設值
+    assert "intervl" in err
+    assert str(p) in err
+
+
+def test_known_keys_do_not_warn(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """全部合法鍵（含巢狀 [colors] table）→ 不印任何警告。"""
+    p = tmp_path / "config.toml"
+    p.write_text('lang = "en"\ninterval = 1.5\n\n[colors]\nwaiting = "bold magenta"\n')
+    load(p)
+    assert capsys.readouterr().err == ""
