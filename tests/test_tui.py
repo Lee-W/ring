@@ -16,6 +16,14 @@ def _silence_notifications(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tui.RingApp, "bell", lambda self: None, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_notify_queue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """把 debounce queue／quiet 狀態檔導去 tmp_path，避免 _reload 的 flush_if_due /
+    _quiet_badge 碰到機器上真實的狀態檔。"""
+    monkeypatch.setattr("ring.notify_queue._QUEUE_PATH", tmp_path / "notify-queue.json")
+    monkeypatch.setattr("ring.notify_queue._QUIET_PATH", tmp_path / "quiet")
+
+
 @pytest.mark.asyncio
 async def test_tui_mounts_and_lists_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
     sessions = [
@@ -67,6 +75,99 @@ async def test_tui_jump_without_tmux_target_does_not_crash(monkeypatch: pytest.M
     async with app.run_test() as pilot:
         await pilot.press("enter")  # 沒 tmux 座標 → 只 notify，不該炸
         assert app.query_one(DataTable).row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_quiet_active_suppresses_bell(monkeypatch: pytest.MonkeyPatch) -> None:
+    """quiet active 時，新轉 waiting 也不該響 in-app 鈴（quiet 說到做到）。"""
+    import ring.notify_queue as notify_queue
+
+    state: dict[str, list[Session]] = {"sessions": [Session("a", "/x/p", Status.WORKING, 0.0, "-", "scan")]}
+    monkeypatch.setattr(tui, "board", lambda show_all: state["sessions"])
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test():
+        notify_queue.set_quiet(None)
+        bells: list[int] = []
+        monkeypatch.setattr(app, "bell", lambda: bells.append(1))
+        state["sessions"] = [Session("a", "/x/p", Status.WAITING, 0.0, "-", "scan")]  # WORKING → WAITING
+        app._reload()
+        assert bells == []
+
+
+@pytest.mark.asyncio
+async def test_quiet_active_enqueues_codex_promoted_alert_instead_of_dropping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1 修復證據：quiet active 時 codex 核可等待（讀取側逾時判定，走 notify_waiting(promoted)
+    才會 enqueue）不能被永久漏掉——`notify_waiting(promoted)` 必須先於 quiet 的 early return
+    被呼叫，它自己的 quiet gate 才會把這個 session enqueue，quiet 解除後才補得回來。
+    這裡刻意不 mock `ring.notify.notify_waiting`，讓它真的走到 notify_queue.enqueue()。"""
+    import ring.notify_queue as notify_queue
+
+    state: dict[str, list[Session]] = {
+        "sessions": [Session("codex:t1", "/x/p", Status.WORKING, 0.0, "-", "hook", provider="codex")]
+    }
+    monkeypatch.setattr(tui, "board", lambda show_all: state["sessions"])
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+    monkeypatch.setattr("shutil.which", lambda _name: None)  # 沒有真的通知後端可用，不會噴通知
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test():
+        notify_queue.set_quiet(None)
+        assert notify_queue.peek_count() == 0
+
+        state["sessions"] = [
+            Session(
+                "codex:t1",
+                "/x/p",
+                Status.WAITING,
+                0.0,
+                "-",
+                "hook",
+                provider="codex",
+                waiting_kind="permission",
+            )
+        ]
+        app._reload()
+
+        assert notify_queue.peek_count() == 1  # 入隊了，不是被丟掉
+
+        # quiet 解除後，之前入隊的 codex 核可等待要能被 flush 補發彙總（而非永久消失）。
+        summary_calls: list[int] = []
+        monkeypatch.setattr("ring.notify.notify_summary", lambda count, sample: summary_calls.append(count))
+        notify_queue.clear_quiet()
+        app._reload()
+        assert summary_calls == [1]
+        assert notify_queue.peek_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_header_badge_shows_quiet_and_queue_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ring.notify_queue as notify_queue
+
+    # clear_quiet 之後的下一次 _reload 會懶惰 flush（見 notify_queue.flush_if_due）；
+    # 擋掉真正的送出，這個測試只關心 badge 文字，不該真的打通知後端。
+    monkeypatch.setattr("ring.notify.notify_summary", lambda count, sample: None)
+    sessions = [Session("a", "/x/maigo", Status.WORKING, 0.0, "hi", "scan")]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test():
+        assert "QUIET" not in app.sub_title
+        assert "queue:" not in app.sub_title
+
+        notify_queue.set_quiet(None)
+        notify_queue.enqueue([Session("b", "/y/p", Status.WAITING, 0.0, "-", "hook")])
+        app._reload()
+        assert "QUIET" in app.sub_title
+        assert "queue: 1" in app.sub_title
+
+        notify_queue.clear_quiet()
+        app._reload()
+        assert "QUIET" not in app.sub_title
 
 
 @pytest.mark.asyncio

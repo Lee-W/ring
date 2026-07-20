@@ -315,6 +315,10 @@ class Session:
     kind: str = "foreground"  # "foreground" | "agent"；背景 agent（bg-pty-host 承載）由 discover 貼標
     _tail_kind: str = field(default="none", repr=False, compare=False)  # 內部：scan 路徑暫存對話尾判定
     origin_cwd: str = ""  # 開場 cwd（session 第一筆帶 cwd 紀錄），用於歸屬；空時 fallback 到 cwd
+    # 合流彙總通知（見 ring.notify.notify_summary）用的標記：True 代表這不是真實 session，
+    # 只是借一個「真實 session 的欄位」組出來的通知 payload，讓 notify_title / notify_message
+    # 改用彙總句式。session_id 本身維持真實值（不覆寫成 sentinel），點擊通知才能正確 focus。
+    is_summary: bool = field(default=False, repr=False, compare=False)
 
     @property
     def project(self) -> str:

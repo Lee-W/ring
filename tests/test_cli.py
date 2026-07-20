@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -5,6 +6,14 @@ import pytest
 
 import ring.cli as cli
 from ring.registry import Session, Status
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_notify_queue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """把 debounce queue／quiet 狀態檔導去 tmp_path，避免 ``ring quiet`` 測試碰到機器上
+    真實的狀態檔。"""
+    monkeypatch.setattr("ring.notify_queue._QUEUE_PATH", tmp_path / "notify-queue.json")
+    monkeypatch.setattr("ring.notify_queue._QUIET_PATH", tmp_path / "quiet")
 
 
 def _sessions() -> list[Session]:
@@ -735,6 +744,67 @@ def test_gc_bad_duration_returns_two(capsys: pytest.CaptureFixture[str]) -> None
 
 
 # ---------------------------------------------------------------------------
+# quiet 子命令
+# ---------------------------------------------------------------------------
+
+
+def test_quiet_help_lists_in_top_level_help(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        cli.main(["--help"])
+    assert "quiet" in capsys.readouterr().out
+
+
+def test_quiet_help_does_not_run(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch.object(cli, "run_quiet") as mock_quiet:
+        rc = cli.main(["quiet", "--help"])
+    assert rc == 0
+    mock_quiet.assert_not_called()
+    assert "usage: ring quiet" in capsys.readouterr().out
+
+
+def test_quiet_no_args_shows_off_by_default(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = cli.main(["quiet", "--lang", "en"])
+    assert rc == 0
+    assert "off" in capsys.readouterr().out.lower()
+
+
+def test_quiet_on_activates_and_status_reflects_it(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["quiet", "on", "--lang", "en"]) == 0
+    capsys.readouterr()
+    assert cli.main(["quiet", "--lang", "en"]) == 0
+    assert "on" in capsys.readouterr().out.lower()
+
+
+def test_quiet_off_clears_and_flushes(capsys: pytest.CaptureFixture[str]) -> None:
+    from ring import notify_queue
+
+    notify_queue.set_quiet(None)
+    notify_queue.enqueue([Session("a", "/x/p", Status.WAITING, 0.0, "-", "hook")])
+    with patch("ring.notify.notify_summary") as mock_summary:
+        rc = cli.main(["quiet", "off", "--lang", "en"])
+    assert rc == 0
+    mock_summary.assert_called_once()
+    assert notify_queue.quiet_active(time.time()) is False
+    assert notify_queue.peek_count() == 0
+
+
+def test_quiet_duration_sets_until(capsys: pytest.CaptureFixture[str]) -> None:
+    from ring import notify_queue
+
+    now = time.time()
+    assert cli.main(["quiet", "30m", "--lang", "en"]) == 0
+    remaining = notify_queue.quiet_remaining(now)
+    assert remaining is not None
+    assert 29 * 60 < remaining <= 30 * 60 + 5  # 上界留一點餘裕：cli.main 內部才呼叫 time.time()
+
+
+def test_quiet_bad_duration_returns_two(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = cli.main(["quiet", "not-a-duration", "--lang", "en"])
+    assert rc == 2
+    assert "not-a-duration" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
 # --format json / oneline（機器可讀輸出）
 # ---------------------------------------------------------------------------
 
@@ -806,6 +876,52 @@ def test_format_rejects_watch(capsys: pytest.CaptureFixture[str]) -> None:
     rc = cli.main(["--watch", "--format", "json"])
     assert rc == 2
     assert "--format" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# headless watch：懶惰 flush 合流 queue（修正 A）
+# ---------------------------------------------------------------------------
+
+
+def test_watch_headless_flushes_due_queue(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """headless（無 rich）watch 每輪輪詢都要懶惰 flush 一次到期的合流 queue。"""
+    import ring.notify_queue as notify_queue
+
+    monkeypatch.setattr(cli, "HAVE_RICH", False)
+    monkeypatch.setattr(cli, "board", lambda show_all: _sessions())
+    monkeypatch.setattr(cli, "running_agent_pids", lambda: [1])
+    notify_queue.enqueue([Session("waiting-1", "/x", Status.WAITING, 0.0, "→ Edit", "hook")])
+    summary_calls: list[int] = []
+    monkeypatch.setattr("ring.notify.notify_summary", lambda count, sample: summary_calls.append(count))
+
+    rc = cli.watch(interval=0, count=1, show_all=False, show_legend=False)
+    capsys.readouterr()
+
+    assert rc == 0
+    assert summary_calls == [1]
+    assert notify_queue.peek_count() == 0
+
+
+def test_watch_headless_does_not_flush_while_quiet_active(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """quiet active 時 headless watch 輪詢 → 不 flush（queue 保留）。"""
+    import ring.notify_queue as notify_queue
+
+    monkeypatch.setattr(cli, "HAVE_RICH", False)
+    monkeypatch.setattr(cli, "board", lambda show_all: _sessions())
+    monkeypatch.setattr(cli, "running_agent_pids", lambda: [1])
+    notify_queue.enqueue([Session("waiting-1", "/x", Status.WAITING, 0.0, "→ Edit", "hook")])
+    notify_queue.set_quiet(None)
+    summary_calls: list[int] = []
+    monkeypatch.setattr("ring.notify.notify_summary", lambda count, sample: summary_calls.append(count))
+
+    rc = cli.watch(interval=0, count=1, show_all=False, show_legend=False)
+    capsys.readouterr()
+
+    assert rc == 0
+    assert summary_calls == []
+    assert notify_queue.peek_count() == 1
 
 
 # ---------------------------------------------------------------------------

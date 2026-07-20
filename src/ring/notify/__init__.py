@@ -17,16 +17,20 @@ from __future__ import annotations
 
 import shutil
 import sys
+import time
+from dataclasses import replace
 from pathlib import Path
 
 from ring.config import get_config
 from ring.i18n import gettext as _
+from ring.i18n import ngettext
 from ring.notify.base import Notifier
 from ring.notify.notify_send import notifier as _notify_send
 from ring.notify.ntfy import notifier as _ntfy
 from ring.notify.osascript_notifier import notifier as _osascript
 from ring.notify.terminal_notifier import notifier as _terminal_notifier
 from ring.notify.webhook import notifier as _webhook
+from ring.notify_queue import enqueue, quiet_active, try_claim_leading_edge
 from ring.registry import Session
 
 # 一次性安裝引導的 marker 檔路徑。
@@ -84,6 +88,21 @@ def _select_notifier(backend: str) -> Notifier | None:
 def notify_waiting(sessions: list[Session]) -> str | None:
     """對一批「新轉為等你」的 session 發系統通知。
 
+    開頭是合流／quiet 的單一 gate（求值順序：quiet 優先於 debounce，見專案 plan 的節流互動
+    矩陣）——hook 路徑與 TUI 代發路徑都經過這裡，一次覆蓋兩條路徑：
+
+    1. quiet active → 整批 enqueue、連 leading edge 都不發，直接回傳（跟 backend=none
+       一致的「說到做到」語意）。
+    2. ``notify_debounce_seconds>0`` 且目前在合流視窗內 → enqueue、不發。
+    3. 視窗未開（或 debounce=0）→ 照常往下走現有發送路徑；debounce>0 時順便原子宣告
+       leading edge（``try_claim_leading_edge``：這批立即發，後續同視窗內的合併進 queue，
+       由 ``flush_if_due`` 懶惰補發）。
+
+    debounce 分支用 ``try_claim_leading_edge`` 而非「先讀 window_open() 再 open_window()」
+    兩段式：兩個 process 同時判定「視窗未開」時，check-then-act 若拆成兩次上鎖，會同時
+    都以為自己是 leading edge、都照常發送——``try_claim_leading_edge`` 把判斷與宣告包進
+    同一個鎖區塊，兩個 process 只有一個能拿到 True。
+
     依 config ``notify_backend`` 選一個 notifier 後端發送（見 ``_select_notifier``）。
     auto 模式下若只選到不支援點擊的後端、且在 macOS 上，回傳一次性的安裝引導字串
     （建議裝 terminal-notifier 取得點擊跳轉）；其餘情況回 ``None``。失敗一律安靜吞掉。
@@ -94,7 +113,18 @@ def notify_waiting(sessions: list[Session]) -> str | None:
     if not sessions:
         return None
 
+    now = time.time()
+    if quiet_active(now):
+        enqueue(sessions)
+        return None
+
     cfg = get_config()
+    debounce = cfg.notify_debounce_seconds
+    if debounce > 0 and not try_claim_leading_edge(now, debounce):
+        enqueue(sessions)
+        return None
+    # debounce<=0，或 debounce>0 且剛剛原子拿到 leading edge → 照常往下走發送路徑。
+
     backend = cfg.notify_backend
     if backend == "none":
         return None  # 「完全不發通知」說到做到，notify_also 也不例外
@@ -108,6 +138,36 @@ def notify_waiting(sessions: list[Session]) -> str | None:
     if backend == "auto" and not notifier.supports_click() and sys.platform == "darwin":
         return _maybe_show_install_hint()
     return None
+
+
+def notify_summary(count: int, sample_session: Session) -> None:
+    """flush 時發一則彙總通知：「另有 {n} 個 session 在等你」（單複數走 i18n）。
+
+    走跟 ``notify_waiting`` 相同的後端選擇，但只送一個標記為 ``is_summary=True`` 的 Session
+    （見 ``notify.base.is_summary_session``），讓 ``notify_title`` / ``notify_message`` 改用
+    彙總句式——每個後端仍是同一條 ``send(list[Session])`` 路徑，不必碰任何後端模組的送出實作，
+    就能達成「真的只發一則」而非逐 session 各發。**不覆寫 ``session_id``**：沿用
+    ``sample_session`` 本身真實的 id，點擊這則通知（``ring focus <session_id>``）會正確跳到
+    那個仍在等你的真實 session，而不是找不到 sentinel id 靜默失敗。
+
+    :param count: 這批合流的 session 數；``<=0`` 時直接回傳，不發。
+    :param sample_session: 任一被合流的 session，借用其欄位組彙總 payload（通常是 pop 出的第一筆）。
+    """
+    if count <= 0:
+        return
+    cfg = get_config()
+    backend = cfg.notify_backend
+    if backend == "none":
+        return
+    notifier = _select_notifier(backend)
+    if notifier is None:
+        return
+    text = ngettext("另有 {n} 個 session 在等你", "另有 {n} 個 session 在等你", count, n=count)
+    summary_session = replace(sample_session, is_summary=True, waiting_detail=text)
+    try:
+        notifier.send([summary_session])
+    except Exception:
+        pass
 
 
 def _send_also(sessions: list[Session], also: tuple[str, ...], primary: Notifier | None) -> None:
@@ -144,4 +204,4 @@ def _maybe_show_install_hint() -> str | None:
         return None
 
 
-__all__ = ["Notifier", "notifiers", "notify_waiting", "register_notifier"]
+__all__ = ["Notifier", "notifiers", "notify_summary", "notify_waiting", "register_notifier"]

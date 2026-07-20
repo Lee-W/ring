@@ -36,8 +36,22 @@ def display_name(session: Session) -> str:
     return get_label(session.session_id) or session.project
 
 
+def is_summary_session(session: Session) -> bool:
+    """這個 Session 是不是彙總通知用的標記（見 ``Session.is_summary`` / ``ring.notify.notify_summary``）。
+
+    彙總只需要「發一則」而非逐 session 發，靠這個 flag 讓 notify_title / notify_message
+    改走彙總句式，不必碰任何一個後端模組的 send() 實作——各後端仍是呼叫同一個
+    send(list[Session])，只是那個 Session 的 ``is_summary`` 剛好是 True。``session_id``
+    本身維持真實值（借用某個真的被合流的 session），點擊這則通知能正確 focus 過去，
+    不會像 sentinel id 那樣找不到 session。
+    """
+    return session.is_summary
+
+
 def notify_title(session: Session) -> str:
-    """通知標題——「哪個 session 在等你」，全後端共用一句。"""
+    """通知標題——「哪個 session 在等你」，全後端共用一句。彙總通知改用固定句。"""
+    if is_summary_session(session):
+        return _("RiNG · 還有人在等你")
     return _("RiNG · {project} 在等你回話", project=display_name(session))
 
 
@@ -45,6 +59,9 @@ def notify_message(session: Session) -> str:
     """通知內文——它在等什麼（hook 有給 detail 時）＋去哪（完整路徑或 tmux 座標）。
 
     標題已經說了「誰在等你」，內文就補「等什麼、去哪」，讓你看一眼就能決定要不要現在回去。
+    彙總通知（sentinel session）直接用 ``waiting_detail`` 存的彙總句，不附位置。
     """
+    if is_summary_session(session):
+        return session.waiting_detail
     location = f"📍 {session.location}"
     return f"{session.waiting_detail}\n{location}" if session.waiting_detail else location

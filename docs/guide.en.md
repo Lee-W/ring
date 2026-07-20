@@ -16,6 +16,8 @@ Start with the [documentation home page](index.md) for the product overview, ins
 | `ring focus SESSION_ID` | Focus a specific session; unique prefixes work |
 | `ring config` | Show config path and effective settings |
 | `ring config set KEY VALUE` | Write one config value |
+| `ring quiet` | Show temporary global mute (quiet) status |
+| `ring quiet on` / `off` / `30m` | Turn quiet on/off, or on for a while (auto-clears) |
 | `ring doctor` | Read-only environment diagnosis |
 | `ring digest --since 4h` | Away summary: recent session state and wait stats |
 | `ring gc --dry-run` | Preview RiNG-owned stale state cleanup |
@@ -126,6 +128,38 @@ notify_also = ["ntfy"]                             # desktop notification as usu
 
 `notify_backend = "ntfy"` pushes to the phone only. For Slack / your own bot / IFTTT, set
 `notify_webhook_url` to use the generic webhook backend (JSON POST with a stable, additive-only payload).
+
+### Notification Coalescing And Temporary Quiet (`notify_debounce_seconds` / `ring quiet`)
+
+When several sessions flip to 🔴 waiting at once, sending one notification per session becomes
+spam. Two independent, stackable mechanisms address this:
+
+- **Coalescing (debounce)**: set `notify_debounce_seconds` (default `0`, off, backward compatible)
+  to a positive number (e.g. `5`) and only the first notification within that window is sent right
+  away (leading edge); the rest within the same window merge into a single "N more sessions are
+  waiting for you" summary. RiNG has no long-running daemon, so the summary is flushed lazily by
+  the next hook event, the TUI poll loop, or when quiet is turned off — never dropping the one
+  notification that already fired.
+- **Temporary global mute (`ring quiet`)**: mute for a while; every notification during that window
+  is queued first, and a coalesced summary is sent once quiet is cleared. It shares the same queue
+  as debounce, but the two mechanisms are independent — quiet is always available regardless of
+  `notify_debounce_seconds`.
+
+```sh
+ring quiet            # show current status (on/off, remaining time)
+ring quiet on         # turn on; stays muted until manually cleared
+ring quiet 30m        # turn on for 30 minutes; auto-clears on expiry
+ring quiet off        # turn off, flushing any coalesced summary right away
+```
+
+```toml
+# ~/.config/ring/config.toml
+notify_debounce_seconds = 5  # 0 = off (default); positive = coalescing window in seconds
+```
+
+While the TUI is open, the header shows quiet status and the queue count (e.g.
+`🔇 QUIET · 12m left ｜ queue: 3`); it stays out of the way when quiet is off and the queue is
+empty. Quiet is a global setting, not per-session.
 
 ### Cleaning RiNG State Files (`ring gc`)
 
@@ -297,8 +331,9 @@ RiNG prefers clickable `terminal-notifier`, then falls back to `osascript` on ma
 on Linux. If none are available, RiNG keeps the board running and skips notifications.
 
 Config keys include `notify_sound`, `notify_sound_name`, `notify_ignore_dnd`,
-`notify_repeat_seconds`, `notify_repeat_max`, `notify_backend`, and `waiting_cooldown_seconds`.
-Custom notification channels can be added by registering another `Notifier`.
+`notify_repeat_seconds`, `notify_repeat_max`, `notify_backend`, `waiting_cooldown_seconds`, and
+`notify_debounce_seconds`. Custom notification channels can be added by registering another
+`Notifier`.
 
 Background subagent permission requests can make a session flap between waiting and working in
 quick succession. `waiting_cooldown_seconds` (180s by default) stops `ring hook`'s system
@@ -342,6 +377,7 @@ notify_backend = "auto"          # auto / terminal-notifier / osascript / notify
 notify_repeat_seconds = [30, 120, 300]
 notify_repeat_max = 3
 waiting_cooldown_seconds = 180   # suppress an immediate re-alert on re-entering waiting within this window; 0 = off
+notify_debounce_seconds = 0      # cross-session notification coalescing window, in seconds; 0 = off (default)
 notify_ntfy_url = ""             # full ntfy topic URL enables phone push (e.g. https://ntfy.sh/my-topic)
 notify_webhook_url = ""          # URL enables the generic webhook backend (JSON POST)
 notify_also = []                 # extra backends fired besides the primary, e.g. ["ntfy"]

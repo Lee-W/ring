@@ -27,6 +27,10 @@
     notify_repeat_max = 3             # 重複提醒上限；0 = 不限
     waiting_cooldown_seconds = 180    # session 離開 WAITING 又轉回時，距上次提醒未滿這段時間就
                                       #   不再當「新轉入」立即提醒（防翻轉轟炸）；0 = 關閉（現行為）
+    notify_debounce_seconds = 0       # 多個 session 同時轉 🔴 等你時的通知合流窗口（秒）：窗口內
+                                      #   第一批立即發（leading edge），之後的合併成一則彙總，由下個
+                                      #   hook 事件 / TUI 輪詢 / quiet 解除懶惰 flush；0 = 關閉（現行為，
+                                      #   向後相容，每次轉入都各自發）
     notify_ntfy_url = "https://ntfy.sh/my-topic"   # 設了才啟用 ntfy 後端（推到手機）
     notify_webhook_url = "https://example.com/hook"  # 設了才啟用 webhook 後端（JSON POST）
     notify_also = ["ntfy"]            # 主後端之外「加發」的後端（例如桌面通知＋手機各一份）
@@ -40,11 +44,14 @@
 
 from __future__ import annotations
 
+import sys
 import tomllib
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from functools import lru_cache
 from pathlib import Path
+
+from ring.i18n import gettext as _
 
 CONFIG_PATH = Path.home() / ".config" / "ring" / "config.toml"
 
@@ -88,6 +95,7 @@ class Config:
     notify_repeat_seconds: tuple[int, ...] = (30, 120, 300)
     notify_repeat_max: int = 3  # 0 = 不限
     waiting_cooldown_seconds: int = 180  # 離開 WAITING 又轉回時的提醒冷卻期；0 = 關閉（現行為）
+    notify_debounce_seconds: int = 0  # 跨 session 通知合流窗口（秒）；0 = 關閉（現行為，向後相容）
     notify_ntfy_url: str = ""  # 完整 ntfy topic URL；空＝ntfy 後端不可用
     notify_webhook_url: str = ""  # webhook URL；空＝webhook 後端不可用
     notify_also: tuple[str, ...] = ()  # 主後端之外加發的後端名（如 ["ntfy"]）
@@ -95,6 +103,21 @@ class Config:
     plugins: tuple[str, ...] = ()  # 啟動時 import 的外部 plugin 模組（entry point 之外的本機路）
     debug_payload_log: bool = False  # 診斷用：記錄 hook 收到的原始 payload；預設關閉
     colors: dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_COLORS))
+
+
+# config.toml 頂層合法鍵（含巢狀 table 名，如 "colors"）——都是 Config dataclass 的欄位名。
+_KNOWN_KEYS = {f.name for f in fields(Config)}
+
+
+def _warn_unknown_keys(raw: dict[str, object], path: Path) -> None:
+    """未知的頂層鍵（多半是打錯字）→ 印一次警告到 stderr；只警告，絕不 raise、不影響載入。"""
+    unknown = sorted(k for k in raw if k not in _KNOWN_KEYS)
+    if not unknown:
+        return
+    print(
+        _("⚠️ {path} 有未知的設定鍵（可能打錯字，已忽略）：{keys}", path=path, keys=", ".join(unknown)),
+        file=sys.stderr,
+    )
 
 
 def _as_int(v: object, default: int) -> int:
@@ -137,6 +160,7 @@ def load(path: Path | None = None) -> Config:
         raw = tomllib.loads(p.read_text())
     except (OSError, tomllib.TOMLDecodeError):
         return Config()
+    _warn_unknown_keys(raw, p)
     d = Config()
     lang = raw.get("lang")
     # 任意非空字串都接受（後端名稱由 notify 層的可插拔 registry 決定）；認不得的名稱
@@ -163,6 +187,7 @@ def load(path: Path | None = None) -> Config:
         notify_repeat_seconds=_as_positive_int_tuple(raw.get("notify_repeat_seconds"), d.notify_repeat_seconds),
         notify_repeat_max=max(0, _as_int(raw.get("notify_repeat_max"), d.notify_repeat_max)),
         waiting_cooldown_seconds=max(0, _as_int(raw.get("waiting_cooldown_seconds"), d.waiting_cooldown_seconds)),
+        notify_debounce_seconds=max(0, _as_int(raw.get("notify_debounce_seconds"), d.notify_debounce_seconds)),
         notify_backend=notify_backend,
         notify_ntfy_url=(raw["notify_ntfy_url"] if isinstance(raw.get("notify_ntfy_url"), str) else ""),
         notify_webhook_url=(raw["notify_webhook_url"] if isinstance(raw.get("notify_webhook_url"), str) else ""),
@@ -237,6 +262,7 @@ _SETTERS: dict[str, Callable[[str], object]] = {
     "notify_repeat_seconds": _coerce_int_list,
     "notify_repeat_max": _coerce_int,
     "waiting_cooldown_seconds": _coerce_int,
+    "notify_debounce_seconds": _coerce_int,
     "notify_ntfy_url": str,
     "notify_webhook_url": str,
     "notify_also": _coerce_str_list,

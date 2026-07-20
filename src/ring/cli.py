@@ -25,6 +25,7 @@ from ring.commands.doctor import run_doctor
 from ring.commands.focus import run_focus
 from ring.commands.gc import run_gc
 from ring.commands.hook import run_hook_command, run_install_hooks, run_remove_hooks
+from ring.commands.quiet import run_quiet
 from ring.commands.stats import run_stats
 from ring.config import CONFIG_PATH as CONFIG_PATH
 from ring.config import Config as Config
@@ -34,6 +35,7 @@ from ring.config import set_value as set_value
 from ring.i18n import gettext as _
 from ring.i18n import ngettext, set_lang
 from ring.labels import load_labels
+from ring.notify_queue import flush_if_due
 from ring.plugins import load_plugins
 from ring.registry import Session, Status, running_agent_pids
 from ring.sources import discover_sessions
@@ -399,16 +401,32 @@ def run_config(args: list[str]) -> int:
     return 2
 
 
+def _watch_flush_if_due() -> None:
+    """headless watch 輪詢時的懶惰 flush 觸發點（同 hook.py / tui.py 既有呼叫慣例）。
+
+    quiet active 或仍在 debounce 視窗內時，``flush_if_due`` 內部本來就會 skip（跟
+    ``test_run_hook_does_not_flush_while_quiet_active`` 同機制），這裡不需另外判斷。
+    失敗安靜吞掉，不影響看板本身。
+    """
+    try:
+        flush_if_due()
+    except Exception:
+        pass
+
+
 def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int:
     # 系統通知由 ``ring hook`` 在 session 轉 🔴 等你的當下就地發出（見 hook._ring_waiting_now）；
     # watch 只負責顯示看板，不再輪詢發通知——這樣關掉看板也照樣 ring 你。
     # 例外：codex 核可等待是讀取側的靜默逾時判定，沒有 hook 事件可發通知，由 TUI 的
     # 提醒排程器代發（tui._ring_on_waiting_alerts）；headless watch 仍不發，是已知限制。
+    # debounce/quiet 合流 queue 的懶惰 flush：headless watch 沒有 hook 事件也沒有 TUI 輪詢
+    # 可以觸發，每輪自己補上一次，否則純 headless 使用者開了 quiet/debounce 通知會無限期卡住。
     frames = 0
     footer_text = _("每 {interval}s 刷新 · Ctrl-C 離場", interval=int(interval))
     if not HAVE_RICH:
         try:
             while True:
+                _watch_flush_if_due()
                 sys.stdout.write("\033[2J\033[H")
                 sessions = board(show_all)
                 print(_render_plain(sessions, show_legend, show_tool_column(sessions)))
@@ -425,6 +443,7 @@ def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int
     try:
         with Live(console=console, screen=True, auto_refresh=False) as live:
             while True:
+                _watch_flush_if_due()
                 sessions = board(show_all)
                 body = _rich_renderable(sessions, show_legend, show_tool_column(sessions))
                 live.update(Group(body, Text(f"\n{footer_text}", style=_MUTED)), refresh=True)
@@ -457,6 +476,10 @@ commands:
   config                       顯示設定檔位置與目前生效的設定
   config get KEY               讀單一設定的目前值
   config set KEY VALUE         寫入單一設定（會重寫設定檔，不保留註解）
+  quiet                        顯示 quiet（暫時全域靜音）現況
+  quiet on                     開啟 quiet（手動解除前一直靜音）
+  quiet off                    解除 quiet（立即補發合流的彙總通知）
+  quiet DURATION               開啟 quiet 一段時間（例如 30m、1h），到期自動解除
   focus SESSION_ID             聚焦指定 session；TUI 在跑時會回到 RiNG 並選中該列
   gc [--dry-run]               清理 RiNG 自己的 stale 狀態檔
   doctor                       顯示環境診斷（唯讀）——hook、通知、focuser、維護提示
@@ -493,6 +516,17 @@ def _subcommand_help(name: str) -> str:
 不帶參數：顯示設定檔位置（~/.config/ring/config.toml）與目前生效的所有設定。
   get KEY        印出單一設定的目前值（colors 子鍵用 colors.<name>）。
   set KEY VALUE  寫入單一設定。注意：會重寫整個設定檔，原有註解不會保留。
+"""
+        ),
+        "quiet": _(
+            """usage: ring quiet [on | off | DURATION]
+
+暫時全域靜音：靜音期間所有轉 🔴 等你的通知都先進 queue，解除時懶惰補發一則彙總。
+
+不帶參數：顯示目前 quiet 現況（開/關、剩餘時間）。
+  on          開啟 quiet，手動解除前一直靜音。
+  off         解除 quiet，並立即補發合流的彙總通知。
+  DURATION    開啟 quiet 一段時間（例如 30m、1h），到期自動解除。
 """
         ),
         "focus": _(
@@ -569,6 +603,7 @@ def main(argv: list[str] | None = None) -> int:
             "digest",
             "stats",
             "completion",
+            "quiet",
         }
         and any(arg in {"-h", "--help"} for arg in raw[1:])
     ):
@@ -583,6 +618,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_remove_hooks(raw[1:])
     if raw and raw[0] == "config":
         return run_config(raw[1:])
+    if raw and raw[0] == "quiet":
+        return run_quiet(raw[1:])
     if raw and raw[0] == "gc":
         return run_gc(raw[1:])
     if raw and raw[0] == "doctor":

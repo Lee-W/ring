@@ -239,6 +239,9 @@ msgstr "Change with `ring config set KEY VALUE`, or edit the file above; see the
 msgid "未知的鍵：{key}"
 msgstr "unknown key: {key}"
 
+msgid "⚠️ {path} 有未知的設定鍵（可能打錯字，已忽略）：{keys}"
+msgstr "⚠️ {path} has unknown config keys (likely a typo, ignored): {keys}"
+
 msgid "用法：ring config get KEY"
 msgstr "usage: ring config get KEY"
 
@@ -265,6 +268,10 @@ msgid ""
 "  config                       顯示設定檔位置與目前生效的設定\n"
 "  config get KEY               讀單一設定的目前值\n"
 "  config set KEY VALUE         寫入單一設定（會重寫設定檔，不保留註解）\n"
+"  quiet                        顯示 quiet（暫時全域靜音）現況\n"
+"  quiet on                     開啟 quiet（手動解除前一直靜音）\n"
+"  quiet off                    解除 quiet（立即補發合流的彙總通知）\n"
+"  quiet DURATION               開啟 quiet 一段時間（例如 30m、1h），到期自動解除\n"
 "  focus SESSION_ID             聚焦指定 session；TUI 在跑時會回到 RiNG 並選中該列\n"
 "  gc [--dry-run]               清理 RiNG 自己的 stale 狀態檔\n"
 "  doctor                       顯示環境診斷（唯讀）——hook、通知、focuser、維護提示\n"
@@ -281,6 +288,10 @@ msgstr ""
 "  config                       show config file path and current settings\n"
 "  config get KEY               read one setting's current value\n"
 "  config set KEY VALUE         write one setting (rewrites config file, comments lost)\n"
+"  quiet                        show quiet (temporary global mute) status\n"
+"  quiet on                     turn quiet on (stays muted until manually cleared)\n"
+"  quiet off                    turn quiet off (flushes any coalesced summary right away)\n"
+"  quiet DURATION               turn quiet on for a while (e.g. 30m, 1h), auto-clears on expiry\n"
 "  focus SESSION_ID             focus a session; if TUI is running, returns to RiNG and selects the row\n"
 "  gc [--dry-run]               clean RiNG's own stale state files\n"
 "  doctor                       show environment diagnosis (read-only) — hooks, notify, focuser, maintenance hints\n"
@@ -328,6 +339,26 @@ msgstr ""
 "No args: show config file path (~/.config/ring/config.toml) and all current settings.\n"
 "  get KEY        print the current value of one setting (use colors.<name> for color sub-keys).\n"
 "  set KEY VALUE  write one setting. Note: rewrites the entire config file; existing comments are lost.\n"
+
+msgid ""
+"usage: ring quiet [on | off | DURATION]\n"
+"\n"
+"暫時全域靜音：靜音期間所有轉 🔴 等你的通知都先進 queue，解除時懶惰補發一則彙總。\n"
+"\n"
+"不帶參數：顯示目前 quiet 現況（開/關、剩餘時間）。\n"
+"  on          開啟 quiet，手動解除前一直靜音。\n"
+"  off         解除 quiet，並立即補發合流的彙總通知。\n"
+"  DURATION    開啟 quiet 一段時間（例如 30m、1h），到期自動解除。\n"
+msgstr ""
+"usage: ring quiet [on | off | DURATION]\n"
+"\n"
+"Temporary global mute: while quiet, every 🔴 waiting-for-you notification is queued first,\n"
+"and a coalesced summary is flushed lazily once quiet is cleared.\n"
+"\n"
+"No args: show the current quiet status (on/off, remaining time).\n"
+"  on          turn quiet on; stays muted until manually cleared.\n"
+"  off         turn quiet off, and flush any coalesced summary right away.\n"
+"  DURATION    turn quiet on for a while (e.g. 30m, 1h); auto-clears on expiry.\n"
 
 msgid ""
 "usage: ring focus SESSION_ID\n"
@@ -695,3 +726,55 @@ msgstr "{project}: the dialog was gone and the digit landed in the input box —
 
 msgid "{project}：已送出但拿不到畫面驗證，請跳過去確認"
 msgstr "{project}: key sent but the screen could not be re-read to verify — jump over to check"
+
+# ── notify_queue.py：debounce queue ／ quiet mode ──
+msgid "{s} 秒"
+msgstr "{s}s"
+
+msgid "{m} 分"
+msgstr "{m}m"
+
+msgid "{h} 小時"
+msgstr "{h}h"
+
+# ── notify/__init__.py：合流彙總通知 ──
+msgid "另有 {n} 個 session 在等你"
+msgid_plural "另有 {n} 個 session 在等你"
+msgstr[0] "{n} more session is waiting for you"
+msgstr[1] "{n} more sessions are waiting for you"
+
+# ── notify/base.py：彙總通知標題 ──
+msgid "RiNG · 還有人在等你"
+msgstr "RiNG · someone is waiting for you"
+
+# ── tui.py：quiet ／ queue header badge ──
+msgid "🔇 QUIET"
+msgstr "🔇 QUIET"
+
+msgid "🔇 QUIET · 剩 {remaining}"
+msgstr "🔇 QUIET · {remaining} left"
+
+msgid "queue: {n}"
+msgstr "queue: {n}"
+
+# ── commands/quiet.py：ring quiet CLI ──
+msgid "🔈 quiet：目前關閉"
+msgstr "🔈 quiet: off"
+
+msgid "🔇 quiet：開啟中（手動解除前一直靜音）"
+msgstr "🔇 quiet: on (stays muted until manually cleared)"
+
+msgid "🔇 quiet：開啟中，剩 {remaining}"
+msgstr "🔇 quiet: on, {remaining} left"
+
+msgid "🔇 quiet 已開啟（手動解除前一直靜音）"
+msgstr "🔇 quiet turned on (stays muted until manually cleared)"
+
+msgid "🔈 quiet 已解除"
+msgstr "🔈 quiet turned off"
+
+msgid "無效的 duration：{value}（例如 30m、1h）"
+msgstr "invalid duration: {value} (e.g. 30m, 1h)"
+
+msgid "🔇 quiet 已開啟，{duration} 後自動解除"
+msgstr "🔇 quiet turned on, auto-clears after {duration}"
