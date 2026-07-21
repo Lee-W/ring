@@ -156,6 +156,24 @@ def test_permission_notification_writes_waiting(monkeypatch: pytest.MonkeyPatch,
     assert data["status"] == Status.WAITING.value
 
 
+def test_agent_needs_input_notification_writes_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """背景 agent 停下來要輸入的 Notification → 🔴 等你（question 類），不是 🟡 閒置。
+
+    型別實證：claude 2.1.215 binary 含 ``agent_needs_input`` 字串。
+    """
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {"session_id": "s1", "hook_event_name": "Notification", "notification_type": "agent_needs_input", "cwd": "/x"},
+    )
+
+    assert hook.run_hook() == 0
+
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WAITING.value
+    assert data["waiting_kind"] == "question"
+
+
 def test_regular_notification_writes_idle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
     _feed(

@@ -47,8 +47,9 @@ _ALWAYS_STATUS = {
 }
 
 _ACTION_REQUIRED_NOTIFICATION_TYPES = {
-    "permission_prompt",
+    "agent_needs_input",  # 背景 agent 停下來要使用者輸入（claude 2.1.215 binary 實證有此型別）
     "elicitation_dialog",
+    "permission_prompt",
 }
 
 _ACTION_REQUIRED_WAITING_FOR = {
@@ -244,6 +245,9 @@ def _waiting_kind(data: Mapping[str, Any], event: str, status: Status) -> str:
     if tool_name == "askuserquestion":
         # 先於 PermissionRequest 判斷：AskUserQuestion 也會以 PermissionRequest 事件
         # 進來（權限判定包著問題），但使用者要回的是「問題」不是「權限」。
+        return "question"
+    if notification_type == "agent_needs_input":
+        # 背景 agent 要使用者輸入，性質是「回答」而非權限核可 → ❓ 而非 🔐。
         return "question"
     if event == "PermissionRequest" or notification_type == "permission_prompt":
         return "permission"
