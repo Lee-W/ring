@@ -384,8 +384,16 @@ def _promote_codex_permission_wait(
     訊號——這是對 hook 資料的推遲判定，不是 scan 猜測。任何後續 hook 事件會覆寫
     last_event，自然清紅。
 
-    只對 codex 啟用：claude-code 真的停下來等人時會補發 permission_prompt Notification
-    （hook 直接標 🔴），不需要、也不該重複走這條路。純函式、可單測。
+    只對 codex 啟用：claude-code 真的停下來等人時「通常」會補發 permission_prompt
+    Notification（hook 直接標 🔴），不需要、也不該重複走這條路。純函式、可單測。
+
+    已知例外（2026-07-20 現場取證）：claude-code 少數未記載的 UI guardrail——例如
+    「Multiple directory changes in one command require approval」（單一 Bash 指令內
+    含多個 cd）——阻塞等核可時**完全不 fire 任何 hook**（PreToolUse / PermissionRequest
+    / permission_prompt 皆無，raw payload log 掛零可證）。這類提示走在 hook lifecycle
+    之外，RiNG 無法可靠偵測；官方也無非-hook 機制可查詢阻塞狀態。此限制屬上游，非本函式
+    可補——刻意不把靜默逾時判定擴到 claude-code，因為它連 idle_prompt 都送、與正常閒置
+    無法區分，擴了只會誤報。
     """
     return (
         provider == "codex"
