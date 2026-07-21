@@ -1,3 +1,10 @@
+## 0.14.0 (2026-07-21)
+
+### Feat
+
+- surface background-agent input requests as waiting
+- debounce burst notifications and add quiet mode
+
 ## 0.13.0 (2026-07-17)
 
 ### Feat
