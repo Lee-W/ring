@@ -1,3 +1,4 @@
+import json
 import shutil
 import subprocess
 import tempfile
@@ -174,6 +175,73 @@ def test_stale_tty_reports_closed_terminal_tab(monkeypatch: pytest.MonkeyPatch) 
 
     assert ok is False
     assert "可能已關閉" in msg
+
+
+def test_iterm2_script_avoids_positional_specifiers() -> None:
+    """迴歸柵欄：``repeat with w in windows`` 的迴圈變數是「按位置」參照。
+
+    windows 順序在掃描途中被動到（剛跳過一次、或使用者點了別的視窗）就會噴
+    ``Invalid index (-1719)``，跨視窗跳轉整個失敗——實測連續來回跳，舊寫法 3/3 都掛。
+    ``set index of … to 1`` 會主動重排 windows，等於自己製造同一個雷。
+    """
+    from ring.focus.iterm2 import _SCRIPT
+
+    assert "repeat with w in windows" not in _SCRIPT
+    assert "set index of" not in _SCRIPT
+    assert "on error" in _SCRIPT  # 順序真的被動到時要重掃，不是直接失敗
+
+
+def test_iterm2_unraised_reports_failure_instead_of_fake_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """腳本找到分頁但驗不到視窗浮到前景時，要照實回失敗——不能顯示「跳過去了」卻沒動。"""
+    # applescript 與 linux_wm 共用同一個 shutil 模組物件，分開 patch 會互相覆蓋，
+    # 所以用認名字的假 which：只有 wmctrl 查不到（Linux CI 上 linux-wm 才不會插隊）。
+    monkeypatch.setattr(shutil, "which", lambda name: None if name == "wmctrl" else "/usr/bin/osascript")
+
+    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(cmd, 0, stdout="unraised", stderr="")
+
+    monkeypatch.setattr("ring.osascript.subprocess.run", fake_run)
+
+    ok, msg = focus.jump(_sess(tty="/dev/ttys003"))
+
+    assert ok is False
+    assert "iTerm2" in msg
+    assert "沒浮到前景" in msg
+
+
+def test_jump_writes_trace_line(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """每次跳轉都要留下可歸因的證據：逐個 focuser 的回覆、最終結果。"""
+    log = tmp_path / "focus.jsonl"
+    monkeypatch.setattr("ring.focus.trace.FOCUS_LOG_PATH", log)
+    monkeypatch.setattr("ring.focus.applescript.shutil.which", lambda _name: "/usr/bin/osascript")
+    outs: Iterator[str] = iter(["notfound", "ok"])  # iTerm2 skip → Terminal 接手
+
+    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(cmd, 0, stdout=next(outs), stderr="")
+
+    monkeypatch.setattr("ring.osascript.subprocess.run", fake_run)
+
+    focus.jump(_sess(tty="/dev/ttys003"))
+
+    entry = json.loads(log.read_text(encoding="utf-8").splitlines()[-1])
+    assert entry["ok"] is True
+    assert entry["tty"] == "/dev/ttys003"
+    assert {"focuser": "iTerm2", "result": "skip"} in entry["attempts"]
+    assert {"focuser": "Terminal", "result": "ok"} in entry["attempts"]
+
+
+def test_trace_records_why_nothing_caught(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """全部 focuser 都 skip 而 session 有 tty＝tty 已失效，log 要看得出來。"""
+    log = tmp_path / "focus.jsonl"
+    monkeypatch.setattr("ring.focus.trace.FOCUS_LOG_PATH", log)
+    monkeypatch.setattr("ring.focus._FOCUSERS", [])
+
+    focus.jump(_sess(tty="/dev/ttys999"))
+
+    entry = json.loads(log.read_text(encoding="utf-8").splitlines()[-1])
+    assert entry["ok"] is False
+    assert entry["attempts"] == []
+    assert "可能已關閉" in entry["msg"]
 
 
 def test_surfaces_osascript_error(monkeypatch: pytest.MonkeyPatch) -> None:

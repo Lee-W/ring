@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import ring.focus.trace as focus_trace
 import ring.registry as registry
 import ring.sources.local_llm as local_llm
 from ring.i18n import set_lang
@@ -23,6 +24,12 @@ def _reset_lang(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Non
     set_lang(None)
     yield
     set_lang(None)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_focus_log(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """``jump()`` 每次都會寫跳轉 log；測試期間改寫到 tmp，別汙染使用者的 ~/.config/ring。"""
+    monkeypatch.setattr(focus_trace, "FOCUS_LOG_PATH", tmp_path / "focus.jsonl")
 
 
 @pytest.fixture(autouse=True)

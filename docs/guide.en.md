@@ -72,6 +72,12 @@ hands the request to the TUI so it selects that session; otherwise it focuses th
 TTY matching is most accurate in hook mode. Without hooks, Codex falls back to zero-config matching:
 one live Codex session per cwd can jump correctly; multiple live Codex sessions in the same cwd are shown conservatively to avoid focusing the wrong tab.
 
+When a jump does not land, every attempt is logged to `~/.config/ring/focus.jsonl` (one line per
+jump, with each focuser's answer), so you can tell the failure modes apart afterwards: an empty
+`tty` (none was captured), every focuser reporting `skip` (the tty is stale — the tab is most
+likely gone), or iTerm2 reporting `unraised` (the tab was found but its window did not come
+forward, usually because it lives on another Space).
+
 ### Reply To Permission Requests In Place (`p`)
 
 With the cursor on a 🔴 waiting row, press `p`. RiNG reads that session's screen, parses the

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-07-20 15:34+0800\n"
+"POT-Creation-Date: 2026-07-25 10:42+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -923,16 +923,21 @@ msgstr ""
 msgid "⚠️ 其中 {n} 段還在 🔴 等你（計到現在為止）。"
 msgstr ""
 
-#: src/ring/focus/__init__.py:58
+#: src/ring/focus/__init__.py:62
 msgid "已離場的 session 無法跳轉"
 msgstr ""
 
-#: src/ring/focus/__init__.py:81
+#: src/ring/focus/__init__.py:102
 msgid "找不到這個終端分頁（可能已關閉；刷新後若仍存在，請裝 hook 取得更精準狀態）"
 msgstr ""
 
-#: src/ring/focus/__init__.py:82
+#: src/ring/focus/__init__.py:103
 msgid "沒有 focuser 接得住（裝 hook，或一個專案只開一個 session 才測得到 tty）"
+msgstr ""
+
+#: src/ring/focus/applescript.py:41
+#, python-brace-format
+msgid "{app} 找到分頁了，但視窗沒浮到前景（可能在別的 Space 或全螢幕）"
 msgstr ""
 
 #: src/ring/notify/__init__.py:165
