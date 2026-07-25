@@ -76,6 +76,10 @@ eval "$(ring completion bash)"
 zero-config 下每個專案只開一個 session 時也對得上。Codex 沒裝 hook 時會走 zero-config：
 同一個 cwd 只開一個 live Codex 時可跳轉；同 cwd 多個 Codex 只能保守顯示，避免跳錯。
 
+跳不過去時，每次跳轉的經過都記在 `~/.config/ring/focus.jsonl`（一行一次，含每個 focuser 的回覆），
+事後可以直接分辨是哪一種失敗：`tty` 是空的（沒抓到 tty）、每個 focuser 都 `skip`（tty 已失效，
+分頁多半關掉了）、或 iTerm2 回 `unraised`（分頁找到了但視窗沒浮上來，通常是它在別的 Space）。
+
 ### 就地回覆權限請求（`p`）
 
 游標停在 🔴 等你的列按 `p`，RiNG 讀出那個 session 畫面上的權限對話框

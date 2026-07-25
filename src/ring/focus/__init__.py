@@ -15,6 +15,7 @@ from ring.focus.linux_wm import focuser as _linux_wm
 from ring.focus.neovim import focuser as _neovim
 from ring.focus.terminal import focuser as _terminal
 from ring.focus.tmux import focuser as _tmux
+from ring.focus.trace import log_jump
 from ring.i18n import gettext as _
 from ring.registry import Session, Status
 
@@ -53,33 +54,53 @@ def focusers() -> list[Focuser]:
 
 
 def jump(session: Session) -> tuple[bool, str]:
-    """依序問每個 focuser，誰先接手就用誰。回傳 (成功?, 訊息)。"""
+    """依序問每個 focuser，誰先接手就用誰。回傳 (成功?, 訊息)。
+
+    每次跳轉（不論成敗）都記一行到 focus.jsonl，供事後歸因間歇性的跳不過去（見 ``trace``）。
+    """
     if session.status is Status.ENDED:
         return False, _("已離場的 session 無法跳轉")
     failures: list[str] = []
     preparations: list[str] = []
+    attempts: list[tuple[str, str]] = []
+
+    def _done(ok: bool, msg: str) -> tuple[bool, str]:
+        log_jump(
+            session_id=session.session_id,
+            provider=session.provider,
+            tty=session.tty or "",
+            tmux_target=session.tmux_target or "",
+            attempts=attempts,
+            ok=ok,
+            msg=msg,
+        )
+        return ok, msg
+
     for focuser in _FOCUSERS:
         result = focuser.try_focus(session)
         if result is None:
+            attempts.append((focuser.name, "skip"))
             continue
         ok, msg = result
         if ok:
+            attempts.append((focuser.name, "ok"))
             if getattr(focuser, "continue_after_success", False):
                 preparations.append(msg)
                 continue
             if preparations:
-                return True, "; ".join([*preparations, msg])
-            return True, msg
+                return _done(True, "; ".join([*preparations, msg]))
+            return _done(True, msg)
+        attempts.append((focuser.name, f"fail: {msg}"))
         failures.append(f"{focuser.name}: {msg}")
     if preparations and failures:
-        return False, "; ".join([*preparations, *failures])
+        return _done(False, "; ".join([*preparations, *failures]))
     if preparations:
-        return True, "; ".join(preparations)
+        return _done(True, "; ".join(preparations))
     if failures:
-        return False, "; ".join(failures)
+        return _done(False, "; ".join(failures))
     if session.tty:
-        return False, _("找不到這個終端分頁（可能已關閉；刷新後若仍存在，請裝 hook 取得更精準狀態）")
-    return False, _("沒有 focuser 接得住（裝 hook，或一個專案只開一個 session 才測得到 tty）")
+        return _done(False, _("找不到這個終端分頁（可能已關閉；刷新後若仍存在，請裝 hook 取得更精準狀態）"))
+    return _done(False, _("沒有 focuser 接得住（裝 hook，或一個專案只開一個 session 才測得到 tty）"))
 
 
 __all__ = ["Focuser", "focusers", "jump", "register_focuser"]
