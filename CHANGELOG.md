@@ -1,3 +1,9 @@
+## 0.14.1 (2026-07-25)
+
+### Fix
+
+- stop cross-window iTerm2 jumps from failing with Invalid index
+
 ## 0.14.0 (2026-07-21)
 
 ### Feat
