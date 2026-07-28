@@ -69,6 +69,8 @@ WAITING_KIND_ICONS = {
     "idle": "⏸",
 }
 HOOK_HEARTBEAT_STALE_GRACE_SECONDS = 60.0
+# 只送過 SessionStart 就再無下文的 hook row，寬限多久後判離場（見 _is_bare_session_start_row）
+BARE_SESSION_START_GRACE_SECONDS = 120.0
 
 # Provider → 「當下 live process 的 (cwd, tty) 清單」偵測器。core 不認識任何具體工具：
 # 要支援新工具的存活偵測＝註冊一個偵測器，_hook_sessions / sources 零改動。
@@ -421,6 +423,34 @@ def _hook_heartbeat_stale(
     except OSError:
         return False
     return source_mtime - heartbeat_at > grace_seconds
+
+
+def _is_bare_session_start_row(
+    tty: str,
+    last_event: str,
+    age_seconds: float,
+    *,
+    grace_seconds: float = BARE_SESSION_START_GRACE_SECONDS,
+) -> bool:
+    """這筆 hook row 是不是「只送過 SessionStart 就再無下文、又沒有終端」的承載 session。
+
+    Claude Code 的背景 job／agent（``--bg-pty-host`` / ``--agent``）起來時會送一筆
+    SessionStart，之後可能整段生命週期都不再送任何事件。hook row 的狀態只靠事件推進
+    （不像 scan row 會隨 idle 秒數自己衰減），所以這種 row 會以 🟢 working 卡在看板上
+    直到 ``ACTIVE_WINDOW_SECONDS`` 過期，而且它沒有 tty、跳也跳不過去——2026-07-28
+    現場取證：一次背景 job 讓看板憑空多一列，registry 裡最久的一筆已經掛了三天。
+
+    真正在做事的背景 job 起步幾秒內就會送出 UserPromptSubmit／PreToolUse，寬限期過後
+    仍只有 SessionStart 才判離場；之後只要它真的動起來，下一個事件會把 row 寫回在場，
+    不是永久刪除。有 tty 的前景 session 一律不套用——剛開好還沒輸入的終端 session 也
+    只有 SessionStart，那是正常在場狀態。
+
+    :param tty:           row 記錄到的終端；空字串代表沒有可聚焦終端。
+    :param last_event:    registry 檔裡的 ``last_event``。
+    :param age_seconds:   距離 ``last_active`` 過了多久。
+    :param grace_seconds: 寬限秒數，超過才判離場。
+    """
+    return not tty and last_event == "SessionStart" and age_seconds > grace_seconds
 
 
 _tmux_cache: tuple[float, dict[str, str]] = (-1.0, {})
@@ -1408,6 +1438,14 @@ def _hook_sessions(
                     # 「下一個事件來時還新不新鮮」；這裡 hook 靜默 = 同一筆請求還掛著，
                     # 摘要必然還是它，直接沿用）。
                     row.waiting_detail = pending_detail
+            if _is_bare_session_start_row(
+                row.tty or "",
+                str(data.get("last_event", "")),
+                time.time() - row.last_active,
+            ):
+                # 背景 job／agent 的承載 session：只報到、不做事、沒有終端。判離場後
+                # 預設收起（`--all` / TUI 的 a 仍查得到），它真的動起來時會自己回來。
+                row.status = Status.ENDED
             out.append(row)
         except (KeyError, ValueError):
             continue

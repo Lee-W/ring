@@ -23,6 +23,7 @@ from ring.registry import (
     _codex_threads,
     _hook_heartbeat_stale,
     _hook_sessions,
+    _is_bare_session_start_row,
     _scan_status,
     _synthetic_sessions,
     _tmux_process_tree_targets,
@@ -861,6 +862,8 @@ def _write_hook_session(
     tty: str,
     provider: str = "claude-code",
     last_active: float = 123.0,
+    status: str = "waiting",
+    last_event: str = "",
 ) -> None:
     registry_dir.mkdir(parents=True, exist_ok=True)
     (registry_dir / f"{sid}.json").write_text(
@@ -869,10 +872,11 @@ def _write_hook_session(
                 "session_id": sid,
                 "provider": provider,
                 "cwd": cwd,
-                "status": "waiting",
+                "status": status,
                 "last_active": last_active,
                 "last_action": "—",
                 "tty": tty,
+                "last_event": last_event,
             }
         )
     )
@@ -986,6 +990,84 @@ def test_hook_sessions_keeps_lone_live_session_with_wrong_tty(monkeypatch: pytes
     sessions = _hook_sessions([("/work/app", "/dev/ttys006")])  # 實際 live tty 不同
 
     assert sessions[0].status is Status.WAITING, "唯一活著的 session 不該因 tty 對不上而消失"
+
+
+def test_hook_sessions_ends_bare_session_start_background_row(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """背景 job／agent 的承載 session（只送 SessionStart、無 tty）不該一直掛在看板上。
+
+    hook row 的狀態只靠事件推進，這種 row 不會再送任何事件，會以 🟢 卡到
+    ACTIVE_WINDOW 過期；同 cwd 還有真的 live session 時就變成「多抓一個 session」。
+    """
+    registry_dir = tmp_path / "sessions"
+    now = time.time()
+    _write_hook_session(
+        registry_dir,
+        "bg-host",
+        "/work/app",
+        "",
+        last_active=now - 600,
+        status="working",
+        last_event="SessionStart",
+    )
+    _write_hook_session(registry_dir, "real", "/work/app", "/dev/ttys002", last_active=now, last_event="PreToolUse")
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+
+    by_id = {s.session_id: s for s in _hook_sessions([("/work/app", "/dev/ttys002")])}
+
+    assert by_id["bg-host"].status is Status.ENDED
+    assert by_id["real"].status is Status.WAITING
+
+
+def test_hook_sessions_keeps_fresh_bare_session_start_row(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """剛送出 SessionStart 的背景 job 仍在寬限期內 → 保留，別讓正要開工的列閃一下才出現。"""
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(
+        registry_dir,
+        "just-started",
+        "/work/app",
+        "",
+        last_active=time.time(),
+        status="working",
+        last_event="SessionStart",
+    )
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+
+    sessions = _hook_sessions([("/work/app", "/dev/ttys002")])
+
+    assert sessions[0].status is Status.WORKING
+
+
+def test_hook_sessions_keeps_idle_foreground_session_start_row(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """開好卻還沒輸入的前景 session 也只有 SessionStart，但它有 tty → 不套用這條規則。"""
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(
+        registry_dir,
+        "waiting-for-input",
+        "/work/app",
+        "/dev/ttys002",
+        last_active=time.time() - 3600,
+        status="idle",
+        last_event="SessionStart",
+    )
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+
+    sessions = _hook_sessions([("/work/app", "/dev/ttys002")])
+
+    assert sessions[0].status is Status.IDLE
+
+
+@pytest.mark.parametrize(
+    ("tty", "last_event", "age", "expected"),
+    [
+        ("", "SessionStart", 600.0, True),  # 背景承載 session：報到後就沒下文
+        ("", "SessionStart", 10.0, False),  # 還在寬限期內
+        ("/dev/ttys002", "SessionStart", 600.0, False),  # 有終端＝前景 session，不套用
+        ("", "PreToolUse", 600.0, False),  # 真的做過事＝真背景 job，留著
+        ("", "", 600.0, False),  # 沒有 last_event 欄位的舊檔不誤殺
+    ],
+)
+def test_is_bare_session_start_row(tty: str, last_event: str, age: float, expected: bool) -> None:
+    assert _is_bare_session_start_row(tty, last_event, age) is expected
 
 
 def test_hook_sessions_caps_same_cwd_same_tty_rows_to_live_process_count(
