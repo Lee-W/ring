@@ -1,3 +1,9 @@
+## 0.15.0 (2026-07-31)
+
+### Feat
+
+- improve local AI discovery and reply responsiveness
+
 ## 0.14.2 (2026-07-31)
 
 ### Fix
