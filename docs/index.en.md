@@ -26,7 +26,8 @@ RiNG puts Claude Code, Codex, and local-model sessions in one place, sorts work 
 
 ## Key Features
 
-- **One board for every session**: built-in support for Claude Code, Codex, Ollama, and llama.cpp; other tools can use `ring hook`.
+- **One board for every session**: built-in Claude Code and Codex sources, plus process-liveness
+  detection for interactive Ollama and llama.cpp CLIs; other tools can use `ring hook`.
 - **Waiting first**: sessions that need a response are sorted first and show what they need.
 - **Jump back to the terminal**: supports tmux, iTerm2, Terminal.app, Neovim terminals, and Linux X11 windows.
 - **Reply and name in place**: answer permission requests in supported terminals and assign recognizable session names.

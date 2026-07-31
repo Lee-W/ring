@@ -205,7 +205,7 @@ RiNG collects sessions from registered sources. Built-ins:
 | **Claude Code zero-config** | `~/.claude/projects/**/*.jsonl`, mtimes, and `cwd` fields | no setup; detects recent activity and turn completion. Precise user-action prompts require hooks |
 | **Codex zero-config** | `~/.codex/state_5.sqlite`, rollout JSONL, and live `codex` processes | no setup; detects live / ended / turn completion. Use hooks for precise jumps when multiple sessions share a cwd |
 | **Ollama zero-config** | interactive `ollama run` processes with a controlling terminal | process-liveness only; shows cwd, TTY, and model, and excludes `ollama serve` |
-| **llama.cpp zero-config** | interactive `llama-cli` processes with a controlling terminal | process-liveness only; shows cwd, TTY, and model, and excludes `llama-server` |
+| **llama.cpp zero-config** | interactive `llama-cli` or `llama cli` processes with a controlling terminal | process-liveness only; shows cwd, TTY, and model, and excludes `llama-server` / `llama server` |
 | **hook registry** | `~/.config/ring/sessions/`, written by `ring hook` | precise: 🔴 waiting / 🟢 working / 🟡 idle / ⚫ ended |
 
 Zero-config needs no setup. For precise “who needs me”, install hooks so provider events feed the RiNG registry.
@@ -215,6 +215,10 @@ Ollama and llama.cpp do not expose a session transcript or interaction hooks tha
 zero-config rows stay 🟡: the row means the interactive CLI is alive, not that RiNG can distinguish generation
 from waiting for the next prompt. The row disappears when the CLI exits. An outer agent that can emit lifecycle
 events can use the provider-neutral hook protocol for precise states.
+This source only includes `ollama run`, `llama-cli`, and the newer `llama cli` when they run directly in a terminal.
+Ollama API clients, GUIs, Docker containers, and long-running servers are not treated as interactive sessions.
+RiNG reads each process cwd through `lsof`, so both `ps` and `lsof` are required on macOS and Linux; `ring doctor`
+reports a missing tool or a failed scan explicitly.
 
 ## States
 
@@ -461,8 +465,9 @@ class MyToolSource:
     name = "mytool"
 
     def discover(self) -> list[Session]:
-        return [Session(session_id="…", cwd="…", status=Status.WORKING,
-                        last_active=0.0, last_action="→ …", source="mytool")]
+        return [
+            Session(session_id="…", cwd="…", status=Status.WORKING, last_active=0.0, last_action="→ …", source="mytool")
+        ]
 
 
 register_source(MyToolSource())

@@ -9,6 +9,7 @@ p 就地回覆權限請求（tmux 內的 session）、a 切換是否顯示已離
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from typing import ClassVar
@@ -18,6 +19,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Vertical
+from textual.coordinate import Coordinate
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Header, Input, OptionList, Static
 
@@ -201,6 +203,8 @@ class RingApp(App[None]):
         # p 已確認終端對話框消失，但 provider 尚未送後續 hook 時，別讓同一筆舊
         # PermissionRequest 又把列拉回 WAITING。value 是已回覆那筆 row 的 last_active revision。
         self._permission_acks: dict[str, float] = {}
+        # send/capture 會碰 subprocess / AppleScript，放背景執行；同一個 session 同時只送一次。
+        self._permission_replies_inflight: set[str] = set()
 
     @staticmethod
     def _detect_own_tty() -> str:
@@ -390,6 +394,18 @@ class RingApp(App[None]):
             parts.append(_("queue: {n}", n=count))
         return "  ｜  " + "  ".join(parts) if parts else ""
 
+    def _status_cell(self, s: Session) -> Text:
+        """建立狀態欄 cell；完整刷新與權限回覆後的局部更新共用。"""
+        focused = s.session_id == self._focused_sid
+        marker = "👉 " if focused else ""
+        style = f"reverse {_STATUS_STYLE[s.status]}" if focused else _STATUS_STYLE[s.status]
+        suffix = f" {s.waiting_icon}" if s.status is Status.WAITING and s.waiting_icon else ""
+        if s.hook_stale:
+            suffix += " ⚠"
+        if s.kind == "agent":
+            suffix += " ⚙"
+        return Text(f"{marker}{s.status.marker} {status_label(s.status)}{suffix}", style=style)
+
     def _reload(self) -> None:
         # 每次刷新都續寫 presence，避免 TUI 開超過 TTL 後 `ring focus` 誤判 TUI 沒在跑、
         # 退回去跳 session 自己的終端（scan 模式常沒 tty → 跳轉失敗）。
@@ -424,19 +440,10 @@ class RingApp(App[None]):
         labels = load_labels()
         table.clear()
         for s in self._sessions:
-            focused = s.session_id == self._focused_sid
-            marker = "👉 " if focused else ""
-            style = f"reverse {_STATUS_STYLE[s.status]}" if focused else _STATUS_STYLE[s.status]
-            suffix = f" {s.waiting_icon}" if s.status is Status.WAITING and s.waiting_icon else ""
-            if s.hook_stale:
-                suffix += " ⚠"
-            if s.kind == "agent":
-                suffix += " ⚙"
-            status_cell = Text(f"{marker}{s.status.marker} {status_label(s.status)}{suffix}", style=style)
             progress = f"{s.todo[0]}/{s.todo[1]}" if s.todo else "·"
             loc_cell = f"📍{_middle_truncate(s.location, _LOC_MAX)}"
             project_cell = labeled_project(s.project, labels.get(s.session_id, ""))
-            cells: list[object] = [status_cell]
+            cells: list[object] = [self._status_cell(s)]
             if self._show_tool:
                 cells.append(provider_label(s.provider))
             cells += [project_cell, progress, _rel(s.idle_for), loc_cell, s.last_action]
@@ -599,7 +606,14 @@ class RingApp(App[None]):
         def _submit(number: int | None) -> None:
             if number is None:
                 return  # Esc 取消，不送
-            self._finish_permission_reply(s, name, backend, dialog, number)
+            if s.session_id in self._permission_replies_inflight:
+                return
+            self._permission_replies_inflight.add(s.session_id)
+            self._set_status(_("… {project}：正在回覆權限", project=name))
+            self.run_worker(
+                self._finish_permission_reply(s, name, backend, dialog, number),
+                group="permission-reply",
+            )
 
         self.push_screen(_PermissionModal(name, dialog), _submit)
 
@@ -608,7 +622,7 @@ class RingApp(App[None]):
         self._set_status(text)
         self.notify(text, severity="information" if ok else "warning", timeout=8)
 
-    def _finish_permission_reply(
+    async def _finish_permission_reply(
         self,
         s: Session,
         name: str,
@@ -616,15 +630,30 @@ class RingApp(App[None]):
         dialog: permission.PermissionDialog,
         number: int,
     ) -> None:
-        """浮層選定後：再驗證一次、送鍵、依結果回報（見 permission.send_permission_reply）。"""
-        outcome = permission.send_permission_reply(backend, dialog, number)
+        """在背景驗證／送鍵，避免 subprocess 與等待時間凍結 Textual 事件迴圈。"""
+        try:
+            outcome = await asyncio.to_thread(permission.send_permission_reply, backend, dialog, number)
+        finally:
+            self._permission_replies_inflight.discard(s.session_id)
         option = next((f"{n}. {text}" for n, text in dialog.options if n == number), str(number))
         if outcome is permission.ReplyOutcome.OK:
             if s.session_id == self._focused_sid:
                 self._focused_sid = None  # 已就地回覆，解除通知標記
             self._permission_acks[s.session_id] = s.last_active
+            # 先直接更新現有資料，別為了一筆 acknowledgment 同步重掃所有 process。
+            # 下一次既有輪詢仍會正常全量同步、重排表格。
+            row = next(
+                ((idx, current) for idx, current in enumerate(self._sessions) if current.session_id == s.session_id),
+                None,
+            )
+            if row is not None and row[1].last_active <= s.last_active:
+                idx, current = row
+                current.status = Status.WORKING
+                current.waiting_kind = ""
+                current.waiting_detail = ""
+                self.query_one(DataTable).update_cell_at(Coordinate(idx, 0), self._status_cell(current))
             self._toast(_("→ {project}：已回覆權限（{option}）", project=name, option=option), ok=True)
-            self._reload()
+            self._update_detail()
             return
         messages = {
             permission.ReplyOutcome.NO_DIALOG: _("{project}：權限對話框已不在，未送出任何按鍵", project=name),

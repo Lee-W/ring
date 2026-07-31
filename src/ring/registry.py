@@ -455,6 +455,7 @@ def _is_bare_session_start_row(
 
 _tmux_cache: tuple[float, dict[str, str]] = (-1.0, {})
 _tmux_panes_cache: tuple[float, list[TmuxPane]] = (-1.0, [])
+_process_rows_cache: tuple[float, dict[int, tuple[int, str]]] = (-1.0, {})
 
 
 @dataclass(frozen=True)
@@ -530,7 +531,11 @@ def _tmux_pane_targets() -> dict[str, str]:
 
 
 def _process_rows() -> dict[int, tuple[int, str]]:
-    """pid → (ppid, args)。給 scan-only tmux pane process-tree 消歧用。"""
+    """pid → (ppid, args)。給 scan-only tmux pane process-tree 消歧用；同輪共用短快取。"""
+    global _process_rows_cache
+    now = time.monotonic()
+    if 0.0 <= now - _process_rows_cache[0] <= _SUBPROCESS_CACHE_TTL:
+        return _process_rows_cache[1]
     try:
         out = subprocess.run(["ps", "-Ao", "pid=,ppid=,args="], capture_output=True, text=True, timeout=3).stdout
     except (OSError, subprocess.SubprocessError):
@@ -546,6 +551,7 @@ def _process_rows() -> dict[int, tuple[int, str]]:
         except ValueError:
             continue
         rows[pid] = (ppid, parts[2] if len(parts) == 3 else "")
+    _process_rows_cache = (now, rows)
     return rows
 
 
@@ -584,6 +590,20 @@ def _tmux_process_tree_targets(sessions: list[Session]) -> dict[str, str]:
         pids = _descendant_pids(pane.pane_pid, rows)
         if not pids:
             continue
+        # local AI 沒有 transcript session id 可放進 argv，但 session id 自帶真實 pid。
+        # 直接用 pane process tree 對 pid，比同 cwd 依序猜 pane 精準。
+        for s in candidates:
+            if s.session_id in result:
+                continue
+            prefix = f"{s.provider}:pid-"
+            if not s.session_id.startswith(prefix):
+                continue
+            try:
+                process_pid = int(s.session_id[len(prefix) :])
+            except ValueError:
+                continue
+            if process_pid in pids:
+                result[s.session_id] = pane.target
         args_text = "\n".join(rows[pid][1] for pid in pids if pid in rows)
         if not args_text:
             continue
@@ -602,6 +622,8 @@ _codex_pids_cache: tuple[float, list[int]] = (-1.0, [])
 _ps_claude_snapshot_cache: tuple[float, str] = (-1.0, "")
 _ps_codex_snapshot_cache: tuple[float, str] = (-1.0, "")
 _bg_agent_session_ids_cache: tuple[float, frozenset[str]] = (-1.0, frozenset())
+_claude_procs_cache: tuple[float, list[tuple[str, str]]] = (-1.0, [])
+_codex_procs_cache: tuple[float, list[tuple[str, str]]] = (-1.0, [])
 
 # args 內任一出現即可判定「這是 claude 安裝二進位在跑」的路徑標記。ps comm 對
 # daemon-exec 的二進位常被截斷（如 `/Users/weilee/.l`），單看 comm 不可靠。
@@ -1061,6 +1083,10 @@ def _claude_procs() -> list[tuple[str, str]] | None:
     「沒有任何 claude process」處理。批次呼叫成功但個別 pid 沒查到 cwd/tty（剛死）
     不算未知，那個 pid 直接不貢獻一列，語意與逐 pid 版本一致。
     """
+    global _claude_procs_cache
+    now = time.monotonic()
+    if 0.0 <= now - _claude_procs_cache[0] <= _SUBPROCESS_CACHE_TTL:
+        return _claude_procs_cache[1]
     pids = running_foreground_claude_pids()
     if pids is None:
         return None
@@ -1075,6 +1101,7 @@ def _claude_procs() -> list[tuple[str, str]] | None:
         cwd = cwd_by_pid.get(pid, "")
         if cwd:
             procs.append((cwd, tty_by_pid.get(pid, "")))
+    _claude_procs_cache = (now, procs)
     return procs
 
 
@@ -1083,6 +1110,10 @@ def _codex_procs() -> list[tuple[str, str]] | None:
 
     cwd／tty 各只批次查一次，理由與 ``_claude_procs`` 相同。
     """
+    global _codex_procs_cache
+    now = time.monotonic()
+    if 0.0 <= now - _codex_procs_cache[0] <= _SUBPROCESS_CACHE_TTL:
+        return _codex_procs_cache[1]
     pids = running_codex_pids()
     if pids is None:
         return None
@@ -1097,6 +1128,7 @@ def _codex_procs() -> list[tuple[str, str]] | None:
         cwd = cwd_by_pid.get(pid, "")
         if cwd:
             procs.append((cwd, tty_by_pid.get(pid, "")))
+    _codex_procs_cache = (now, procs)
     return procs
 
 

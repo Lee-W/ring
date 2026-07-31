@@ -26,7 +26,8 @@ RiNG 把 Claude Code、Codex 與本機模型 session 放在同一張看板，讓
 
 ## 重點功能
 
-- **一張看板看全部 session**：內建 Claude Code、Codex、Ollama 與 llama.cpp 支援，其他工具可接 `ring hook`。
+- **一張看板看全部 session**：內建 Claude Code、Codex session 來源，以及 Ollama／llama.cpp
+  互動式 CLI 的行程存活偵測；其他工具可接 `ring hook`。
 - **等你優先**：需要你回應的 session 會排在最上面，並顯示具體在等什麼。
 - **一鍵跳回終端**：支援 tmux、iTerm2、Terminal.app、Neovim terminal 與 Linux X11 視窗。
 - **就地回覆與命名**：在支援的終端直接回覆權限請求，並替 session 取容易辨認的名字。

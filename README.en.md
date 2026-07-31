@@ -21,7 +21,8 @@ When several Claude Code, Codex, or local-model sessions are running, RiNG shows
 
 ## What It Does
 
-- **One board for session state**: built-in sources for Claude Code, Codex, Ollama, and llama.cpp.
+- **One board for session state**: built-in sources for Claude Code and Codex, plus process-liveness
+  detection for interactive Ollama and llama.cpp CLIs.
 - **Puts waiting sessions first**: shows what 🔴 sessions need and sends desktop or phone notifications.
 - **Returns you to the right terminal**: focuses tmux, iTerm2, Terminal.app, Neovim terminals, or Linux X11 windows from the TUI.
 - **Avoids an extra context switch**: reply to permission requests in supported terminals and assign session names from the board.

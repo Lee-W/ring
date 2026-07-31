@@ -37,6 +37,11 @@ def run_doctor(args: list[str]) -> int:
     for src in src_list:
         try:
             found = src.discover()
+            diagnostic = getattr(src, "diagnostic_issue", None)
+            issue = diagnostic() if callable(diagnostic) else ""
+            if issue:
+                print(f"  {src.name:<{width_src}}  {_('偵測失敗')} ({issue})")
+                continue
             n = len(found)
             status_str = _("活著")
             count_str = _("偵測到 {n} 個 session", n=n)

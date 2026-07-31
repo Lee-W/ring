@@ -495,6 +495,34 @@ def test_doctor_source_failure_is_isolated(monkeypatch: pytest.MonkeyPatch, caps
     assert "1" in out  # claude-code 有 1 個 session
 
 
+def test_doctor_reports_source_diagnostic_issue(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """source 自己知道外部工具缺失時，不可把空結果誤報成「活著、0 個」。"""
+
+    class UnavailableSource:
+        name = "ollama"
+
+        def discover(self) -> list[Session]:
+            return []
+
+        def diagnostic_issue(self) -> str:
+            return "lsof not found"
+
+    monkeypatch.setattr("ring.sources._SOURCES", [UnavailableSource()])
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [_make_fake_notifier("terminal-notifier", True, True)])
+    monkeypatch.setattr("ring.focus._FOCUSERS", [_make_fake_focuser("tmux")])
+    monkeypatch.setattr("ring.hook.hook_status", lambda: _make_fake_hook_status(), raising=False)
+
+    rc = cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "ollama" in out
+    assert "偵測失敗 (lsof not found)" in out
+    assert "偵測到 0 個 session" not in out
+
+
 def test_doctor_reports_hook_status(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """hook_status 回三種狀態 → output 正確對應三種文案。"""
     fake_src = _make_fake_source("hook", [])
