@@ -131,6 +131,29 @@ def test_reply_ok_when_dialog_disappears(monkeypatch: pytest.MonkeyPatch) -> Non
     assert sent == [("main:1.0", "1")]  # 單一數字、無 Enter
 
 
+def test_reply_polls_and_finishes_before_full_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    """第一眼仍在時短輪詢；下一眼消失就提早完成，不固定卡滿 0.4 秒。"""
+    same = _fixture("dialog-bash.txt")
+    _seen, sent = _wire(monkeypatch, [same, same, _fixture("no-dialog-after-reply.txt")])
+    now = [0.0]
+    sleeps: list[float] = []
+    permission_time = getattr(permission, "time")
+    monkeypatch.setattr(permission_time, "monotonic", lambda: now[0])
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    monkeypatch.setattr(permission_time, "sleep", fake_sleep)
+
+    outcome = send_permission_reply(TmuxBackend("main:1.0"), _dialog(), 1, delay=0.4)
+
+    assert outcome is ReplyOutcome.OK
+    assert sleeps == [permission._VERIFY_POLL_INTERVAL]
+    assert sum(sleeps) < 0.4
+    assert sent == [("main:1.0", "1")]
+
+
 def test_reply_refuses_when_no_dialog(monkeypatch: pytest.MonkeyPatch) -> None:
     """二次 capture 抓不到對話框 → 不送鍵。"""
     _seen, sent = _wire(monkeypatch, [_fixture("no-dialog-after-reply.txt")])

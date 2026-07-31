@@ -1,3 +1,6 @@
+import asyncio
+import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -917,6 +920,7 @@ async def test_permission_reply_digit_key_sends_reply(monkeypatch: pytest.Monkey
         await pilot.press("p")
         assert isinstance(app.screen, tui._PermissionModal)
         await pilot.press("2")
+        await app.workers.wait_for_complete()
         assert len(calls) == 1
         backend, number = calls[0]
         assert isinstance(backend, permission.TmuxBackend)
@@ -960,15 +964,52 @@ async def test_permission_reply_ack_suppresses_stale_waiting_until_new_hook(
     async with app.run_test() as pilot:
         await pilot.press("p")
         await pilot.press("2")
+        await app.workers.wait_for_complete()
 
         assert app._sessions[0].status is Status.WORKING
         assert app._sessions[0].waiting_kind == ""
         assert app._sessions[0].waiting_detail == ""
+        assert "working" in str(app.query_one(DataTable).get_row_at(0)[0])
 
         revision["value"] = 101.0
         app._reload()
         assert app._sessions[0].status.value == "waiting"
         assert "a" not in app._permission_acks
+
+
+@pytest.mark.asyncio
+async def test_permission_reply_does_not_block_tui(monkeypatch: pytest.MonkeyPatch) -> None:
+    """send/capture 還在等終端反應時，選項鍵應立刻返回，Textual 事件迴圈不能卡住。"""
+    sessions = [Session("a", "/x/maigo", Status.WAITING, 0.0, "→ Bash", "hook", tmux_target="main:1.0")]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+    monkeypatch.setattr(permission, "capture_pane", lambda target: _perm_screen("dialog-bash.txt"))
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_reply(
+        backend: permission.PermissionBackend, dialog: permission.PermissionDialog, number: int
+    ) -> permission.ReplyOutcome:
+        started.set()
+        release.wait(timeout=2)
+        return permission.ReplyOutcome.OK
+
+    monkeypatch.setattr(permission, "send_permission_reply", slow_reply)
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        before = time.monotonic()
+        await pilot.press("2")
+        elapsed = time.monotonic() - before
+
+        assert elapsed < 1.0
+        assert not isinstance(app.screen, tui._PermissionModal)
+        assert await asyncio.to_thread(started.wait, 1)
+
+        release.set()
+        await app.workers.wait_for_complete()
+        assert app._sessions[0].status is Status.WORKING
 
 
 @pytest.mark.asyncio

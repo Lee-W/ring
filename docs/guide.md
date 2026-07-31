@@ -197,7 +197,7 @@ RiNG 會從已註冊的 source 收集 session；目前內建這幾種：
 | **Claude Code zero-config**（預設） | 掃 `~/.claude/projects/**/*.jsonl` 的 mtime + 記錄裡的 `cwd` 欄位 | 免設定；可辨識近期活動與回合結束。需要回應的通知要靠 hook 才精準 |
 | **Codex zero-config**（預設） | 讀 `~/.codex/state_5.sqlite` threads + rollout JSONL，並用 live `codex` process 配 tty | 免設定；可辨識 live / ended / 回合結束。同 cwd 多 session 建議裝 hook 取得精準跳轉 |
 | **Ollama zero-config**（預設） | 偵測有控制終端的 `ollama run` process | 行程存活層級；顯示 cwd、TTY 與模型，不把 `ollama serve` 當 session |
-| **llama.cpp zero-config**（預設） | 偵測有控制終端的 `llama-cli` process | 行程存活層級；顯示 cwd、TTY 與模型，不把 `llama-server` 當 session |
+| **llama.cpp zero-config**（預設） | 偵測有控制終端的 `llama-cli` 或 `llama cli` process | 行程存活層級；顯示 cwd、TTY 與模型，不把 `llama-server`／`llama server` 當 session |
 | **hook registry**（opt-in，精準） | RiNG hook 在 `Notification` / `UserPromptSubmit` / `Stop` / `SessionEnd` 即時寫 `~/.config/ring/sessions/` | 準（🔴 等你 / 🟢 工作中 / 🟡 跑完停著 / ⚫ 已離場） |
 
 zero-config 不必設定就能用；想要精準的「誰在等你」，就讓 provider 的 hook 餵進 RiNG registry。
@@ -206,6 +206,9 @@ RiNG 內建 Claude Code / Codex hook 安裝器；其他工具可直接走 provid
 Ollama 與 llama.cpp 本身沒有 RiNG 可讀的 session transcript 或互動 hook，因此 zero-config 列固定以
 🟡 顯示：它代表互動式 CLI 還活著，不代表 RiNG 能分辨它正在生成或等下一個 prompt。CLI 結束後列
 就會移除。若外層 agent 能送出生命週期事件，可用下方的中立 hook protocol 取得精準狀態。
+這條來源只收直接在終端執行的 `ollama run`、`llama-cli` 與新版 `llama cli`；Ollama API client、
+GUI、Docker container 與常駐 server 不會冒充互動 session。process 的 cwd 由 `lsof` 取得，因此
+macOS／Linux 環境都需要 `ps` 與 `lsof`；`ring doctor` 會在缺少工具或掃描失敗時明確標示。
 
 ## 狀態機
 
@@ -469,8 +472,9 @@ class MyToolSource:
     name = "mytool"
 
     def discover(self) -> list[Session]:
-        return [Session(session_id="…", cwd="…", status=Status.WORKING,
-                        last_active=0.0, last_action="→ …", source="mytool")]
+        return [
+            Session(session_id="…", cwd="…", status=Status.WORKING, last_active=0.0, last_action="→ …", source="mytool")
+        ]
 
 
 register_source(MyToolSource())
@@ -501,9 +505,9 @@ from ring.notify import register_notifier
 class MyNotifier:
     name = "mytool-notify"
 
-    def available(self) -> bool: ...        # 這個後端現在能不能用（通常看 binary 在不在）
-    def supports_click(self) -> bool: ...   # 點通知能不能跳回 session
-    def send(self, sessions): ...           # 逐 session 各發一則通知
+    def available(self) -> bool: ...  # 這個後端現在能不能用（通常看 binary 在不在）
+    def supports_click(self) -> bool: ...  # 點通知能不能跳回 session
+    def send(self, sessions): ...  # 逐 session 各發一則通知
 
 
 register_notifier(MyNotifier())

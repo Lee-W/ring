@@ -42,8 +42,9 @@ _SEPARATOR_RE = re.compile(r"^\s*─{10,}\s*$")
 # 聊天輸入框的提示列：「❯ <內容>」。誤送時數字會出現在這裡。
 _INPUT_LINE_RE = re.compile(r"^\s*❯\s*(.+?)\s*$")
 
-# 送出數字後等 UI 反應的秒數，之後再抓一次畫面驗證。
+# 送出數字後驗證 UI 反應的最長秒數；期間短輪詢，對話框一消失就提早完成。
 _VERIFY_DELAY = 0.4
+_VERIFY_POLL_INTERVAL = 0.05
 
 
 @dataclass(frozen=True)
@@ -304,8 +305,9 @@ def send_permission_reply(
     1. 再 capture 一次：對話框不在 → ``NO_DIALOG``；跟 ``expected`` 不同 → ``CHANGED``。
        兩者都**不送鍵**（使用者在浮層裡想的期間，對話框可能已被本人回掉或換內容）。
     2. 送單一數字（不帶 Enter）。
-    3. 等 ``delay`` 秒再 capture 驗證：對話框消失 → ``OK``；數字落進輸入框 → 補
-       Backspace、``MISFIRE``；同一個對話框還在 → ``STILL_PRESENT``。
+    3. 最多用 ``delay`` 秒短輪詢 capture：對話框一消失就提早回 ``OK``；數字落進
+       輸入框 → 補 Backspace、``MISFIRE``；期限到仍是同一個對話框 →
+       ``STILL_PRESENT``。
     """
     if not any(number == n for n, _text in expected.options):
         return ReplyOutcome.CHANGED  # 編號不在選項裡，視同對話框對不上，不送
@@ -319,16 +321,20 @@ def send_permission_reply(
         return ReplyOutcome.CHANGED
     if not backend.send_digit(str(number)):
         return ReplyOutcome.SEND_FAILED
-    time.sleep(delay)
-    after = backend.capture()
-    if after is None:
-        return ReplyOutcome.UNVERIFIED
-    after_dialog = parse_permission_dialog(after)
-    if after_dialog is None:
-        if digit_in_input_line(after, str(number)):
-            backend.send_backspace()
-            return ReplyOutcome.MISFIRE
-        return ReplyOutcome.OK
-    if after_dialog == expected:
-        return ReplyOutcome.STILL_PRESENT
-    return ReplyOutcome.OK  # 對話框換成下一個請求 → 原請求已被回覆
+    deadline = time.monotonic() + max(0.0, delay)
+    while True:
+        after = backend.capture()
+        if after is not None:
+            after_dialog = parse_permission_dialog(after)
+            if after_dialog is None:
+                if digit_in_input_line(after, str(number)):
+                    backend.send_backspace()
+                    return ReplyOutcome.MISFIRE
+                return ReplyOutcome.OK
+            if after_dialog != expected:
+                return ReplyOutcome.OK  # 對話框換成下一個請求 → 原請求已被回覆
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return ReplyOutcome.UNVERIFIED if after is None else ReplyOutcome.STILL_PRESENT
+        time.sleep(min(_VERIFY_POLL_INTERVAL, remaining))

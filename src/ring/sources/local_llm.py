@@ -1,13 +1,15 @@
 """Ollama 與 llama.cpp 互動式 CLI 的 zero-config 行程來源。
 
 兩者都沒有可供 RiNG 讀取的 session transcript；這個來源因此只承諾行程層級的
-存活資訊。只收有控制終端的 ``ollama run`` / ``llama-cli``，刻意排除長駐 API
-server，避免把基礎設施誤當成「需要使用者回去處理」的 session。
+存活資訊。只收有控制終端的 ``ollama run`` / ``llama-cli`` / ``llama cli``，
+刻意排除長駐 API server，避免把基礎設施誤當成「需要使用者回去處理」的 session。
 """
 
 from __future__ import annotations
 
 import os
+import shlex
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass
@@ -29,6 +31,7 @@ class LocalLLMProcess:
 
 
 _process_cache: tuple[float, list[LocalLLMProcess] | None] = (-1.0, [])
+_last_scan_error = ""
 
 
 def _elapsed_seconds(value: str) -> int | None:
@@ -48,8 +51,13 @@ def _elapsed_seconds(value: str) -> int | None:
 
 
 def _command_tokens(comm: str, args: str) -> tuple[str, list[str]]:
-    """找出實際 executable 與其後參數；ps args 不保證保留 shell quoting。"""
-    tokens = args.split()
+    """找出實際 executable 與其後參數；有 quoting 時盡量保留含空格的參數。"""
+    try:
+        tokens = shlex.split(args)
+    except ValueError:
+        # ``ps args`` 不保證保留完整 shell quoting；遇到截斷引號時仍退回原本的
+        # whitespace split，至少不要讓整輪 process discovery 失敗。
+        tokens = args.split()
     executable = os.path.basename(comm.strip())
     for index, token in enumerate(tokens):
         if os.path.basename(token) == executable:
@@ -57,28 +65,84 @@ def _command_tokens(comm: str, args: str) -> tuple[str, list[str]]:
     return executable, tokens[1:] if tokens else []
 
 
+def _ollama_model(argv: list[str]) -> str | None:
+    """從 ``ollama run`` argv 找模型；容忍 Cobra 把 flags 放在 MODEL 前面。"""
+    value_flags = {
+        "--dimensions",
+        "--format",
+        "--keepalive",
+        "--width",
+        "--height",
+        "--steps",
+        "--seed",
+        "--negative",
+    }
+    index = 1  # argv[0] == "run"
+    while index < len(argv):
+        token = argv[index]
+        if token == "--":
+            return argv[index + 1] if index + 1 < len(argv) else None
+        if token in value_flags:
+            index += 2
+            continue
+        if token == "--think":
+            index += 2 if index + 1 < len(argv) and argv[index + 1] in {"true", "false", "high", "medium", "low"} else 1
+            continue
+        if token.startswith("-"):
+            # ``--flag=value`` 與無值 boolean flag 都只佔一格；``--think`` 的值可省略，
+            # 不可無條件吞掉下一格的模型名稱。
+            index += 1
+            continue
+        return token
+    return None
+
+
+def _llama_model(argv: list[str], *, fallback: str = "llama-cli") -> str:
+    """從 llama.cpp argv 找模型來源；找不到時保留可辨識的 CLI 名稱。"""
+    model_flags = {
+        "-m",
+        "--model",
+        "-hf",
+        "-hfr",
+        "--hf-repo",
+        "-mu",
+        "--model-url",
+        "-dr",
+        "--docker-repo",
+    }
+    for index, token in enumerate(argv):
+        if token in model_flags and index + 1 < len(argv):
+            return argv[index + 1]
+        for flag in model_flags:
+            prefix = f"{flag}="
+            if token.startswith(prefix):
+                return token[len(prefix) :]
+    return fallback
+
+
 def _classify(comm: str, args: str) -> tuple[str, str] | None:
     executable, argv = _command_tokens(comm, args)
     if executable == "ollama":
-        if len(argv) < 2 or argv[0] != "run":
+        if not argv or argv[0] != "run" or (model := _ollama_model(argv)) is None:
             return None
-        return "ollama", argv[1]
+        return "ollama", model
     if executable == "llama-cli":
-        model_flags = {"-m", "--model", "-hf", "-hfr", "--hf-repo", "-mu", "--model-url"}
-        for index, token in enumerate(argv[:-1]):
-            if token in model_flags:
-                return "llama.cpp", argv[index + 1]
-        return "llama.cpp", "llama-cli"
+        return "llama.cpp", _llama_model(argv)
+    if executable == "llama" and argv and argv[0] in {"cli", "client"}:
+        return "llama.cpp", _llama_model(argv[1:], fallback=f"llama {argv[0]}")
     return None
 
 
 def _scan_processes() -> list[LocalLLMProcess] | None:
     """一次 ps + 一次批次 lsof 找出兩種本機互動 CLI；失敗以 ``None`` 表示未知。"""
-    global _process_cache
+    global _last_scan_error, _process_cache
     monotonic_now = time.monotonic()
     if 0 <= monotonic_now - _process_cache[0] <= _CACHE_TTL:
         return _process_cache[1]
 
+    if shutil.which("ps") is None:
+        _last_scan_error = "ps not found"
+        return None
     try:
         result = subprocess.run(
             ["ps", "-Ao", "pid=,tty=,etime=,comm=,args="],
@@ -86,9 +150,11 @@ def _scan_processes() -> list[LocalLLMProcess] | None:
             text=True,
             timeout=3,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError) as exc:
+        _last_scan_error = f"ps: {exc}"
         return None
     if result.returncode != 0:
+        _last_scan_error = f"ps exit {result.returncode}"
         return None
 
     now = time.time()
@@ -111,14 +177,19 @@ def _scan_processes() -> list[LocalLLMProcess] | None:
         provider, model = classified
         candidates.append((pid, tty, now - elapsed, provider, model))
 
+    if candidates and shutil.which("lsof") is None:
+        _last_scan_error = "lsof not found"
+        return None
     cwd_by_pid = registry._pids_cwd([pid for pid, *_rest in candidates])
     if cwd_by_pid is None:
+        _last_scan_error = "lsof scan failed"
         return None
     processes = [
         LocalLLMProcess(pid, provider, cwd, tty, started_at, model)
         for pid, tty, started_at, provider, model in candidates
         if (cwd := cwd_by_pid.get(pid, ""))
     ]
+    _last_scan_error = ""
     _process_cache = (monotonic_now, processes)
     return processes
 
@@ -151,6 +222,14 @@ class LocalLLMSource:
             for process in processes
             if process.provider == self.name
         ]
+
+    def diagnostic_issue(self) -> str:
+        """最近一次掃描失敗原因；doctor 用，正常或尚無候選行程時為空。"""
+        if shutil.which("ps") is None:
+            return "ps not found"
+        if shutil.which("lsof") is None:
+            return "lsof not found"
+        return _last_scan_error
 
 
 ollama_source = LocalLLMSource("ollama")

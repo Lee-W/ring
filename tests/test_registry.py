@@ -116,13 +116,15 @@ def test_tail_records_reads_last_valid_json(tmp_path: Path) -> None:
 def _reset_claude_ps_caches(monkeypatch: pytest.MonkeyPatch) -> None:
     """把 running_claude_pids / background_agent_session_ids 共用的 ps 快取全部歸零。
 
-    三層快取（``_pids_cache``、``_ps_claude_snapshot_cache``、``_bg_agent_session_ids_cache``）
+    process／ps 快取（``_pids_cache``、``_ps_claude_snapshot_cache``、
+    ``_bg_agent_session_ids_cache``、``_claude_procs_cache``）
     共用 1 秒 TTL；若只重置其中一層，快速連跑的測試會撈到上一個測試 monkeypatch 的
     ``subprocess.run`` 留下的舊 ps 快照，斷言會對到錯的 fixture（已實測會發生）。
     """
     monkeypatch.setattr("ring.registry._pids_cache", (-1.0, []))
     monkeypatch.setattr("ring.registry._ps_claude_snapshot_cache", (-1.0, ""))
     monkeypatch.setattr("ring.registry._bg_agent_session_ids_cache", (-1.0, frozenset()))
+    monkeypatch.setattr("ring.registry._claude_procs_cache", (-1.0, []))
 
 
 def test_running_claude_pids_ignores_daemon_and_bg_pty(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -452,6 +454,10 @@ def test_claude_procs_issues_one_ps_and_one_lsof_call_regardless_of_pid_count(
     assert len(ps_calls) == 1, f"ps 應只呼叫 1 次（3 個 pid 共用同一份快照），實際 {len(ps_calls)} 次"
     assert len(lsof_calls) == 1, f"lsof 應只呼叫 1 次（批次查全部 pid 的 cwd），實際 {len(lsof_calls)} 次"
 
+    # hook registry 與 zero-config source 同一輪都會取 procs；第二次應直接命中結果快取。
+    assert registry._claude_procs() == procs
+    assert len([c for c in calls if c[0] == "lsof"]) == 1
+
 
 def test_codex_procs_issues_one_ps_and_one_lsof_call_regardless_of_pid_count(
     monkeypatch: pytest.MonkeyPatch,
@@ -459,6 +465,7 @@ def test_codex_procs_issues_one_ps_and_one_lsof_call_regardless_of_pid_count(
     """``_codex_procs()`` 版本的同一條效能回歸測試，見 ``_claude_procs`` 對應測試說明。"""
     monkeypatch.setattr(registry, "_codex_pids_cache", (-1.0, []))
     monkeypatch.setattr(registry, "_ps_codex_snapshot_cache", (-1.0, ""))
+    monkeypatch.setattr(registry, "_codex_procs_cache", (-1.0, []))
 
     ps_snapshot = "\n".join(
         [
@@ -486,6 +493,9 @@ def test_codex_procs_issues_one_ps_and_one_lsof_call_regardless_of_pid_count(
     lsof_calls = [c for c in calls if c[0] == "lsof"]
     assert len(ps_calls) == 1, f"ps 應只呼叫 1 次，實際 {len(ps_calls)} 次"
     assert len(lsof_calls) == 1, f"lsof 應只呼叫 1 次，實際 {len(lsof_calls)} 次"
+
+    assert registry._codex_procs() == procs
+    assert len([c for c in calls if c[0] == "lsof"]) == 1
 
 
 def test_delete_session_state_removes_hook_registry_only(
@@ -781,6 +791,46 @@ def test_tmux_process_tree_targets_disambiguates_same_cwd_scan_sessions(
     assert _tmux_process_tree_targets(sessions) == {
         "session-a": "main:1.0",
         "session-b": "main:1.1",
+    }
+
+
+def test_tmux_process_tree_targets_matches_local_llm_pid(monkeypatch: pytest.MonkeyPatch) -> None:
+    sessions = [
+        Session(
+            "ollama:pid-111",
+            "/work/app",
+            Status.IDLE,
+            100.0,
+            "qwen3:8b",
+            "ollama",
+            provider="ollama",
+        ),
+        Session(
+            "llama.cpp:pid-222",
+            "/work/app",
+            Status.IDLE,
+            90.0,
+            "gemma.gguf",
+            "llama.cpp",
+            provider="llama.cpp",
+        ),
+    ]
+    panes = [
+        TmuxPane("%1", "/work/app", "main:1.0", pane_pid=10),
+        TmuxPane("%2", "/work/app", "main:1.1", pane_pid=20),
+    ]
+    rows = {
+        10: (1, "zsh"),
+        111: (10, "ollama run qwen3:8b"),
+        20: (1, "zsh"),
+        222: (20, "llama cli -m gemma.gguf"),
+    }
+    monkeypatch.setattr(registry, "_tmux_panes", lambda: panes)
+    monkeypatch.setattr(registry, "_process_rows", lambda: rows)
+
+    assert _tmux_process_tree_targets(sessions) == {
+        "ollama:pid-111": "main:1.0",
+        "llama.cpp:pid-222": "main:1.1",
     }
 
 
