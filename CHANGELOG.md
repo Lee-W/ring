@@ -1,3 +1,9 @@
+## 0.14.2 (2026-07-31)
+
+### Fix
+
+- stop background-agent host sessions from padding the board
+
 ## 0.14.1 (2026-07-25)
 
 ### Fix
