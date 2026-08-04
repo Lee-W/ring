@@ -2,8 +2,14 @@ name: Documentation
 on:
   push:
     branches:
-      - master
       - main
+
+# Pages 一次只允許一個 deployment，連續 push 時讓後一次排隊而不是互相取消
+# （取消進行中的部署會讓站台停在半舊狀態）。
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
 permissions:
   contents: read
   pages: write

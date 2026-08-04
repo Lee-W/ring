@@ -81,9 +81,33 @@ target-version = "py313"
 line-length = 120
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "RUF"]
-# 本專案刻意大量使用台灣漢語註解／字串，關掉「模糊 unicode 字元」誤報（全形標點等）。
-ignore = ["RUF001", "RUF002", "RUF003"]
+select = [
+  "E",
+  "F",
+  "W",
+  "I",
+  "UP",
+  "RUF",
+  "B",
+  "C4",
+  "SIM",
+  "PTH",
+  "ARG",
+  "TRY",
+]
+ignore = [
+  # 本專案刻意大量使用台灣漢語註解／字串，關掉「模糊 unicode 字元」誤報（全形標點等）。
+  "RUF001",
+  "RUF002",
+  "RUF003",
+  # raise-vanilla-args：ring 是 CLI，例外訊息就是給人看的字串，
+  # 為此替每個 raise 造一個自訂例外類別並不划算。
+  "TRY003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# monkeypatch 的替身要符合被替換函式的簽名，未使用的參數是刻意保留的。
+"tests/**" = ["ARG"]
 
 [tool.codespell]
 skip = '.git*,*.lock'
@@ -107,9 +131,13 @@ cover.cmd = "pytest --cov=ring --cov-report=term-missing --cov-report=xml:covera
 all.help = "Run all tasks"
 all.sequence = ["format", "lint", "cover"]
 
+hooks.help = "Run every pre-commit hook against all files"
+hooks.cmd = "prek run --all-files"
+# no-commit-to-branch 只對本機 commit 有意義；CI 是 detached HEAD，跑它只會誤擋。
+hooks.env = { SKIP = "no-commit-to-branch" }
+
 ci.help = "Run all tasks in CI"
-ci.sequence = [{ cmd = "prek run --all-files" }, "cover"]
-ci.env = { SKIP = "no-commit-to-branch" }
+ci.sequence = ["hooks", "cover"]
 
 setup-pre-commit.help = "Install pre-commit hooks"
 setup-pre-commit.cmd = "prek install"
@@ -143,6 +171,12 @@ addopts = ["-n", "auto", "--dist=loadfile"]
 
 [tool.coverage.run]
 source = ["ring"]
+branch = true
 
 [tool.coverage.paths]
 source = ["src/ring", "*/ring"]
+
+[tool.coverage.report]
+# 實測（開 branch coverage、補完 focus/neovim 測試後）總覆蓋率 89%，
+# 門檻壓在 85 留一點正常波動的空間。
+fail_under = 85

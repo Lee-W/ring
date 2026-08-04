@@ -11,6 +11,7 @@ timeout 短（3s）、失敗安靜吞掉，不擋 hook 主流程。
 
 from __future__ import annotations
 
+import contextlib
 import json
 import urllib.request
 from urllib.parse import urlsplit, urlunsplit
@@ -57,10 +58,8 @@ class NtfyNotifier:
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            try:
+            with contextlib.suppress(Exception):
                 urllib.request.urlopen(req, timeout=3).close()
-            except Exception:
-                pass
 
 
 notifier = NtfyNotifier()

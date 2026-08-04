@@ -26,7 +26,7 @@ import fcntl
 import json
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -48,7 +48,7 @@ def _locked(path: Path) -> Iterator[None]:
     """跨 process 的 read-modify-write 臨界區（抄 ``registry._hidden_sessions_lock``）。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_name(path.name + ".lock")
-    with open(lock_path, "w", encoding="utf-8") as fh:
+    with lock_path.open("w", encoding="utf-8") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX)
         try:
             yield
@@ -98,7 +98,7 @@ def _session_from_dict(d: dict[str, Any]) -> Session | None:
     if isinstance(todo, list) and len(todo) == 2:
         data["todo"] = (todo[0], todo[1])
     # 未知欄位（例如舊版留下的）會讓 Session(**data) 直接炸；只保留 Session 認得的欄位。
-    known = {f for f in Session.__dataclass_fields__}
+    known = set(Session.__dataclass_fields__)
     data = {k: v for k, v in data.items() if k in known}
     try:
         return Session(**data)
@@ -201,10 +201,8 @@ def set_quiet(until: float | None, *, quiet_path: Path | None = None) -> None:
 def clear_quiet(*, quiet_path: Path | None = None) -> None:
     """手動解除 quiet（``ring quiet off``）。"""
     path = quiet_path or _QUIET_PATH
-    try:
+    with suppress(OSError):
         path.unlink()
-    except OSError:
-        pass
 
 
 def _read_quiet(*, quiet_path: Path | None = None, now: float) -> dict[str, Any] | None:
@@ -218,10 +216,8 @@ def _read_quiet(*, quiet_path: Path | None = None, now: float) -> dict[str, Any]
         return None
     until = raw.get("until")
     if until is not None and isinstance(until, (int, float)) and now >= float(until):
-        try:
+        with suppress(OSError):
             path.unlink()
-        except OSError:
-            pass
         return None
     return raw
 

@@ -309,10 +309,7 @@ def _action_detail(data: Mapping[str, Any]) -> str:
     if not detail:
         detail = _first_str(data, "message", "prompt", "question")
 
-    if tool and detail:
-        out = f"{tool}: {detail}"
-    else:
-        out = tool or detail
+    out = f"{tool}: {detail}" if tool and detail else tool or detail
     out = " ".join(out.split())  # 多行指令壓成單行
     return out if len(out) <= _DETAIL_MAX else out[: _DETAIL_MAX - 1] + "…"
 

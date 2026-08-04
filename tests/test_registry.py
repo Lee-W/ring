@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+import ring.ps_parse as ps_parse
 import ring.registry as registry
 from ring.registry import (
     ACTIVE_WINDOW_SECONDS,
@@ -229,24 +230,24 @@ def test_running_claude_pids_ignores_bg_spare(monkeypatch: pytest.MonkeyPatch) -
 
 def test_is_claude_session_line_recognizes_truncated_comm_via_path_marker() -> None:
     """comm 被截斷（daemon-exec）時，靠 args 的 claude 安裝路徑標記辨識，不靠 comm/args[0]。"""
-    assert registry._is_claude_session_line("claude", "claude --plugin-dir /work/app") is True
+    assert ps_parse._is_claude_session_line("claude", "claude --plugin-dir /work/app") is True
     # comm 截斷、args[0] 只是版本號（不是 "claude"）→ 靠 ClaudeCode.app / claude/versions/ 標記
     assert (
-        registry._is_claude_session_line(
+        ps_parse._is_claude_session_line(
             "/Users/weilee/.l",
             "/Applications/Claude Code.app/Contents/Resources/ClaudeCode.app/2.1.187 --session-id abc",
         )
         is True
     )
     assert (
-        registry._is_claude_session_line(
+        ps_parse._is_claude_session_line(
             "/Users/weilee/.l", "/Users/me/.local/share/claude/versions/2.1.187 --session-id abc"
         )
         is True
     )
     # 無 claude 相關線索 → 不是
-    assert registry._is_claude_session_line("/Users/weilee/.l", "2.1.187 --session-id abc") is False
-    assert registry._is_claude_session_line("zsh", "-zsh") is False
+    assert ps_parse._is_claude_session_line("/Users/weilee/.l", "2.1.187 --session-id abc") is False
+    assert ps_parse._is_claude_session_line("zsh", "-zsh") is False
 
 
 def test_is_claude_session_line_rejects_tool_call_shell_wrapper() -> None:
@@ -265,40 +266,40 @@ def test_is_claude_session_line_rejects_tool_call_shell_wrapper() -> None:
         "setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL 2>/dev/null || true && "
         'eval \'MYPID=$$\necho "shell pid: $MYPID"\nlsof -a -p "$MYPID" -d cwd -Fn\' < /dev/null'
     )
-    assert registry._is_claude_session_line("/bin/zsh", real_args) is False
+    assert ps_parse._is_claude_session_line("/bin/zsh", real_args) is False
     # 常見 shell 各種 comm 形狀（含 login shell 前綴 "-"）一律不是 claude session，
     # 即使 args 剛好也帶 claude 相關子字串。
-    assert registry._is_claude_session_line("/bin/bash", "/bin/bash -c source /Users/x/.claude/foo.sh") is False
-    assert registry._is_claude_session_line("-zsh", "-zsh -c source /Users/x/.claude/foo.sh") is False
+    assert ps_parse._is_claude_session_line("/bin/bash", "/bin/bash -c source /Users/x/.claude/foo.sh") is False
+    assert ps_parse._is_claude_session_line("-zsh", "-zsh -c source /Users/x/.claude/foo.sh") is False
     # 但截斷 comm 的 daemon 承載者（既有測試護著的情境）不受影響：basename 不是已知
     # shell 名稱，仍照原本的 path marker 邏輯判定為 claude session。
     assert (
-        registry._is_claude_session_line("/Users/weilee/.l", "/Users/me/.local/share/claude/versions/2.1.187") is True
+        ps_parse._is_claude_session_line("/Users/weilee/.l", "/Users/me/.local/share/claude/versions/2.1.187") is True
     )
 
 
 def test_is_claude_session_line_third_branch_requires_session_id() -> None:
     """第三分支（basename token fallback）必須同時帶 --session-id，否則誤判 grep/less 等無關 process。"""
-    assert registry._is_claude_session_line("grep", "grep -r claude .") is False
-    assert registry._is_claude_session_line("less", "less claude") is False
-    assert registry._is_claude_session_line("/Users/x/.l", "/opt/homebrew/bin/claude --session-id abc") is True
+    assert ps_parse._is_claude_session_line("grep", "grep -r claude .") is False
+    assert ps_parse._is_claude_session_line("less", "less claude") is False
+    assert ps_parse._is_claude_session_line("/Users/x/.l", "/opt/homebrew/bin/claude --session-id abc") is True
 
 
 def test_arg_session_id_parses_token_after_flag() -> None:
-    assert registry._arg_session_id("claude --bg-pty-host x.sock --session-id abc --fork-session") == "abc"
-    assert registry._arg_session_id("claude --plugin-dir /work/app") is None
-    assert registry._arg_session_id("claude --session-id") is None  # flag 是最後一個 token，沒有值
+    assert ps_parse._arg_session_id("claude --bg-pty-host x.sock --session-id abc --fork-session") == "abc"
+    assert ps_parse._arg_session_id("claude --plugin-dir /work/app") is None
+    assert ps_parse._arg_session_id("claude --session-id") is None  # flag 是最後一個 token，沒有值
 
 
 def test_is_claude_background_process_four_branches() -> None:
     """取捨 B 的四分支：daemon run／bg-spare／bg-pty-host 無 session-id → True；其餘 False。"""
-    assert registry._is_claude_background_process("claude daemon run --origin transient") is True
-    assert registry._is_claude_background_process("claude --bg-spare tok123") is True
-    assert registry._is_claude_background_process("claude --bg-pty-host /tmp/spare/x.sock 72 35") is True
+    assert ps_parse._is_claude_background_process("claude daemon run --origin transient") is True
+    assert ps_parse._is_claude_background_process("claude --bg-spare tok123") is True
+    assert ps_parse._is_claude_background_process("claude --bg-pty-host /tmp/spare/x.sock 72 35") is True
     assert (
-        registry._is_claude_background_process("claude --bg-pty-host /tmp/pty/x.sock 72 35 --session-id abc") is False
+        ps_parse._is_claude_background_process("claude --bg-pty-host /tmp/pty/x.sock 72 35 --session-id abc") is False
     )
-    assert registry._is_claude_background_process("claude --plugin-dir /work/app") is False
+    assert ps_parse._is_claude_background_process("claude --plugin-dir /work/app") is False
 
 
 def test_background_agent_session_ids_only_collects_bg_pty_host_with_session_id(

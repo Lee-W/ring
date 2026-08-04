@@ -76,10 +76,9 @@ def discover_sessions() -> list[Session]:
     targets_by_cwd = registry._tmux_targets_by_cwd()
     used_by_cwd: dict[str, int] = {}
     for s in found:
-        if s.tmux_pane:
-            if bound := bound_targets.get(s.tmux_pane):
-                s.tmux_target = bound
-                continue
+        if s.tmux_pane and (bound := bound_targets.get(s.tmux_pane)):
+            s.tmux_target = bound
+            continue
 
         if process_target := process_targets.get(s.session_id):
             s.tmux_target = process_target

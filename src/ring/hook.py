@@ -130,7 +130,7 @@ def _session_tty(process_names: tuple[str, ...]) -> str:
         if row is None:
             return ""
         ppid, comm = row
-        if os.path.basename(comm.strip()) in process_names:
+        if Path(comm.strip()).name in process_names:
             return _pid_tty(pid)
         if ppid <= 1:
             return ""
@@ -496,7 +496,7 @@ def _is_ring_hook_command(cmd: str) -> bool:
     tokens = cmd.split()
     if len(tokens) < 2:
         return False
-    return os.path.basename(tokens[0]) == "ring" and tokens[1] == "hook"
+    return Path(tokens[0]).name == "ring" and tokens[1] == "hook"
 
 
 # install-hooks 會就「使用者互動」事件警告：別的工具若也掛在這上面（彈自己的對話框 /

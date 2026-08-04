@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import shlex
 import shutil
 import subprocess
@@ -54,10 +55,8 @@ class TerminalNotifierNotifier(CommandNotifier):
                 cmd.extend(["-sound", cfg.notify_sound_name or "default"])
             if cfg.notify_ignore_dnd:
                 cmd.append("-ignoreDnD")
-            try:
+            with contextlib.suppress(Exception):
                 subprocess.run(cmd, capture_output=True, timeout=10)
-            except Exception:
-                pass
 
 
 notifier = TerminalNotifierNotifier()

@@ -230,9 +230,11 @@ class TestFlushIfDue:
         q, quiet = tmp_path / "queue.json", tmp_path / "quiet"
         enqueue([_s("a")], queue_path=q)
         set_quiet(None, quiet_path=quiet)
-        with patch("ring.notify_queue.get_config", return_value=self._cfg(5)):
-            with patch("ring.notify.notify_summary") as mock_summary:
-                flush_if_due(now=time.time(), queue_path=q, quiet_path=quiet)
+        with (
+            patch("ring.notify_queue.get_config", return_value=self._cfg(5)),
+            patch("ring.notify.notify_summary") as mock_summary,
+        ):
+            flush_if_due(now=time.time(), queue_path=q, quiet_path=quiet)
         mock_summary.assert_not_called()
         assert peek_count(queue_path=q) == 1  # queue 保留
 
@@ -241,9 +243,11 @@ class TestFlushIfDue:
         now = 1000.0
         try_claim_leading_edge(now, 1, queue_path=q)  # 開視窗（seconds 值在此無關緊要，只是設置起點）
         enqueue([_s("a")], queue_path=q)
-        with patch("ring.notify_queue.get_config", return_value=self._cfg(30)):
-            with patch("ring.notify.notify_summary") as mock_summary:
-                flush_if_due(now=now + 5, queue_path=q, quiet_path=quiet)
+        with (
+            patch("ring.notify_queue.get_config", return_value=self._cfg(30)),
+            patch("ring.notify.notify_summary") as mock_summary,
+        ):
+            flush_if_due(now=now + 5, queue_path=q, quiet_path=quiet)
         mock_summary.assert_not_called()
 
     def test_flushes_after_window_expires(self, tmp_path: Path) -> None:
@@ -251,9 +255,11 @@ class TestFlushIfDue:
         now = 1000.0
         try_claim_leading_edge(now, 1, queue_path=q)  # 開視窗（seconds 值在此無關緊要，只是設置起點）
         enqueue([_s("a"), _s("b")], queue_path=q)
-        with patch("ring.notify_queue.get_config", return_value=self._cfg(10)):
-            with patch("ring.notify.notify_summary") as mock_summary:
-                flush_if_due(now=now + 11, queue_path=q, quiet_path=quiet)
+        with (
+            patch("ring.notify_queue.get_config", return_value=self._cfg(10)),
+            patch("ring.notify.notify_summary") as mock_summary,
+        ):
+            flush_if_due(now=now + 11, queue_path=q, quiet_path=quiet)
         mock_summary.assert_called_once()
         assert mock_summary.call_args[0][0] == 2
         assert peek_count(queue_path=q) == 0
@@ -262,16 +268,20 @@ class TestFlushIfDue:
         """debounce=0（純 quiet 累積的殘留）——沒開過視窗也要能被懶惰 flush。"""
         q, quiet = tmp_path / "queue.json", tmp_path / "quiet"
         enqueue([_s("a")], queue_path=q)
-        with patch("ring.notify_queue.get_config", return_value=self._cfg(0)):
-            with patch("ring.notify.notify_summary") as mock_summary:
-                flush_if_due(now=time.time(), queue_path=q, quiet_path=quiet)
+        with (
+            patch("ring.notify_queue.get_config", return_value=self._cfg(0)),
+            patch("ring.notify.notify_summary") as mock_summary,
+        ):
+            flush_if_due(now=time.time(), queue_path=q, quiet_path=quiet)
         mock_summary.assert_called_once()
 
     def test_no_flush_when_queue_empty(self, tmp_path: Path) -> None:
         q, quiet = tmp_path / "queue.json", tmp_path / "quiet"
-        with patch("ring.notify_queue.get_config", return_value=self._cfg(0)):
-            with patch("ring.notify.notify_summary") as mock_summary:
-                flush_if_due(now=time.time(), queue_path=q, quiet_path=quiet)
+        with (
+            patch("ring.notify_queue.get_config", return_value=self._cfg(0)),
+            patch("ring.notify.notify_summary") as mock_summary,
+        ):
+            flush_if_due(now=time.time(), queue_path=q, quiet_path=quiet)
         mock_summary.assert_not_called()
 
     def test_force_bypasses_quiet_and_window(self, tmp_path: Path) -> None:
@@ -281,18 +291,22 @@ class TestFlushIfDue:
         try_claim_leading_edge(now, 1, queue_path=q)  # 開視窗（seconds 值在此無關緊要，只是設置起點）
         enqueue([_s("a")], queue_path=q)
         set_quiet(None, quiet_path=quiet)
-        with patch("ring.notify_queue.get_config", return_value=self._cfg(999)):
-            with patch("ring.notify.notify_summary") as mock_summary:
-                flush_if_due(now=now + 1, force=True, queue_path=q, quiet_path=quiet)
+        with (
+            patch("ring.notify_queue.get_config", return_value=self._cfg(999)),
+            patch("ring.notify.notify_summary") as mock_summary,
+        ):
+            flush_if_due(now=now + 1, force=True, queue_path=q, quiet_path=quiet)
         mock_summary.assert_called_once()
         assert peek_count(queue_path=q) == 0
 
     def test_flush_failure_is_swallowed(self, tmp_path: Path) -> None:
         q, quiet = tmp_path / "queue.json", tmp_path / "quiet"
         enqueue([_s("a")], queue_path=q)
-        with patch("ring.notify_queue.get_config", return_value=self._cfg(0)):
-            with patch("ring.notify.notify_summary", side_effect=Exception("boom")):
-                flush_if_due(now=time.time(), queue_path=q, quiet_path=quiet)  # 不應拋
+        with (
+            patch("ring.notify_queue.get_config", return_value=self._cfg(0)),
+            patch("ring.notify.notify_summary", side_effect=Exception("boom")),
+        ):
+            flush_if_due(now=time.time(), queue_path=q, quiet_path=quiet)  # 不應拋
 
     def test_concurrent_flush_pops_exactly_once(self, tmp_path: Path) -> None:
         """並發 flush（check-該不該-then-pop-then-清視窗 併進同一鎖區塊）：多個 thread

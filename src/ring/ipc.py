@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
@@ -95,18 +96,14 @@ def read_focus_request(
         ts = float(data["ts"])
     except Exception:
         # 解析失敗：刪掉爛檔
-        try:
+        with contextlib.suppress(Exception):
             path.unlink()
-        except Exception:
-            pass
         return None
 
     age = time.time() - ts
     # 不論有效或過期，都刪掉（消費即焚；過期的也不留）
-    try:
+    with contextlib.suppress(Exception):
         path.unlink()
-    except Exception:
-        pass
 
     if age > ttl:
         return None
@@ -121,11 +118,12 @@ def _pid_alive(pid: int) -> bool:
     """檢查 pid 是否仍存活（送 signal 0）。"""
     try:
         os.kill(pid, 0)
-        return True
     except (ProcessLookupError, PermissionError):
         return False
     except Exception:
         return False
+    else:
+        return True
 
 
 def write_tui_presence(*, presence_path: Path | None = None) -> None:
@@ -192,17 +190,13 @@ def read_tui_presence(
 
     age = time.time() - ts
     if age > ttl:
-        try:
+        with contextlib.suppress(Exception):
             path.unlink()
-        except Exception:
-            pass
         return None
 
     if not _pid_alive(pid):
-        try:
+        with contextlib.suppress(Exception):
             path.unlink()
-        except Exception:
-            pass
         return None
 
     return _TuiPresence(tty=tty, pid=pid, ts=ts)
@@ -214,7 +208,5 @@ def clear_tui_presence(*, presence_path: Path | None = None) -> None:
     :param presence_path: 可注入路徑（測試用）。
     """
     path = presence_path or _PRESENCE_PATH
-    try:
+    with contextlib.suppress(Exception):
         path.unlink()
-    except Exception:
-        pass

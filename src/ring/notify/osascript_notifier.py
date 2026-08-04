@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+
 from ring.config import get_config
 from ring.notify.base import notify_message, notify_title
 from ring.notify.command import CommandNotifier
@@ -22,10 +24,8 @@ class OsascriptNotifier(CommandNotifier):
             message = notify_message(s)
             title = notify_title(s)
             sound = f' sound name "{cfg.notify_sound_name}"' if cfg.notify_sound else ""
-            try:
+            with contextlib.suppress(Exception):
                 osascript(f'display notification "{message}" with title "{title}"{sound}')
-            except Exception:
-                pass
 
 
 notifier = OsascriptNotifier()

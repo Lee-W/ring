@@ -137,7 +137,9 @@ def test_reply_polls_and_finishes_before_full_delay(monkeypatch: pytest.MonkeyPa
     _seen, sent = _wire(monkeypatch, [same, same, _fixture("no-dialog-after-reply.txt")])
     now = [0.0]
     sleeps: list[float] = []
-    permission_time = getattr(permission, "time")
+    # getattr 是為了繞過 mypy strict 的 implicit-reexport（permission 沒有明確 re-export time），
+    # 不是安全性考量——B009 在這裡不適用。
+    permission_time = getattr(permission, "time")  # noqa: B009
     monkeypatch.setattr(permission_time, "monotonic", lambda: now[0])
 
     def fake_sleep(seconds: float) -> None:
@@ -319,14 +321,14 @@ def test_iterm_capture_returns_none_without_osascript(monkeypatch: pytest.Monkey
 
 
 def _session(**overrides: object) -> Session:
-    base: dict[str, object] = dict(
-        session_id="s1",
-        cwd="/tmp/project",
-        status=Status.WAITING,
-        last_active=0.0,
-        last_action="",
-        source="hook",
-    )
+    base: dict[str, object] = {
+        "session_id": "s1",
+        "cwd": "/tmp/project",
+        "status": Status.WAITING,
+        "last_active": 0.0,
+        "last_action": "",
+        "source": "hook",
+    }
     base.update(overrides)
     return Session(**base)  # type: ignore[arg-type]
 

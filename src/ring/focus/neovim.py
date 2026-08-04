@@ -9,7 +9,6 @@ iTerm2 / Terminal.app 把外層 pane 或視窗帶到前景。
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 import sys
@@ -57,7 +56,7 @@ def _process_table() -> tuple[dict[int, int], dict[int, str]]:
         except ValueError:
             continue
         parents[pid] = ppid
-        commands[pid] = os.path.basename(parts[2])
+        commands[pid] = Path(parts[2]).name
     return parents, commands
 
 
