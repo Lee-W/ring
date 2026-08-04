@@ -13,6 +13,25 @@ permissions:
   contents: read
 
 jobs:
+  # ruff/mypy 由下面的 test job 逐版本跑；這個 job 補的是只掛在本機 git hook 上的那些檢查
+  # （codespell、taplo、end-of-file-fixer、detect-private-key…），沒有它們就只有裝了 hook 的人擋得住。
+  hooks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Run pre-commit hooks
+        run: uv run poe hooks
+
   test:
     runs-on: ${{ matrix.os }}
     strategy:

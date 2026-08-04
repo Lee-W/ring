@@ -10,6 +10,7 @@ p 就地回覆權限請求（tmux 內的 session）、a 切換是否顯示已離
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import time
 from typing import ClassVar
@@ -340,10 +341,8 @@ class RingApp(App[None]):
         """
         if not self._own_tty:
             return
-        try:
+        with contextlib.suppress(Exception):
             focus_jump(Session("self", "/", Status.WORKING, 0.0, "", "ipc", tty=self._own_tty))
-        except Exception:
-            pass
 
     def _poll_focus_request(self) -> None:
         """讀一次 focus-request 檔，有效的話把游標跳過去、持續標記，並 activate 自己視窗。
@@ -412,10 +411,8 @@ class RingApp(App[None]):
         write_tui_presence()
         # TUI 輪詢是三個懶惰 flush 觸發源之一：開著看板時比 headless（靠下個 hook 事件）更快
         # 補發合流的彙總通知。失敗安靜吞，不影響看板本身。
-        try:
+        with contextlib.suppress(Exception):
             flush_if_due()
-        except Exception:
-            pass
         self._sessions = board(self._show_all)
         self._apply_permission_acks()
         table = self.query_one(DataTable)
@@ -495,13 +492,11 @@ class RingApp(App[None]):
         else:
             widget.update("")
 
-    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+    def on_data_table_row_highlighted(self, _event: DataTable.RowHighlighted) -> None:
         # 游標移動（↑/↓/j/k）時同步 detail 列，不必等下一次刷新。
         # RowHighlighted 是非同步訊息，可能在 app 收場、widget 已卸載後才送達——安靜跳過。
-        try:
+        with contextlib.suppress(Exception):
             self._update_detail()
-        except Exception:
-            pass
 
     def _selected(self) -> Session | None:
         row = self.query_one(DataTable).cursor_row
@@ -509,7 +504,7 @@ class RingApp(App[None]):
             return self._sessions[row]
         return None
 
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+    def on_data_table_row_selected(self, _event: DataTable.RowSelected) -> None:
         # DataTable 被 focus 時會吃掉 Enter（變成 RowSelected），在這裡接、轉成跳轉。
         self.action_jump()
 

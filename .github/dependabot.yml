@@ -1,0 +1,39 @@
+# commit-message 一定要指定 prefix：Dependabot 預設訊息是 "Bump X from A to B"，
+# 不符合 conventional commits，會被 prek 的 commitizen hook 擋下。
+# 加上 include: scope 後產出的是 "chore(deps): bump ..."，且 chore 不會觸發 release.yml 的版號 bump。
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      prefix-development: chore
+      include: scope
+    groups:
+      dev-dependencies:
+        dependency-type: development
+        patterns: ["*"]
+
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      pre-commit:
+        patterns: ["*"]

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 import time
@@ -408,10 +409,8 @@ def _watch_flush_if_due() -> None:
     ``test_run_hook_does_not_flush_while_quiet_active`` 同機制），這裡不需另外判斷。
     失敗安靜吞掉，不影響看板本身。
     """
-    try:
+    with contextlib.suppress(Exception):
         flush_if_due()
-    except Exception:
-        pass
 
 
 def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int:

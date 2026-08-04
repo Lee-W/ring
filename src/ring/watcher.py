@@ -86,7 +86,7 @@ class WaitingAlertScheduler:
 
         if not self._primed:
             self._states = {sid: _AlertState(first_seen=now, last_alert=now) for sid in current}
-            self._recently_alerted = {sid: now for sid in current}
+            self._recently_alerted = dict.fromkeys(current, now)
             self._primed = True
             return []
 

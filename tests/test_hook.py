@@ -864,7 +864,7 @@ def test_uninstall_hooks_removes_from_codex(monkeypatch: pytest.MonkeyPatch, tmp
     codex_dir = tmp_path / ".codex"
     codex_dir.mkdir()
     entry = [{"hooks": [{"type": "command", "command": "ring hook --provider codex"}]}]
-    data = {"hooks": {e: entry for e in hook._CODEX_HOOK_EVENTS}}
+    data = {"hooks": dict.fromkeys(hook._CODEX_HOOK_EVENTS, entry)}
     (codex_dir / "hooks.json").write_text(json.dumps(data))
     monkeypatch.setattr("ring.hook.Path.home", lambda: tmp_path)
 

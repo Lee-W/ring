@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import sys
 import time
@@ -164,10 +165,8 @@ def notify_summary(count: int, sample_session: Session) -> None:
         return
     text = ngettext("另有 {n} 個 session 在等你", "另有 {n} 個 session 在等你", count, n=count)
     summary_session = replace(sample_session, is_summary=True, waiting_detail=text)
-    try:
+    with contextlib.suppress(Exception):
         notifier.send([summary_session])
-    except Exception:
-        pass
 
 
 def _send_also(sessions: list[Session], also: tuple[str, ...], primary: Notifier | None) -> None:
@@ -181,10 +180,8 @@ def _send_also(sessions: list[Session], also: tuple[str, ...], primary: Notifier
             continue
         for n in _NOTIFIERS:
             if n.name == name and n.available():
-                try:
+                with contextlib.suppress(Exception):
                     n.send(sessions)
-                except Exception:
-                    pass
                 break
 
 
@@ -199,9 +196,10 @@ def _maybe_show_install_hint() -> str | None:
         hint = _("💡 裝 terminal-notifier 可點擊通知直接跳回 session：brew install terminal-notifier")
         _HINT_MARKER.parent.mkdir(parents=True, exist_ok=True)
         _HINT_MARKER.touch()
-        return hint
     except Exception:
         return None
+    else:
+        return hint
 
 
 __all__ = ["Notifier", "notifiers", "notify_summary", "notify_waiting", "register_notifier"]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 
 from ring.notify.base import notify_message, notify_title
@@ -20,10 +21,8 @@ class NotifySendNotifier(CommandNotifier):
         for s in sessions:
             title = notify_title(s)
             message = notify_message(s)
-            try:
+            with contextlib.suppress(Exception):
                 subprocess.run(["notify-send", title, message], capture_output=True, timeout=10)
-            except Exception:
-                pass
 
 
 notifier = NotifySendNotifier()

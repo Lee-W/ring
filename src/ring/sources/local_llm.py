@@ -7,13 +7,14 @@
 
 from __future__ import annotations
 
-import os
 import shlex
 import shutil
 import subprocess
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
+import ring.ps_parse as ps_parse
 import ring.registry as registry
 from ring.registry import Session, Status
 
@@ -58,9 +59,9 @@ def _command_tokens(comm: str, args: str) -> tuple[str, list[str]]:
         # ``ps args`` 不保證保留完整 shell quoting；遇到截斷引號時仍退回原本的
         # whitespace split，至少不要讓整輪 process discovery 失敗。
         tokens = args.split()
-    executable = os.path.basename(comm.strip())
+    executable = Path(comm.strip()).name
     for index, token in enumerate(tokens):
-        if os.path.basename(token) == executable:
+        if Path(token).name == executable:
             return executable, tokens[index + 1 :]
     return executable, tokens[1:] if tokens else []
 
@@ -163,7 +164,7 @@ def _scan_processes() -> list[LocalLLMProcess] | None:
         parts = line.split(None, 4)
         if len(parts) < 4:
             continue
-        tty = registry._normalize_tty(parts[1])
+        tty = ps_parse._normalize_tty(parts[1])
         if not tty:
             continue
         classified = _classify(parts[3], parts[4] if len(parts) == 5 else "")
