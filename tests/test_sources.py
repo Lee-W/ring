@@ -6,9 +6,9 @@ from ring.registry import Session, Status
 
 @pytest.fixture(autouse=True)
 def _no_tmux_process_tree(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("ring.registry._tmux_pane_targets", lambda: {})
-    monkeypatch.setattr("ring.registry._tmux_process_tree_targets", lambda sessions: {})
-    monkeypatch.setattr("ring.registry._tmux_targets_by_cwd", lambda: {})
+    monkeypatch.setattr("ring.tmux_scan._tmux_pane_targets", lambda: {})
+    monkeypatch.setattr("ring.tmux_scan._tmux_process_tree_targets", lambda sessions: {})
+    monkeypatch.setattr("ring.tmux_scan._tmux_targets_by_cwd", lambda: {})
 
 
 class _FakeSource:
@@ -20,7 +20,7 @@ class _FakeSource:
 
 def test_custom_source_sessions_appear(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sources, "_SOURCES", [_FakeSource()])
-    monkeypatch.setattr("ring.registry._tmux_targets", lambda: {})
+    monkeypatch.setattr("ring.tmux_scan._tmux_targets", lambda: {})
     result = sources.discover_sessions()
     assert any(s.session_id == "custom-1" and s.source == "mytool" for s in result)
 
@@ -57,7 +57,7 @@ def test_hidden_sessions_are_filtered_out(monkeypatch: pytest.MonkeyPatch) -> No
         ],
     )
     monkeypatch.setattr("ring.registry.hidden_sessions", lambda: {"hidden-1": 200.0})
-    monkeypatch.setattr("ring.registry._tmux_targets", lambda: {})
+    monkeypatch.setattr("ring.tmux_scan._tmux_targets", lambda: {})
 
     result = sources.discover_sessions()
 
@@ -72,7 +72,7 @@ def test_hidden_session_auto_revives_on_newer_activity(monkeypatch: pytest.Monke
         [_StaticSource("scan", [Session("revived-1", "/work/z", Status.WORKING, 150.0, "→ doing", "scan")])],
     )
     monkeypatch.setattr("ring.registry.hidden_sessions", lambda: {"revived-1": 100.0})
-    monkeypatch.setattr("ring.registry._tmux_targets", lambda: {})
+    monkeypatch.setattr("ring.tmux_scan._tmux_targets", lambda: {})
 
     unhidden: list[str] = []
     monkeypatch.setattr("ring.registry.unhide_session", lambda sid: unhidden.append(sid))
@@ -108,7 +108,7 @@ def test_newer_scan_clears_stale_hook_waiting(monkeypatch: pytest.MonkeyPatch) -
         "_SOURCES",
         [_StaticSource("hook", [hook_session]), _StaticSource("scan", [scan_session])],
     )
-    monkeypatch.setattr("ring.registry._tmux_targets", lambda: {})
+    monkeypatch.setattr("ring.tmux_scan._tmux_targets", lambda: {})
 
     result = sources.discover_sessions()
 
@@ -150,7 +150,7 @@ def test_newer_scan_bookkeeping_write_does_not_clear_hook_waiting(monkeypatch: p
         "_SOURCES",
         [_StaticSource("hook", [hook_session]), _StaticSource("scan", [scan_session])],
     )
-    monkeypatch.setattr("ring.registry._tmux_targets", lambda: {})
+    monkeypatch.setattr("ring.tmux_scan._tmux_targets", lambda: {})
 
     result = sources.discover_sessions()
 
@@ -167,7 +167,7 @@ def test_older_scan_does_not_clear_hook_waiting(monkeypatch: pytest.MonkeyPatch)
         "_SOURCES",
         [_StaticSource("hook", [hook_session]), _StaticSource("scan", [scan_session])],
     )
-    monkeypatch.setattr("ring.registry._tmux_targets", lambda: {})
+    monkeypatch.setattr("ring.tmux_scan._tmux_targets", lambda: {})
 
     result = sources.discover_sessions()
 
@@ -199,10 +199,10 @@ def test_hook_tmux_pane_binding_wins_over_cwd_collision(monkeypatch: pytest.Monk
     ]
     monkeypatch.setattr(sources, "_SOURCES", [_StaticSource("hook", sessions)])
     monkeypatch.setattr("ring.registry.hidden_sessions", lambda: {})
-    monkeypatch.setattr("ring.registry._tmux_pane_targets", lambda: {"%1": "main:1.0", "%2": "main:1.1"})
-    monkeypatch.setattr("ring.registry._tmux_process_tree_targets", lambda sessions: {})
-    monkeypatch.setattr("ring.registry._tmux_targets", lambda: {"/work/app": "main:1.0"})
-    monkeypatch.setattr("ring.registry._tmux_targets_by_cwd", lambda: {"/work/app": ["main:1.0", "main:1.1"]})
+    monkeypatch.setattr("ring.tmux_scan._tmux_pane_targets", lambda: {"%1": "main:1.0", "%2": "main:1.1"})
+    monkeypatch.setattr("ring.tmux_scan._tmux_process_tree_targets", lambda sessions: {})
+    monkeypatch.setattr("ring.tmux_scan._tmux_targets", lambda: {"/work/app": "main:1.0"})
+    monkeypatch.setattr("ring.tmux_scan._tmux_targets_by_cwd", lambda: {"/work/app": ["main:1.0", "main:1.1"]})
 
     result = sources.discover_sessions()
     by_id = {s.session_id: s.tmux_target for s in result}
@@ -222,10 +222,10 @@ def test_dead_tmux_pane_binding_falls_back_to_cwd(monkeypatch: pytest.MonkeyPatc
     )
     monkeypatch.setattr(sources, "_SOURCES", [_StaticSource("hook", [session])])
     monkeypatch.setattr("ring.registry.hidden_sessions", lambda: {})
-    monkeypatch.setattr("ring.registry._tmux_pane_targets", lambda: {})
-    monkeypatch.setattr("ring.registry._tmux_process_tree_targets", lambda sessions: {})
-    monkeypatch.setattr("ring.registry._tmux_targets", lambda: {"/work/app": "main:1.0"})
-    monkeypatch.setattr("ring.registry._tmux_targets_by_cwd", lambda: {"/work/app": ["main:1.0"]})
+    monkeypatch.setattr("ring.tmux_scan._tmux_pane_targets", lambda: {})
+    monkeypatch.setattr("ring.tmux_scan._tmux_process_tree_targets", lambda sessions: {})
+    monkeypatch.setattr("ring.tmux_scan._tmux_targets", lambda: {"/work/app": "main:1.0"})
+    monkeypatch.setattr("ring.tmux_scan._tmux_targets_by_cwd", lambda: {"/work/app": ["main:1.0"]})
 
     result = sources.discover_sessions()
 
@@ -239,10 +239,10 @@ def test_same_cwd_scan_sessions_get_distinct_fallback_targets(monkeypatch: pytes
     ]
     monkeypatch.setattr(sources, "_SOURCES", [_StaticSource("scan", sessions)])
     monkeypatch.setattr("ring.registry.hidden_sessions", lambda: {})
-    monkeypatch.setattr("ring.registry._tmux_pane_targets", lambda: {})
-    monkeypatch.setattr("ring.registry._tmux_process_tree_targets", lambda sessions: {})
-    monkeypatch.setattr("ring.registry._tmux_targets", lambda: {"/work/app": "main:1.0"})
-    monkeypatch.setattr("ring.registry._tmux_targets_by_cwd", lambda: {"/work/app": ["main:1.0", "main:1.1"]})
+    monkeypatch.setattr("ring.tmux_scan._tmux_pane_targets", lambda: {})
+    monkeypatch.setattr("ring.tmux_scan._tmux_process_tree_targets", lambda sessions: {})
+    monkeypatch.setattr("ring.tmux_scan._tmux_targets", lambda: {"/work/app": "main:1.0"})
+    monkeypatch.setattr("ring.tmux_scan._tmux_targets_by_cwd", lambda: {"/work/app": ["main:1.0", "main:1.1"]})
 
     result = sources.discover_sessions()
     by_id = {s.session_id: s.tmux_target for s in result}

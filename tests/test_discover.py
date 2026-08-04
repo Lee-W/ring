@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 import ring.registry as registry
+import ring.tmux_scan as tmux_scan
 from ring.registry import Session, Status
 from ring.sources import discover_sessions, get_by_id
 from ring.sources.claude_code import _activate_background_agents
@@ -59,7 +60,7 @@ def test_scan_marks_live_newest_and_ends_the_rest(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(registry, "CLAUDE_PROJECTS", projects)
     monkeypatch.setattr(registry, "RING_REGISTRY", tmp_path / "noreg")  # 沒有 hook 資料
     monkeypatch.setattr(registry, "_claude_procs", lambda: [("/work/app", "/dev/ttys010")])
-    monkeypatch.setattr(registry, "_tmux_targets", lambda: {})
+    monkeypatch.setattr(tmux_scan, "_tmux_targets", lambda: {})
 
     by_id = {s.session_id: s for s in discover_sessions()}
 
@@ -90,14 +91,14 @@ def test_scan_mtime_inversion_resolved_by_tmux_process_tree(monkeypatch: pytest.
     monkeypatch.setattr(registry, "CLAUDE_PROJECTS", projects)
     monkeypatch.setattr(registry, "RING_REGISTRY", tmp_path / "noreg")
     monkeypatch.setattr(registry, "_claude_procs", lambda: [("/work/app", "/dev/ttys020")])
-    monkeypatch.setattr(registry, "_tmux_targets", lambda: {})
+    monkeypatch.setattr(tmux_scan, "_tmux_targets", lambda: {})
     monkeypatch.setattr(
-        registry,
+        tmux_scan,
         "_tmux_panes",
-        lambda: [registry.TmuxPane("%1", "/work/app", "main:1.0", pane_pid=10)],
+        lambda: [tmux_scan.TmuxPane("%1", "/work/app", "main:1.0", pane_pid=10)],
     )
     monkeypatch.setattr(
-        registry,
+        tmux_scan,
         "_process_rows",
         lambda: {10: (1, "zsh"), 11: (10, "claude --resume alive-quiet")},
     )
@@ -116,7 +117,7 @@ def test_scan_marks_recent_transcript_ended_without_live_proc(monkeypatch: pytes
     monkeypatch.setattr(registry, "CLAUDE_PROJECTS", projects)
     monkeypatch.setattr(registry, "RING_REGISTRY", tmp_path / "noreg")
     monkeypatch.setattr(registry, "_claude_procs", lambda: [])
-    monkeypatch.setattr(registry, "_tmux_targets", lambda: {})
+    monkeypatch.setattr(tmux_scan, "_tmux_targets", lambda: {})
 
     sessions = discover_sessions()
 
@@ -170,7 +171,7 @@ def test_scan_source_contributes_nothing_when_proc_scan_fails(monkeypatch: pytes
 
     monkeypatch.setattr(registry, "CLAUDE_PROJECTS", projects)
     monkeypatch.setattr(registry, "RING_REGISTRY", registry_dir)
-    monkeypatch.setattr(registry, "_tmux_targets", lambda: {})
+    monkeypatch.setattr(tmux_scan, "_tmux_targets", lambda: {})
     # 這輪 ps/lsof 掃描失敗：偵測器與 scan source 兩邊都拿到「未知」。
     monkeypatch.setattr(registry, "_claude_procs", lambda: None)
     monkeypatch.setattr(registry, "_codex_procs", lambda: None)
@@ -188,7 +189,7 @@ def test_scan_action_parsed_from_jsonl(monkeypatch: pytest.MonkeyPatch, tmp_path
     monkeypatch.setattr(registry, "CLAUDE_PROJECTS", projects)
     monkeypatch.setattr(registry, "RING_REGISTRY", tmp_path / "noreg")
     monkeypatch.setattr(registry, "_claude_procs", lambda: [("/work/app", "")])
-    monkeypatch.setattr(registry, "_tmux_targets", lambda: {})
+    monkeypatch.setattr(tmux_scan, "_tmux_targets", lambda: {})
 
     sessions = discover_sessions()
     assert len(sessions) == 1
@@ -208,7 +209,7 @@ def test_discover_synthetic_row_for_live_proc_without_jsonl(monkeypatch: pytest.
     monkeypatch.setattr(registry, "CLAUDE_PROJECTS", projects)
     monkeypatch.setattr(registry, "RING_REGISTRY", tmp_path / "noreg")  # 無 hook 資料
     monkeypatch.setattr(registry, "_claude_procs", lambda: [("/live/ghost", "/dev/ttys9")])
-    monkeypatch.setattr(registry, "_tmux_targets", lambda: {})
+    monkeypatch.setattr(tmux_scan, "_tmux_targets", lambda: {})
 
     sessions = discover_sessions()
     ghost = next((s for s in sessions if s.cwd == "/live/ghost"), None)
@@ -226,7 +227,7 @@ def test_discover_no_synthetic_row_when_scan_covers_cwd(monkeypatch: pytest.Monk
     monkeypatch.setattr(registry, "CLAUDE_PROJECTS", projects)
     monkeypatch.setattr(registry, "RING_REGISTRY", tmp_path / "noreg")
     monkeypatch.setattr(registry, "_claude_procs", lambda: [("/work/app", "")])
-    monkeypatch.setattr(registry, "_tmux_targets", lambda: {})
+    monkeypatch.setattr(tmux_scan, "_tmux_targets", lambda: {})
 
     sessions = discover_sessions()
     app_sessions = [s for s in sessions if s.cwd == "/work/app"]
@@ -254,7 +255,7 @@ def test_scan_attributes_by_origin_cwd(monkeypatch: pytest.MonkeyPatch, tmp_path
     monkeypatch.setattr(registry, "CLAUDE_PROJECTS", projects)
     monkeypatch.setattr(registry, "RING_REGISTRY", tmp_path / "noreg")
     monkeypatch.setattr(registry, "_claude_procs", lambda: [(mujica, "")])
-    monkeypatch.setattr(registry, "_tmux_targets", lambda: {})
+    monkeypatch.setattr(tmux_scan, "_tmux_targets", lambda: {})
 
     sessions = discover_sessions()
     assert len(sessions) == 1
@@ -300,7 +301,7 @@ def test_scan_no_phantom_synthetic_on_cd(monkeypatch: pytest.MonkeyPatch, tmp_pa
     monkeypatch.setattr(registry, "CLAUDE_PROJECTS", projects)
     monkeypatch.setattr(registry, "RING_REGISTRY", tmp_path / "noreg")
     monkeypatch.setattr(registry, "_claude_procs", lambda: [(mujica, "/dev/ttys5")])
-    monkeypatch.setattr(registry, "_tmux_targets", lambda: {})
+    monkeypatch.setattr(tmux_scan, "_tmux_targets", lambda: {})
 
     sessions = discover_sessions()
     # 不應該有任何 source="proc" 的 mujica 列（因為 scan 列當下 cwd 已是 mujica）
@@ -339,7 +340,7 @@ def test_scan_multi_session_same_origin_after_cd(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(registry, "RING_REGISTRY", tmp_path / "noreg")
     # maigo 有一個 proc、mujica 有一個 proc
     monkeypatch.setattr(registry, "_claude_procs", lambda: [(maigo, "/dev/ttys1"), (mujica, "/dev/ttys2")])
-    monkeypatch.setattr(registry, "_tmux_targets", lambda: {})
+    monkeypatch.setattr(tmux_scan, "_tmux_targets", lambda: {})
 
     by_id = {s.session_id: s for s in discover_sessions()}
 
@@ -364,7 +365,7 @@ def test_scan_commitizen_regression(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     monkeypatch.setattr(registry, "CLAUDE_PROJECTS", projects)
     monkeypatch.setattr(registry, "RING_REGISTRY", tmp_path / "noreg")
     monkeypatch.setattr(registry, "_claude_procs", lambda: [(cwd, "/dev/ttys7")])
-    monkeypatch.setattr(registry, "_tmux_targets", lambda: {})
+    monkeypatch.setattr(tmux_scan, "_tmux_targets", lambda: {})
 
     sessions = discover_sessions()
     assert len(sessions) == 1, f"只應有一列，實際 {len(sessions)} 列"
@@ -453,7 +454,7 @@ def test_discover_tags_kind_agent_for_background_agent_session_ids(
         "_claude_procs",
         lambda: [(agent_cwd, ""), (completed_agent_cwd, ""), (fg_cwd, "/dev/ttys001")],
     )
-    monkeypatch.setattr(registry, "_tmux_targets", lambda: {})
+    monkeypatch.setattr(tmux_scan, "_tmux_targets", lambda: {})
     monkeypatch.setattr(registry, "background_agent_session_ids", lambda: {"agent-x", "agent-done"})
 
     by_id = {s.session_id: s for s in discover_sessions()}
