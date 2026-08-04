@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import fcntl
 import json
-import os
 import sqlite3
 import subprocess
 import time
@@ -37,6 +36,7 @@ from typing import Any
 from urllib.parse import quote
 
 from ring.config import get_config
+from ring.pathutil import _has_ancestor_live_process, _real
 from ring.ps_parse import (
     _arg_session_id,
     _is_claude_background_process,
@@ -45,6 +45,8 @@ from ring.ps_parse import (
     _parse_ps_claude_lines,
     _parse_ps_codex_lines,
 )
+from ring.subproc import CACHE_TTL as _SUBPROCESS_CACHE_TTL
+from ring.tmux_scan import _tmux_process_tree_targets
 from ring.transcript import (
     _conversation_tail_kind,
     _extract_todo,
@@ -65,7 +67,6 @@ WORKING_THRESHOLD_SECONDS = _CFG.working_threshold_seconds  # 多久沒動 → �
 WAITING_WINDOW_SECONDS = _CFG.waiting_window_seconds  # 近期 end_turn scan row 收斂成 IDLE 的時間窗
 # codex 裸 PermissionRequest 後 hook 靜默超過這秒數 → 判定真的停下來等核可（0 = 關閉）
 CODEX_PERMISSION_WAIT_SECONDS = _CFG.codex_permission_wait_seconds
-_SUBPROCESS_CACHE_TTL = 1.0  # ps / tmux 結果的短快取，省掉同一次刷新內的重複呼叫
 
 # Claude Code SessionStart payload 的 source 值（不是 provider）。舊版 bug 曾把它誤當
 # provider 寫進 registry，留下接不住的幽靈列；載入時據此辨識並清掉這種腐壞檔。
@@ -462,170 +463,6 @@ def _is_bare_session_start_row(
     return not tty and last_event == "SessionStart" and age_seconds > grace_seconds
 
 
-_tmux_cache: tuple[float, dict[str, str]] = (-1.0, {})
-_tmux_panes_cache: tuple[float, list[TmuxPane]] = (-1.0, [])
-_process_rows_cache: tuple[float, dict[int, tuple[int, str]]] = (-1.0, {})
-
-
-@dataclass(frozen=True)
-class TmuxPane:
-    pane_id: str
-    cwd: str
-    target: str
-    tty: str = ""
-    pane_pid: int | None = None
-
-
-def _tmux_panes() -> list[TmuxPane]:
-    """目前 tmux panes 的可聚焦座標。短快取。"""
-    global _tmux_panes_cache
-    now = time.monotonic()
-    if 0.0 <= now - _tmux_panes_cache[0] <= _SUBPROCESS_CACHE_TTL:
-        return _tmux_panes_cache[1]
-    panes: list[TmuxPane] = []
-    try:
-        out = subprocess.run(
-            [
-                "tmux",
-                "list-panes",
-                "-a",
-                "-F",
-                "#{pane_id}\t#{pane_current_path}\t#{session_name}:#{window_index}.#{pane_index}\t#{pane_tty}\t#{pane_pid}",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=3,
-        )
-        if out.returncode == 0:
-            for line in out.stdout.splitlines():
-                parts = line.split("\t")
-                if len(parts) != 5:
-                    continue
-                pane_id, cwd, target, tty, pane_pid = parts
-                try:
-                    parsed_pid = int(pane_pid)
-                except ValueError:
-                    parsed_pid = None
-                panes.append(TmuxPane(pane_id=pane_id, cwd=cwd, target=target, tty=tty, pane_pid=parsed_pid))
-    except (OSError, subprocess.SubprocessError):
-        panes = []
-    _tmux_panes_cache = (now, panes)
-    return panes
-
-
-def _tmux_targets() -> dict[str, str]:
-    """tmux pane current_path → "session:window.pane" 對照表。沒 tmux 就空。短快取。"""
-    global _tmux_cache
-    now = time.monotonic()
-    if 0.0 <= now - _tmux_cache[0] <= _SUBPROCESS_CACHE_TTL:
-        return _tmux_cache[1]
-    mapping: dict[str, str] = {}
-    for pane in _tmux_panes():
-        mapping.setdefault(pane.cwd, pane.target)
-    _tmux_cache = (now, mapping)
-    return mapping
-
-
-def _tmux_targets_by_cwd() -> dict[str, list[str]]:
-    """tmux pane current_path → 所有候選 target。供同 cwd fallback 依序分配。"""
-    mapping: dict[str, list[str]] = {}
-    for pane in _tmux_panes():
-        mapping.setdefault(pane.cwd, []).append(pane.target)
-    return mapping
-
-
-def _tmux_pane_targets() -> dict[str, str]:
-    """tmux pane id → target。pane 不存在時不會出現在結果裡，呼叫端自然 fallback。"""
-    return {pane.pane_id: pane.target for pane in _tmux_panes()}
-
-
-def _process_rows() -> dict[int, tuple[int, str]]:
-    """pid → (ppid, args)。給 scan-only tmux pane process-tree 消歧用；同輪共用短快取。"""
-    global _process_rows_cache
-    now = time.monotonic()
-    if 0.0 <= now - _process_rows_cache[0] <= _SUBPROCESS_CACHE_TTL:
-        return _process_rows_cache[1]
-    try:
-        out = subprocess.run(["ps", "-Ao", "pid=,ppid=,args="], capture_output=True, text=True, timeout=3).stdout
-    except (OSError, subprocess.SubprocessError):
-        return {}
-    rows: dict[int, tuple[int, str]] = {}
-    for line in out.splitlines():
-        parts = line.strip().split(None, 2)
-        if len(parts) < 2:
-            continue
-        try:
-            pid = int(parts[0])
-            ppid = int(parts[1])
-        except ValueError:
-            continue
-        rows[pid] = (ppid, parts[2] if len(parts) == 3 else "")
-    _process_rows_cache = (now, rows)
-    return rows
-
-
-def _descendant_pids(root_pid: int, rows: dict[int, tuple[int, str]]) -> set[int]:
-    children: dict[int, list[int]] = {}
-    for pid, (ppid, _args) in rows.items():
-        children.setdefault(ppid, []).append(pid)
-    found: set[int] = set()
-    stack = list(children.get(root_pid, []))
-    while stack:
-        pid = stack.pop()
-        if pid in found:
-            continue
-        found.add(pid)
-        stack.extend(children.get(pid, []))
-    return found
-
-
-def _tmux_process_tree_targets(sessions: list[Session]) -> dict[str, str]:
-    """scan-only 消歧：pane 子孫 process args 明確提到 session id 時，配到該 pane。
-
-    這是刻意保守的規則：只接受 process tree 內有 session id 這種強訊號；沒有就回空，
-    讓呼叫端走 cwd fallback，避免把同 cwd session 硬猜錯。
-    """
-    candidates = [s for s in sessions if not s.tmux_pane and s.session_id]
-    if not candidates:
-        return {}
-    rows = _process_rows()
-    if not rows:
-        return {}
-
-    result: dict[str, str] = {}
-    for pane in _tmux_panes():
-        if pane.pane_pid is None:
-            continue
-        pids = _descendant_pids(pane.pane_pid, rows)
-        if not pids:
-            continue
-        # local AI 沒有 transcript session id 可放進 argv，但 session id 自帶真實 pid。
-        # 直接用 pane process tree 對 pid，比同 cwd 依序猜 pane 精準。
-        for s in candidates:
-            if s.session_id in result:
-                continue
-            prefix = f"{s.provider}:pid-"
-            if not s.session_id.startswith(prefix):
-                continue
-            try:
-                process_pid = int(s.session_id[len(prefix) :])
-            except ValueError:
-                continue
-            if process_pid in pids:
-                result[s.session_id] = pane.target
-        args_text = "\n".join(rows[pid][1] for pid in pids if pid in rows)
-        if not args_text:
-            continue
-        for s in candidates:
-            if s.session_id in result:
-                continue
-            if _real(s.cwd) != _real(pane.cwd):
-                continue
-            if s.session_id in args_text:
-                result[s.session_id] = pane.target
-    return result
-
-
 _pids_cache: tuple[float, list[int]] = (-1.0, [])
 _codex_pids_cache: tuple[float, list[int]] = (-1.0, [])
 _ps_claude_snapshot_cache: tuple[float, str] = (-1.0, "")
@@ -868,46 +705,6 @@ def _pids_cwd(pids: list[int]) -> dict[int, str] | None:
         elif line.startswith("n") and current_pid is not None:
             result.setdefault(current_pid, line[1:])
     return result
-
-
-def _real(path: str) -> str:
-    """正規化路徑供「session cwd ↔ live process cwd」比對。
-
-    lsof 回報的是解析過 symlink 的真實路徑，但 hook / JSONL / sqlite 記的常是字面
-    路徑；兩者直接字串比對，遇到 symlink 專案路徑會對不上，導致活著的 session 被誤判
-    離場（counts 為 0）或被補成重複列。各自 realpath 後再比對即可避免。只用於比對鍵，
-    不改動 ``Session.cwd`` 的顯示值。
-    """
-    if not path:
-        return path
-    try:
-        return os.path.realpath(path)
-    except OSError:
-        return path
-
-
-def _is_ancestor_dir(ancestor: str, path: str) -> bool:
-    """``ancestor`` 是否為 ``path`` 本身或其祖先目錄（兩者皆須已用 ``_real`` 正規化）。
-
-    純字串 ``startswith`` 裸比對會誤判 ``/foo`` 命中 ``/foobar``；用尾斜線組出前綴
-    （或直接相等）才能正確界定「目錄」邊界。
-    """
-    if not ancestor or not path:
-        return False
-    if ancestor == path:
-        return True
-    prefix = ancestor if ancestor.endswith(os.sep) else ancestor + os.sep
-    return path.startswith(prefix)
-
-
-def _has_ancestor_live_process(row_cwd: str, live_cwds: list[str]) -> bool:
-    """``live_cwds`` 裡是否有任一筆是 ``row_cwd`` 本身或其祖先目錄。
-
-    用於：使用者在 session 裡 cd 進子目錄後，hook payload 記的 cwd 變成子目錄，但
-    claude process 實際 cwd（lsof 量到的）仍停在啟動目錄——子目錄底下量不到 live
-    process，不代表 session 已離場，只是 process 沒跟著 cd。
-    """
-    return any(_is_ancestor_dir(live_cwd, row_cwd) for live_cwd in live_cwds)
 
 
 def _pid_tty(pid: int) -> str:

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import ring.registry as registry
+import ring.tmux_scan as tmux_scan
 from ring.registry import Session, Status
 from ring.sources.base import SessionSource
 from ring.sources.claude_code import source as _claude_code
@@ -70,10 +71,10 @@ def discover_sessions() -> list[Session]:
             if s.status is Status.IDLE:
                 s.status = Status.ENDED
 
-    bound_targets = registry._tmux_pane_targets()
-    process_targets = registry._tmux_process_tree_targets(found)
-    targets = registry._tmux_targets()
-    targets_by_cwd = registry._tmux_targets_by_cwd()
+    bound_targets = tmux_scan._tmux_pane_targets()
+    process_targets = tmux_scan._tmux_process_tree_targets(found)
+    targets = tmux_scan._tmux_targets()
+    targets_by_cwd = tmux_scan._tmux_targets_by_cwd()
     used_by_cwd: dict[str, int] = {}
     for s in found:
         if s.tmux_pane and (bound := bound_targets.get(s.tmux_pane)):

@@ -13,11 +13,11 @@ import pytest
 
 import ring.ps_parse as ps_parse
 import ring.registry as registry
+import ring.tmux_scan as tmux_scan
 from ring.registry import (
     ACTIVE_WINDOW_SECONDS,
     Session,
     Status,
-    TmuxPane,
     _apply_waiting,
     _codex_latest_action,
     _codex_tail_kind,
@@ -27,13 +27,13 @@ from ring.registry import (
     _is_bare_session_start_row,
     _scan_status,
     _synthetic_sessions,
-    _tmux_process_tree_targets,
     delete_session_state,
     hidden_session_ids,
     hide_session,
     running_claude_pids,
     unhide_session,
 )
+from ring.tmux_scan import TmuxPane, _tmux_process_tree_targets
 from ring.transcript import (
     _clean_text,
     _conversation_tail_kind,
@@ -786,8 +786,8 @@ def test_tmux_process_tree_targets_disambiguates_same_cwd_scan_sessions(
         20: (1, "zsh"),
         21: (20, "claude --resume session-b"),
     }
-    monkeypatch.setattr(registry, "_tmux_panes", lambda: panes)
-    monkeypatch.setattr(registry, "_process_rows", lambda: rows)
+    monkeypatch.setattr(tmux_scan, "_tmux_panes", lambda: panes)
+    monkeypatch.setattr(tmux_scan, "_process_rows", lambda: rows)
 
     assert _tmux_process_tree_targets(sessions) == {
         "session-a": "main:1.0",
@@ -826,8 +826,8 @@ def test_tmux_process_tree_targets_matches_local_llm_pid(monkeypatch: pytest.Mon
         20: (1, "zsh"),
         222: (20, "llama cli -m gemma.gguf"),
     }
-    monkeypatch.setattr(registry, "_tmux_panes", lambda: panes)
-    monkeypatch.setattr(registry, "_process_rows", lambda: rows)
+    monkeypatch.setattr(tmux_scan, "_tmux_panes", lambda: panes)
+    monkeypatch.setattr(tmux_scan, "_process_rows", lambda: rows)
 
     assert _tmux_process_tree_targets(sessions) == {
         "ollama:pid-111": "main:1.0",
