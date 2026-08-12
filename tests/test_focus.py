@@ -53,6 +53,151 @@ def test_tmux_focuser(monkeypatch: pytest.MonkeyPatch) -> None:
     assert ["tmux", "switch-client", "-t", "main"] in calls
 
 
+def test_tmux_declares_continue_after_success() -> None:
+    """最便宜的迴歸柵欄：這個屬性被拿掉，tmux 成功後外層 focuser 就再也不會被嘗試。"""
+    from ring.focus import tmux
+
+    assert tmux.focuser.continue_after_success is True
+
+
+def test_jump_continues_from_tmux_to_outer_focuser(monkeypatch: pytest.MonkeyPatch) -> None:
+    """情境 (a)：tmux 成功 + 外層 focuser 也成功 → 兩段訊息串起來，且外層真的被嘗試。"""
+    from ring.focus import tmux
+
+    class Outer:
+        name = "outer"
+
+        def try_focus(self, session: Session) -> tuple[bool, str]:
+            return True, "outer terminal"
+
+    monkeypatch.setattr("ring.focus.tmux.shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        "ring.focus.tmux.subprocess.run",
+        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, stdout="", stderr=""),
+    )
+    monkeypatch.setattr("ring.focus._FOCUSERS", [tmux.focuser, Outer()])
+
+    assert focus.jump(_sess(tmux_target="main:1.0")) == (True, "tmux main:1.0; outer terminal")
+
+
+def test_jump_reports_outer_failure_after_tmux_preparation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """情境 (c)：tmux 成功但外層回失敗 → 整體回失敗（刻意的行為翻轉，不是意外）。
+
+    以前 tmux 成功就 return，外層根本不會被叫到，這是靜悄悄的假成功；改後 tmux 只是「前置」，
+    外層失敗要誠實地讓整體回失敗，跟 Neovim 既有的 preparation 語意一致（拍板 A）。
+    """
+    from ring.focus import tmux
+
+    class Outer:
+        name = "outer"
+
+        def try_focus(self, session: Session) -> tuple[bool, str]:
+            return False, "activation denied"
+
+    monkeypatch.setattr("ring.focus.tmux.shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        "ring.focus.tmux.subprocess.run",
+        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, stdout="", stderr=""),
+    )
+    monkeypatch.setattr("ring.focus._FOCUSERS", [tmux.focuser, Outer()])
+
+    assert focus.jump(_sess(tmux_target="main:1.0")) == (
+        False,
+        "tmux main:1.0; outer: activation denied",
+    )
+
+
+def test_tmux_backfills_client_tty_for_outer_focuser(monkeypatch: pytest.MonkeyPatch) -> None:
+    """switch-client 成功後查得到 client tty → 回填給外層 focuser 配對用（同 neovim.py 的做法）。"""
+    from ring.focus import tmux
+
+    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        if cmd[:2] == ["tmux", "list-clients"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="/dev/ttys001\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    class Outer:
+        name = "outer"
+
+        def try_focus(self, session: Session) -> tuple[bool, str]:
+            assert session.tty == "/dev/ttys001"
+            return True, "outer terminal"
+
+    monkeypatch.setattr("ring.focus.tmux.shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr("ring.focus.tmux.subprocess.run", fake_run)
+    monkeypatch.setattr("ring.focus._FOCUSERS", [tmux.focuser, Outer()])
+
+    session = _sess(tmux_target="main:1.0")
+    assert focus.jump(session) == (True, "tmux main:1.0; outer terminal")
+    assert session.tty == "/dev/ttys001"
+
+
+def test_tmux_client_tty_query_empty_leaves_session_tty_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    """查不到 client tty（空輸出）→ session.tty 維持原值，不得誤把「查不到」當失敗。"""
+    from ring.focus import tmux
+
+    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        if cmd[:2] in (["tmux", "list-clients"], ["tmux", "display-message"]):
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("ring.focus.tmux.shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr("ring.focus.tmux.subprocess.run", fake_run)
+
+    session = _sess(tmux_target="main:1.0", tty="/dev/ttys009")
+    assert tmux.focuser.try_focus(session) == (True, "tmux main:1.0")
+    assert session.tty == "/dev/ttys009"
+
+
+def _tmux_switch_ok_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+    """switch-client / select-window / select-pane 一律成功；client tty 查詢由呼叫端覆寫。"""
+    return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+
+def _client_tty_nonzero_returncode_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+    if cmd[:2] in (["tmux", "list-clients"], ["tmux", "display-message"]):
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="not found")
+    return _tmux_switch_ok_run(cmd)
+
+
+def _client_tty_raises_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+    if cmd[:2] in (["tmux", "list-clients"], ["tmux", "display-message"]):
+        raise subprocess.TimeoutExpired(cmd, 3)
+    return _tmux_switch_ok_run(cmd)
+
+
+def _client_tty_blank_lines_before_tty_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+    if cmd[:2] == ["tmux", "list-clients"]:
+        return subprocess.CompletedProcess(cmd, 0, stdout="\n  \n/dev/ttys002\n", stderr="")
+    return _tmux_switch_ok_run(cmd)
+
+
+@pytest.mark.parametrize(
+    ("fake_run", "expected_tty"),
+    [
+        pytest.param(_client_tty_nonzero_returncode_run, "/dev/ttys009", id="nonzero_returncode"),
+        pytest.param(_client_tty_raises_run, "/dev/ttys009", id="subprocess_raises"),
+        pytest.param(_client_tty_blank_lines_before_tty_run, "/dev/ttys002", id="blank_lines_skipped"),
+    ],
+)
+def test_tmux_client_tty_query_edge_cases(
+    fake_run: Callable[..., subprocess.CompletedProcess[str]],
+    expected_tty: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """client tty 查詢失敗（returncode 非 0 / 拋例外）不得把已成功的 switch-client 判成失敗；
+    stdout 混雜空白行時要跳過空行、取第一個非空行（`.maigo/plan.md` Step 3 acceptance）。
+    """
+    from ring.focus import tmux
+
+    monkeypatch.setattr("ring.focus.tmux.shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr("ring.focus.tmux.subprocess.run", fake_run)
+
+    session = _sess(tmux_target="main:1.0", tty="/dev/ttys009")
+    assert tmux.focuser.try_focus(session) == (True, "tmux main:1.0")
+    assert session.tty == expected_tty
+
+
 # --- Neovim :terminal focuser ---
 
 

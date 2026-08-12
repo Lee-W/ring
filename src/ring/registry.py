@@ -708,7 +708,7 @@ def _pids_cwd(pids: list[int]) -> dict[int, str] | None:
 
 
 def _pid_tty(pid: int) -> str:
-    """claude process 的控制終端，正規化成 iTerm2 認得的 "/dev/ttysNNN"。
+    """claude process 的控制終端，正規化成 "/dev/ttysNNN"，供非-tmux 終端 focuser（iTerm2 等）使用。
 
     單 pid、按需查詢用（例如 hook 事件當下要跳轉終端）；``discover_sessions()``
     每輪刷新的熱路徑改走 ``_claude_tty_map`` / ``_codex_tty_map``，不逐 pid 開 ``ps``。

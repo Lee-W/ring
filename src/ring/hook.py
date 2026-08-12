@@ -120,7 +120,7 @@ def _ps_row(pid: int) -> tuple[int, str] | None:
 def _session_tty(process_names: tuple[str, ...]) -> str:
     """hook 是 agent CLI 的後代——往上找到 provider process，回它的控制終端 tty。
 
-    這是「session → 哪個終端」最精準的對應（不必靠 cwd 猜），給 iTerm2 跳轉用。
+    這是「session → 哪個終端」最精準的對應（不必靠 cwd 猜），給非-tmux 終端 focuser（iTerm2 等）跳轉用。
     """
     if not process_names:
         return ""
