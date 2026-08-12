@@ -64,7 +64,7 @@ def _is_claude_session_line(comm: str, args: str) -> bool:
 
 
 def _normalize_tty(raw: str) -> str:
-    """把 ``ps`` 的 tty 欄位正規化成 iTerm2 認得的 ``/dev/ttysNNN``；查無 tty 回空字串。"""
+    """把 ``ps`` 的 tty 欄位正規化成 ``/dev/ttysNNN``，供非-tmux 終端 focuser（iTerm2 等）使用；查無 tty 回空字串。"""
     tty = raw.strip()
     if not tty or tty in ("??", "?"):
         return ""

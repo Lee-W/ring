@@ -158,11 +158,13 @@ msgstr "ended sessions cannot be focused"
 msgid "{app} 找到分頁了，但視窗沒浮到前景（可能在別的 Space 或全螢幕）"
 msgstr "{app} found the tab but could not bring its window to the front (it may be on another Space or in full screen)"
 
-msgid "找不到這個終端分頁（可能已關閉；刷新後若仍存在，請裝 hook 取得更精準狀態）"
-msgstr "terminal tab not found (it may have been closed; if it still appears after refresh, install hooks for more precise state)"
+msgid "找不到這個終端分頁（可能已關閉；刷新後若仍在，跑 `ring doctor` 檢查 focuser 與 hook 狀態）"
+msgstr "terminal tab not found (it may have been closed; if it is still there after a refresh, run `ring doctor` to check focuser and hook status)"
 
-msgid "沒有 focuser 接得住（裝 hook，或一個專案只開一個 session 才測得到 tty）"
-msgstr "no focuser handled it (install hooks, or keep one session per project so tty is detectable)"
+msgid ""
+"沒有 focuser 接得住（跑 `ring doctor` 看哪些 focuser 可用；裝 hook、或一個專案只開一個 session "
+"才測得到 tty）"
+msgstr "no focuser handled it (run `ring doctor` to see which focusers are available; install hooks, or keep one session per project, so tty is detectable)"
 
 msgid "背景 agent，沒有終端可跳；用 `claude --resume {session_id}` 接回"
 msgstr "background agent, no terminal to jump to; reconnect with `claude --resume {session_id}`"

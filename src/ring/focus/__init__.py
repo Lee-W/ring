@@ -101,8 +101,17 @@ def jump(session: Session) -> tuple[bool, str]:
     if failures:
         return _done(False, "; ".join(failures))
     if session.tty:
-        return _done(False, _("找不到這個終端分頁（可能已關閉；刷新後若仍存在，請裝 hook 取得更精準狀態）"))
-    return _done(False, _("沒有 focuser 接得住（裝 hook，或一個專案只開一個 session 才測得到 tty）"))
+        return _done(
+            False,
+            _("找不到這個終端分頁（可能已關閉；刷新後若仍在，跑 `ring doctor` 檢查 focuser 與 hook 狀態）"),
+        )
+    return _done(
+        False,
+        _(
+            "沒有 focuser 接得住（跑 `ring doctor` 看哪些 focuser 可用；"
+            "裝 hook、或一個專案只開一個 session 才測得到 tty）"
+        ),
+    )
 
 
 __all__ = ["Focuser", "focusers", "jump", "register_focuser"]
