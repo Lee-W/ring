@@ -3,7 +3,7 @@
 每個終端是一個 ``Focuser``（見 ``base.Focuser``）：core 不認識任何具體終端，
 只依序問每個 focuser「這個 session 歸不歸你管」。要支援新終端＝寫一個模組、
 ``register_focuser()`` 註冊，core 零改動。內建：Neovim terminal / tmux / iTerm2 /
-Terminal.app / Linux X11 視窗（wmctrl，best-effort fallback）。
+Terminal.app / kitty（remote control socket）/ Linux X11 視窗（wmctrl，best-effort fallback）。
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from __future__ import annotations
 from ring.config import get_config
 from ring.focus.base import Focuser
 from ring.focus.iterm2 import focuser as _iterm2
+from ring.focus.kitty import focuser as _kitty
 from ring.focus.linux_wm import focuser as _linux_wm
 from ring.focus.neovim import focuser as _neovim
 from ring.focus.terminal import focuser as _terminal
@@ -20,12 +21,13 @@ from ring.i18n import gettext as _
 from ring.registry import Session, Status
 
 # 內建 focuser。順序可由 config 的 `focusers` 覆寫。Neovim 先切內層 terminal buffer，
-# 再由 tmux / macOS app / linux-wm 把外層帶到前景。
+# 再由 tmux / macOS app / kitty / linux-wm 把外層帶到前景。
 _BUILTIN: dict[str, Focuser] = {
     "Neovim": _neovim,
     "tmux": _tmux,
     "iTerm2": _iterm2,
     "Terminal": _terminal,
+    "kitty": _kitty,
     "linux-wm": _linux_wm,
 }
 

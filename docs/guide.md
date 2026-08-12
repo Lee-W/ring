@@ -68,6 +68,14 @@ eval "$(ring completion bash)"
 - **tmux**：`switch-client` 直接切到那個 pane（你跟它要在同一個 tmux server）。
 - **iTerm2 / Terminal.app**（macOS）：用 session 的 `tty` 透過 AppleScript 聚焦對應分頁，
   自動分辨是哪個 app（沒在跑的 app 不會被喚醒）。第一次會跳系統「自動化」授權，准一次即可。
+- **kitty**：連上 kitty 的 remote control socket，列出視窗、用 `tty` 比對出正確的那個，
+  精準 `focus-window`；macOS 上另外固定補一次 AppleScript activate（視窗縮到 Dock 時
+  `focus-window` 只負責還原，不會把整個 app 帶到最前）。**前置條件**：kitty 預設關閉
+  remote control，要在 `kitty.conf` 設 `allow_remote_control yes`／`socket`／`socket-only`，
+  並設 `listen_on`（例：`listen_on unix:/tmp/kitty-{kitty_pid}`）——沒設就會安靜跳過，
+  不影響其他 focuser。**限制**：只掃 `/tmp` 底下的 socket；Linux 端尚未實測。
+  **注意**：`focusers` 若已在你的 config 明確列出清單（不是省略走內建預設），新版不會自動幫你加
+  `"kitty"`——要用就自己把它加進清單。
 - **Linux X11 視窗**（`wmctrl`，best-effort fallback）：Linux 上沒跑 tmux 時的後備——
   從 `tty` 追到擁有它的終端視窗，用 `wmctrl` 帶到前景。**限制**：只支援 X11（Wayland 通常無效）、
   只能聚焦整個視窗無法選分頁、gnome-terminal 的 client/server 架構可能配不到。要先 `apt install wmctrl`。
@@ -398,7 +406,7 @@ notify_debounce_seconds = 0      # 跨 session 通知合流窗口秒數；0 = �
 notify_ntfy_url = ""             # 設完整 ntfy topic URL 啟用手機推播（如 https://ntfy.sh/my-topic）
 notify_webhook_url = ""          # 設 URL 啟用通用 webhook 後端（JSON POST）
 notify_also = []                 # 主後端之外「加發」的後端，如 ["ntfy"]（桌面＋手機各一份）
-focusers = ["Neovim", "tmux", "iTerm2", "Terminal", "linux-wm"]   # 跳轉嘗試順序
+focusers = ["Neovim", "tmux", "iTerm2", "Terminal", "kitty", "linux-wm"]   # 跳轉嘗試順序
 plugins = []                     # 啟動時 import 的外部 plugin 模組（見「支援的工具與擴充」）
 debug_payload_log = false        # 診斷時記錄原始 hook payload；可能含使用者輸入，預設關閉
 
@@ -433,7 +441,7 @@ core 不綁死任何特定工具或終端。三個維度都可插拔，每個都
 | 維度 | 在做什麼 | 內建 |
 |------|----------|------|
 | `SessionSource` | 從哪裡找到 session | Claude Code、Codex、Ollama、llama.cpp、RiNG hook registry |
-| `Focuser` | 跳轉時把焦點帶去哪個終端 | tmux、iTerm2、Terminal.app、Linux X11（wmctrl）|
+| `Focuser` | 跳轉時把焦點帶去哪個終端 | tmux、iTerm2、Terminal.app、kitty、Linux X11（wmctrl）|
 | `Notifier` | 等你時怎麼發系統通知 | terminal-notifier、osascript、notify-send、ntfy、webhook |
 
 每個維度各自一個 package（`ring/sources/`、`ring/focus/`、`ring/notify/`），每個後端是裡面
@@ -487,10 +495,10 @@ register_source(MyToolSource())
 
 跳轉的終端整合也一樣——寫個符合 `Focuser` 協定的類別（`try_focus(session) ->
 (ok, msg) | None`），呼叫 `ring.focus.register_focuser(MyFocuser())`。內建 Neovim terminal / tmux /
-iTerm2 / Terminal.app / Linux X11 視窗（wmctrl），各自一個模組（`ring/focus/neovim.py`、
-`ring/focus/tmux.py` …）。Neovim focuser 會先透過 `$NVIM` server socket 切到承載該 session 的
-`:terminal` buffer，再交給外層 focuser 聚焦 pane 或視窗。
-要再加 Ghostty / Kitty / WezTerm，就照這個模式新增 focuser；嘗試順序也能用 config 的 `focusers` 調整。
+iTerm2 / Terminal.app / kitty / Linux X11 視窗（wmctrl），各自一個模組（`ring/focus/neovim.py`、
+`ring/focus/tmux.py`、`ring/focus/kitty.py` …）。Neovim focuser 會先透過 `$NVIM` server socket 切到
+承載該 session 的 `:terminal` buffer，再交給外層 focuser 聚焦 pane 或視窗。
+要再加 Ghostty / WezTerm，就照這個模式新增 focuser；嘗試順序也能用 config 的 `focusers` 調整。
 
 ### 其他通知後端（`Notifier`）
 
