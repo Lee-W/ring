@@ -67,6 +67,7 @@ hands the request to the TUI so it selects that session; otherwise it focuses th
 - **tmux**: switches directly to the pane via `switch-client`.
 - **Neovim `:terminal`**: uses the terminal job's inherited `$NVIM` server socket to switch to the exact buffer, then lets the outer tmux or terminal focuser raise its pane/window.
 - **iTerm2 / Terminal.app** on macOS: uses the session `tty` and AppleScript to focus the matching tab. The first run may ask for macOS Automation permission.
+- **kitty**: connects to kitty's remote-control socket, lists its windows, matches the right one by `tty`, and calls `focus-window`; on macOS it also always sends one extra AppleScript activate afterwards (when a window was minimized to the Dock, `focus-window` only un-minimizes it and does not raise the app). **Prerequisite**: remote control is off by default — set `allow_remote_control` to `yes`/`socket`/`socket-only` and set `listen_on` in `kitty.conf` (e.g. `listen_on unix:/tmp/kitty-{kitty_pid}`); without it, this focuser quietly skips and does not affect the others. **Limits**: only scans sockets under `/tmp`; the Linux path is untested. **Note**: if your config already sets an explicit `focusers` list (instead of using the built-in default), the new version does not silently add `"kitty"` for you — add it yourself.
 - **Linux X11 window** (`wmctrl`, best-effort fallback): for Linux without tmux — walks from the `tty` up to the terminal window that owns it and raises it via `wmctrl`. **Limits**: X11 only (usually a no-op on Wayland), raises the whole window but cannot pick the tab, and gnome-terminal's client/server model may not match. Requires `apt install wmctrl`.
 
 TTY matching is most accurate in hook mode. Without hooks, Codex falls back to zero-config matching:
@@ -391,7 +392,7 @@ notify_debounce_seconds = 0      # cross-session notification coalescing window,
 notify_ntfy_url = ""             # full ntfy topic URL enables phone push (e.g. https://ntfy.sh/my-topic)
 notify_webhook_url = ""          # URL enables the generic webhook backend (JSON POST)
 notify_also = []                 # extra backends fired besides the primary, e.g. ["ntfy"]
-focusers = ["Neovim", "tmux", "iTerm2", "Terminal", "linux-wm"]
+focusers = ["Neovim", "tmux", "iTerm2", "Terminal", "kitty", "linux-wm"]
 plugins = []                     # external plugin modules imported at startup (see Extending)
 debug_payload_log = false        # diagnostic raw hook payload log; may contain user input
 
@@ -426,7 +427,7 @@ RiNG is not tied to a specific tool or terminal.
 | Extension Point | Purpose | Built-ins |
 |-----------------|---------|-----------|
 | `SessionSource` | find sessions | Claude Code, Codex, Ollama, llama.cpp, hook registry |
-| `Focuser` | jump to terminals | Neovim terminal, tmux, iTerm2, Terminal.app, Linux X11 (wmctrl) |
+| `Focuser` | jump to terminals | Neovim terminal, tmux, iTerm2, Terminal.app, kitty, Linux X11 (wmctrl) |
 | `Notifier` | notify when sessions are waiting | terminal-notifier, osascript, notify-send, ntfy, webhook |
 
 Each backend is a small module under `ring/sources/`, `ring/focus/`, or `ring/notify/`, registered via `register_*()`.

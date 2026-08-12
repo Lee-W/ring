@@ -24,7 +24,7 @@
 - **集中看狀態**：內建 Claude Code、Codex session 來源，以及 Ollama／llama.cpp 互動式 CLI
   的行程存活偵測。
 - **需要你時優先**：精準標出 🔴 等你，顯示它在等什麼，並發送桌面或手機通知。
-- **直接回到現場**：從 TUI 跳回 tmux、iTerm2、Terminal.app、Neovim terminal 或 Linux X11 視窗。
+- **直接回到現場**：從 TUI 跳回 tmux、iTerm2、Terminal.app、kitty、Neovim terminal 或 Linux X11 視窗。
 - **少切一次視窗**：支援的終端中可直接在 TUI 回覆權限請求，也能替 session 命名。
 - **接進既有工具**：提供 status bar 單行輸出、JSON、provider-neutral hook 與 plugin 擴充點。
 

@@ -463,6 +463,22 @@ msgstr "unavailable (nvim not in PATH)"
 msgid "不可用（tmux 不在 PATH）"
 msgstr "unavailable (tmux not in PATH)"
 
+msgid "不可用（kitty 不在 PATH）"
+msgstr "unavailable (kitty not in PATH)"
+
+msgid ""
+"不可用（kitty remote control 沒開：kitty.conf 要設 allow_remote_control ＋ "
+"listen_on）"
+msgstr ""
+"unavailable (kitty remote control is off: set allow_remote_control + "
+"listen_on in kitty.conf)"
+
+msgid "不可用（非 Linux）"
+msgstr "unavailable (not Linux)"
+
+msgid "不可用（wmctrl 不在 PATH）"
+msgstr "unavailable (wmctrl not in PATH)"
+
 msgid "不可用（osascript 不在 PATH）"
 msgstr "unavailable (osascript not in PATH)"
 

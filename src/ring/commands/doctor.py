@@ -7,6 +7,7 @@ import sys
 
 from ring.commands._args import strip_lang
 from ring.config import CONFIG_PATH, get_config
+from ring.focus.kitty import sockets as kitty_sockets
 from ring.gc import DEFAULT_OLDER_THAN_SECONDS
 from ring.gc import collect_candidates as gc_collect_candidates
 from ring.i18n import gettext as _
@@ -110,6 +111,20 @@ def run_doctor(args: list[str]) -> int:
         elif name_lower == "tmux":
             avail = shutil.which("tmux") is not None
             avail_str = _("可用") if avail else _("不可用（tmux 不在 PATH）")
+        elif name_lower == "kitty":
+            if shutil.which("kitty") is None:
+                avail_str = _("不可用（kitty 不在 PATH）")
+            elif not kitty_sockets():
+                avail_str = _("不可用（kitty remote control 沒開：kitty.conf 要設 allow_remote_control ＋ listen_on）")
+            else:
+                avail_str = _("可用")
+        elif name_lower == "linux-wm":
+            if not sys.platform.startswith("linux"):
+                avail_str = _("不可用（非 Linux）")
+            elif shutil.which("wmctrl") is None:
+                avail_str = _("不可用（wmctrl 不在 PATH）")
+            else:
+                avail_str = _("可用")
         elif shutil.which("osascript") is None:
             avail_str = _("不可用（osascript 不在 PATH）")
         else:

@@ -1,9 +1,10 @@
 import json
 import shutil
+import socket
 import subprocess
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -325,6 +326,173 @@ def test_linux_wm_reports_activate_failure(monkeypatch: pytest.MonkeyPatch) -> N
     ok, msg = linux_wm.focuser.try_focus(_sess(tty="/dev/pts/3"))  # type: ignore[misc]
     assert ok is False
     assert "0x111" in msg
+
+
+# --- kitty focuser（remote control socket）---
+
+from ring.focus import kitty  # noqa: E402
+
+_KITTY_WINDOW_JSON = json.dumps(
+    [
+        {
+            "id": 1,
+            "tabs": [
+                {
+                    "id": 1,
+                    "windows": [
+                        {"id": 5, "pid": 65219, "foreground_processes": [{"pid": 65300}]},
+                    ],
+                }
+            ],
+        }
+    ]
+)
+
+
+def _kitty_run(
+    *,
+    ls_out: str = _KITTY_WINDOW_JSON,
+    ls_rc: int = 0,
+    focus_rc: int = 0,
+    ps_out: str = "65219 ttys007\n",
+) -> Callable[..., subprocess.CompletedProcess[str]]:
+    """模擬 kitty focuser 用到的各指令：ps（pid→tty 快照）、kitty @ ls、kitty @ focus-window。"""
+
+    def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        def cp(out: str = "", rc: int = 0) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(cmd, rc, stdout=out, stderr="")
+
+        if cmd[:2] == ["ps", "-eo"]:
+            return cp(ps_out)
+        if "focus-window" in cmd:
+            return cp("", focus_rc)
+        if cmd[-1] == "ls":
+            return cp(ls_out, ls_rc)
+        return cp("", 1)
+
+    return fake_run
+
+
+def _fake_osascript_ok(calls: list[str]) -> Callable[[str], tuple[int, str, str]]:
+    """記錄呼叫過的 script，永遠回成功。"""
+
+    def fake(script: str) -> tuple[int, str, str]:
+        calls.append(script)
+        return 0, "", ""
+
+    return fake
+
+
+def _patch_kitty(monkeypatch: pytest.MonkeyPatch, run: object, socket_list: list[str]) -> None:
+    monkeypatch.setattr("ring.focus.kitty.shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr("ring.focus.kitty.subprocess.run", run)
+    monkeypatch.setattr("ring.focus.kitty.sockets", lambda: socket_list)
+
+
+def test_kitty_skips_without_socket(monkeypatch: pytest.MonkeyPatch) -> None:
+    """沒有任何 socket 是最常見情境，不是邊角案例。"""
+    _patch_kitty(monkeypatch, _kitty_run(), [])
+    assert kitty.focuser.try_focus(_sess(tty="/dev/ttys007")) is None
+
+
+def test_kitty_skips_without_binary(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("ring.focus.kitty.shutil.which", lambda _name: None)
+    monkeypatch.setattr("ring.focus.kitty.sockets", lambda: ["/tmp/kitty-1"])
+    assert kitty.focuser.try_focus(_sess(tty="/dev/ttys007")) is None
+
+
+def test_kitty_skips_without_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_kitty(monkeypatch, _kitty_run(), ["/tmp/kitty-1"])
+    assert kitty.focuser.try_focus(_sess()) is None
+
+
+def test_kitty_skips_socket_with_failing_ls(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_kitty(monkeypatch, _kitty_run(ls_rc=1), ["/tmp/kitty-1"])
+    assert kitty.focuser.try_focus(_sess(tty="/dev/ttys007")) is None
+
+
+def test_kitty_skips_socket_with_non_json_ls(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_kitty(monkeypatch, _kitty_run(ls_out="not json"), ["/tmp/kitty-1"])
+    assert kitty.focuser.try_focus(_sess(tty="/dev/ttys007")) is None
+
+
+def test_kitty_focuses_matching_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+    base_run = _kitty_run()
+
+    def recording_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        return base_run(cmd, **kw)
+
+    _patch_kitty(monkeypatch, recording_run, ["/tmp/kitty-1"])
+    osa_calls: list[str] = []
+    monkeypatch.setattr("ring.focus.kitty.osascript", _fake_osascript_ok(osa_calls))
+    monkeypatch.setattr("ring.focus.kitty.sys.platform", "darwin")
+
+    ok, msg = kitty.focuser.try_focus(_sess(tty="/dev/ttys007"))  # type: ignore[misc]
+
+    assert ok is True
+    assert "5" in msg
+    assert ["kitty", "@", "--to", "unix:/tmp/kitty-1", "focus-window", "--match", "id:5"] in calls
+    assert len(osa_calls) == 1
+
+
+def test_kitty_falls_through_when_no_matching_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_kitty(monkeypatch, _kitty_run(ps_out="65219 ttys999\n"), ["/tmp/kitty-1"])
+    assert kitty.focuser.try_focus(_sess(tty="/dev/ttys007")) is None
+
+
+def test_kitty_reports_focus_window_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_kitty(monkeypatch, _kitty_run(focus_rc=1), ["/tmp/kitty-1"])
+    ok, msg = kitty.focuser.try_focus(_sess(tty="/dev/ttys007"))  # type: ignore[misc]
+    assert ok is False
+    assert "5" in msg
+
+
+def test_kitty_skips_activate_on_non_macos(monkeypatch: pytest.MonkeyPatch) -> None:
+    osa_calls: list[str] = []
+    monkeypatch.setattr("ring.focus.kitty.osascript", _fake_osascript_ok(osa_calls))
+    monkeypatch.setattr("ring.focus.kitty.sys.platform", "linux")
+    _patch_kitty(monkeypatch, _kitty_run(), ["/tmp/kitty-1"])
+
+    ok, _msg = kitty.focuser.try_focus(_sess(tty="/dev/ttys007"))  # type: ignore[misc]
+
+    assert ok is True
+    assert osa_calls == []
+
+
+def test_kitty_ignores_osascript_activate_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("ring.focus.kitty.osascript", lambda script: (1, "", "err"))
+    monkeypatch.setattr("ring.focus.kitty.sys.platform", "darwin")
+    _patch_kitty(monkeypatch, _kitty_run(), ["/tmp/kitty-1"])
+
+    ok, _msg = kitty.focuser.try_focus(_sess(tty="/dev/ttys007"))  # type: ignore[misc]
+
+    assert ok is True
+
+
+def test_kitty_sockets_filters_non_socket_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    """同前綴的普通目錄不可誤連——unix socket 路徑上限約 104 bytes，不用 pytest 的 tmp_path。"""
+    sock_dir = tempfile.mkdtemp(prefix="ring-kitty-")
+    try:
+        sock_path = Path(sock_dir) / "kitty-1"
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(str(sock_path))
+        try:
+            (Path(sock_dir) / "kitty-fake-dir").mkdir()
+            monkeypatch.setattr("ring.focus.kitty._SOCKET_DIRS", (Path(sock_dir),))
+            monkeypatch.delenv("KITTY_LISTEN_ON", raising=False)
+
+            assert kitty.sockets() == [str(sock_path)]
+        finally:
+            server.close()
+    finally:
+        shutil.rmtree(sock_dir, ignore_errors=True)
+
+
+def test_kitty_registered_between_terminal_and_linux_wm() -> None:
+    order = list(focus._BUILTIN)
+    assert order.index("Terminal") < order.index("kitty") < order.index("linux-wm")
 
 
 # --- Neovim remote-expr 對真實 nvim 的 regression（沒裝 nvim 就 skip） ---

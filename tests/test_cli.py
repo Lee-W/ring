@@ -692,6 +692,99 @@ def test_doctor_focuser_availability(monkeypatch: pytest.MonkeyPatch, capsys: py
     assert "不可用" in terminal_line
 
 
+def test_doctor_kitty_focuser_availability(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """kitty 三種狀態：可用 / 不在 PATH / 在 PATH 但 remote control 沒開（無 socket）。"""
+    fake_src = _make_fake_source("hook", [])
+    monkeypatch.setattr("ring.sources._SOURCES", [fake_src])
+
+    fake_nt = _make_fake_notifier("terminal-notifier", True, True)
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [fake_nt])
+
+    monkeypatch.setattr("ring.hook.hook_status", lambda: _make_fake_hook_status(), raising=False)
+
+    kitty_f = _make_fake_focuser("kitty")
+    monkeypatch.setattr("ring.focus._FOCUSERS", [kitty_f])
+
+    def kitty_line(out: str) -> str:
+        return next(line for line in out.splitlines() if "kitty" in line)
+
+    with (
+        patch("shutil.which", lambda name: "/usr/bin/kitty" if name == "kitty" else None),
+        patch("ring.commands.doctor.kitty_sockets", lambda: ["/tmp/kitty-1"]),
+    ):
+        rc = cli.main(["doctor"])
+    line = kitty_line(capsys.readouterr().out)
+    assert rc == 0
+    assert "可用" in line and "不可用" not in line
+
+    with (
+        patch("shutil.which", lambda _name: None),
+        patch("ring.commands.doctor.kitty_sockets", lambda: []),
+    ):
+        rc = cli.main(["doctor"])
+    line = kitty_line(capsys.readouterr().out)
+    assert rc == 0
+    assert "不可用（kitty 不在 PATH）" in line
+
+    with (
+        patch("shutil.which", lambda name: "/usr/bin/kitty" if name == "kitty" else None),
+        patch("ring.commands.doctor.kitty_sockets", lambda: []),
+    ):
+        rc = cli.main(["doctor"])
+    line = kitty_line(capsys.readouterr().out)
+    assert rc == 0
+    assert "remote control 沒開" in line
+
+
+def test_doctor_linux_wm_focuser_availability(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """linux-wm 三種狀態：可用 / 非 Linux / Linux 但 wmctrl 不在 PATH。
+
+    regression：此前這條會落到 else 分支、被當成 macOS app 問 osascript，永遠顯示「不可用（app 沒在跑）」。
+    """
+    fake_src = _make_fake_source("hook", [])
+    monkeypatch.setattr("ring.sources._SOURCES", [fake_src])
+
+    fake_nt = _make_fake_notifier("terminal-notifier", True, True)
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [fake_nt])
+
+    monkeypatch.setattr("ring.hook.hook_status", lambda: _make_fake_hook_status(), raising=False)
+
+    linux_wm_f = _make_fake_focuser("linux-wm")
+    monkeypatch.setattr("ring.focus._FOCUSERS", [linux_wm_f])
+
+    def linux_wm_line(out: str) -> str:
+        return next(line for line in out.splitlines() if "linux-wm" in line)
+
+    with (
+        patch("ring.commands.doctor.sys.platform", "linux"),
+        patch("shutil.which", lambda name: "/usr/bin/wmctrl" if name == "wmctrl" else None),
+    ):
+        rc = cli.main(["doctor"])
+    line = linux_wm_line(capsys.readouterr().out)
+    assert rc == 0
+    assert "可用" in line and "不可用" not in line
+
+    with (
+        patch("ring.commands.doctor.sys.platform", "darwin"),
+        patch("shutil.which", lambda name: "/usr/bin/wmctrl" if name == "wmctrl" else None),
+    ):
+        rc = cli.main(["doctor"])
+    line = linux_wm_line(capsys.readouterr().out)
+    assert rc == 0
+    assert "不可用（非 Linux）" in line
+
+    with (
+        patch("ring.commands.doctor.sys.platform", "linux"),
+        patch("shutil.which", lambda _name: None),
+    ):
+        rc = cli.main(["doctor"])
+    line = linux_wm_line(capsys.readouterr().out)
+    assert rc == 0
+    assert "不可用（wmctrl 不在 PATH）" in line
+
+
 def test_doctor_help_does_not_run(capsys: pytest.CaptureFixture[str]) -> None:
     """ring doctor --help → rc=0，印 usage，不呼叫診斷主體。"""
     with patch.object(cli, "run_doctor") as mock_doctor:
