@@ -144,37 +144,53 @@ def _match_window(os_windows: Any, tty: str, pid_tty: dict[int, str]) -> int | N
     return None
 
 
+def resolve_window(tty: str) -> tuple[str, int] | None:
+    """tty → ``(socket 路徑, kitty window id)``；沒裝 kitty／沒 socket／配不到 → ``None``。
+
+    這段定位邏輯同時給 ``focus``（聚焦分頁）與 ``permission``（抓畫面／送鍵）兩邊共用，
+    kitty ``ls`` 的 JSON 形狀知識只此一份，兩邊不重寫第二份。
+    """
+    if not tty or shutil.which("kitty") is None:
+        return None
+    socks = sockets()
+    if not socks:
+        return None
+
+    pid_tty = _pid_tty_map()
+
+    for sock in socks:
+        result = _run(["kitty", "@", "--to", f"unix:{sock}", "ls"])
+        if result is None or result.returncode != 0:
+            continue
+        try:
+            os_windows = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            continue
+        win_id = _match_window(os_windows, tty, pid_tty)
+        if win_id is None:
+            continue
+        return sock, win_id
+    return None
+
+
 class KittyFocuser:
     name = "kitty"
 
     def try_focus(self, session: Session) -> tuple[bool, str] | None:
         tty = session.tty
-        if not tty or shutil.which("kitty") is None:
+        if not tty:
             return None
-        socks = sockets()
-        if not socks:
+        resolved = resolve_window(tty)
+        if resolved is None:
             return None
+        sock, win_id = resolved
 
-        pid_tty = _pid_tty_map()
-
-        for sock in socks:
-            result = _run(["kitty", "@", "--to", f"unix:{sock}", "ls"])
-            if result is None or result.returncode != 0:
-                continue
-            try:
-                os_windows = json.loads(result.stdout)
-            except json.JSONDecodeError:
-                continue
-            win_id = _match_window(os_windows, tty, pid_tty)
-            if win_id is None:
-                continue
-            focus_result = _run(["kitty", "@", "--to", f"unix:{sock}", "focus-window", "--match", f"id:{win_id}"])
-            if focus_result is None or focus_result.returncode != 0:
-                return False, f"kitty focus-window failed for id:{win_id}"
-            if sys.platform == "darwin" and shutil.which("osascript"):
-                osascript('tell application "kitty" to activate')
-            return True, f"{self.name} {win_id}"
-        return None  # 配不到視窗 → 交給別的 focuser，最後由 jump() 回報 tty 可能已關閉
+        focus_result = _run(["kitty", "@", "--to", f"unix:{sock}", "focus-window", "--match", f"id:{win_id}"])
+        if focus_result is None or focus_result.returncode != 0:
+            return False, f"kitty focus-window failed for id:{win_id}"
+        if sys.platform == "darwin" and shutil.which("osascript"):
+            osascript('tell application "kitty" to activate')
+        return True, f"{self.name} {win_id}"
 
 
 focuser = KittyFocuser()

@@ -567,9 +567,10 @@ class RingApp(App[None]):
     def action_permission_reply(self) -> None:
         """游標列的 session 掛著權限對話框時，就地讀出選項讓你選、代按，不必跳過去。
 
-        支援 tmux 內的 session，以及（macOS 上）直接開在 iTerm2 分頁、沒有 tmux 的
-        session——backend 選擇見 ``permission.select_backend``。解析不到可辨識的權限
-        對話框就只 toast、絕不送鍵——沒有對話框時按鍵會落進聊天輸入框變成文字。
+        支援 tmux 內的 session、remote control 有開且 tty 配得到 window 的 kitty
+        session，以及（macOS 上）直接開在 iTerm2 分頁、沒有 tmux 的 session——backend
+        選擇見 ``permission.select_backend``。解析不到可辨識的權限對話框就只 toast、
+        絕不送鍵——沒有對話框時按鍵會落進聊天輸入框變成文字。
         """
         self._clear_delete_armed()
         s = self._selected()
@@ -584,7 +585,8 @@ class RingApp(App[None]):
             else:
                 self._toast(
                     _(
-                        "{project}：沒有 tmux 座標，且非 macOS 上的 iTerm2 session，無法就地回覆",
+                        "{project}：抓不到這個 session 的畫面"
+                        "（不在 tmux，也不是可控的 iTerm2／kitty 視窗），無法就地回覆",
                         project=name,
                     )
                 )

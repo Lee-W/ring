@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-08-12 14:44+0800\n"
+"POT-Creation-Date: 2026-08-12 17:25+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -480,12 +480,12 @@ msgstr ""
 msgid "  ⚠ hook 可能失效：來源檔有更新但沒有 heartbeat"
 msgstr ""
 
-#: src/ring/tui.py:514 src/ring/tui.py:538 src/ring/tui.py:577
-#: src/ring/tui.py:668
+#: src/ring/tui.py:514 src/ring/tui.py:538 src/ring/tui.py:578
+#: src/ring/tui.py:670
 msgid "（沒有選到 session）"
 msgstr ""
 
-#: src/ring/tui.py:545 src/ring/tui.py:553 src/ring/tui.py:583
+#: src/ring/tui.py:545 src/ring/tui.py:553 src/ring/tui.py:584
 #, python-brace-format
 msgid "{project}：{msg}"
 msgstr ""
@@ -499,77 +499,77 @@ msgstr ""
 msgid "（沒有正在等待的 session）"
 msgstr ""
 
-#: src/ring/tui.py:587
+#: src/ring/tui.py:588
 #, python-brace-format
-msgid "{project}：沒有 tmux 座標，且非 macOS 上的 iTerm2 session，無法就地回覆"
+msgid "{project}：抓不到這個 session 的畫面（不在 tmux，也不是可控的 iTerm2／kitty 視窗），無法就地回覆"
 msgstr ""
 
-#: src/ring/tui.py:594
+#: src/ring/tui.py:596
 #, python-brace-format
 msgid "{project}：讀不到 {backend} 畫面"
 msgstr ""
 
-#: src/ring/tui.py:598
+#: src/ring/tui.py:600
 #, python-brace-format
 msgid "{project}：畫面上沒有可辨識的權限對話框，未送出任何按鍵"
 msgstr ""
 
-#: src/ring/tui.py:607
+#: src/ring/tui.py:609
 #, python-brace-format
 msgid "… {project}：正在回覆權限"
 msgstr ""
 
-#: src/ring/tui.py:650
+#: src/ring/tui.py:652
 #, python-brace-format
 msgid "→ {project}：已回覆權限（{option}）"
 msgstr ""
 
-#: src/ring/tui.py:654
+#: src/ring/tui.py:656
 #, python-brace-format
 msgid "{project}：權限對話框已不在，未送出任何按鍵"
 msgstr ""
 
-#: src/ring/tui.py:655
+#: src/ring/tui.py:657
 #, python-brace-format
 msgid "{project}：對話框內容已變化，未送出；請再按一次 p"
 msgstr ""
 
-#: src/ring/tui.py:656
+#: src/ring/tui.py:658
 #, python-brace-format
 msgid "{project}：tmux send-keys 失敗，沒能回覆"
 msgstr ""
 
-#: src/ring/tui.py:657
+#: src/ring/tui.py:659
 #, python-brace-format
 msgid "{project}：已送出但對話框還在，請跳過去確認"
 msgstr ""
 
-#: src/ring/tui.py:659
+#: src/ring/tui.py:661
 #, python-brace-format
 msgid "{project}：對話框已不在，數字落進輸入框，已補 Backspace 清掉"
 msgstr ""
 
-#: src/ring/tui.py:661
+#: src/ring/tui.py:663
 #, python-brace-format
 msgid "{project}：已送出但拿不到畫面驗證，請跳過去確認"
 msgstr ""
 
-#: src/ring/tui.py:676
+#: src/ring/tui.py:678
 #, python-brace-format
 msgid "再按一次 d 隱藏 {project}（有新活動會自動重新出現）"
 msgstr ""
 
-#: src/ring/tui.py:681
+#: src/ring/tui.py:683
 #, python-brace-format
 msgid "{project} 是仍在執行的 process，無法隱藏；請跳過去結束它"
 msgstr ""
 
-#: src/ring/tui.py:689
+#: src/ring/tui.py:691
 #, python-brace-format
 msgid "已隱藏 {project}，並清掉 RiNG 狀態；有新活動會自動重新出現"
 msgstr ""
 
-#: src/ring/tui.py:691
+#: src/ring/tui.py:693
 #, python-brace-format
 msgid "已隱藏 {project}（沒有 RiNG registry 可清；有新活動會自動重新出現）"
 msgstr ""
