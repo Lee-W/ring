@@ -96,14 +96,20 @@ event, such as another permission request, can mark the session as waiting again
   its `tty` via AppleScript, and both reads the screen and sends keys through `osascript`. The
   first use triggers the macOS Automation permission prompt ("allow control of iTerm2") — allow
   it once.
+- **Sessions in a kitty window** (no tmux): reads the screen with `kitty @ get-text` and sends
+  digits with `kitty @ send-text`, using the same `tty` → window matching as the "Jump To A
+  Session" kitty focuser above. **Prerequisite**: same as that kitty focuser — remote control
+  must be enabled. **Limits**: sessions inside tmux always use the tmux backend, never kitty;
+  the Linux path is untested.
 
 Safety first: if no recognizable dialog can be parsed (missing markers, numbering, or cursor),
 RiNG only shows a toast and **never sends a key** — without the dialog, keystrokes would land in
 the chat input box as text. If the dialog happens to vanish in the instant the digit is sent and
 the digit lands in the input box, RiNG sends a Backspace to clean it up and warns you.
 
-**Limits**: reading the screen requires a tmux pane coordinate, or (on macOS) an iTerm2 session
-with a detectable tty; for other sessions, press `Enter` to jump over and reply there.
+**Limits**: reading the screen requires a tmux pane coordinate, (on macOS) an iTerm2 session with
+a detectable tty, or a kitty session with remote control enabled and a matchable window; for
+other sessions, press `Enter` to jump over and reply there.
 
 ### Notifications
 

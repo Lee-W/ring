@@ -716,8 +716,8 @@ msgstr "Reply to the permission request from {project}"
 msgid "Enter 或數字鍵送出、Esc 取消"
 msgstr "Enter or a digit key sends, Esc cancels"
 
-msgid "{project}：沒有 tmux 座標，且非 macOS 上的 iTerm2 session，無法就地回覆"
-msgstr "{project}: no tmux coordinates, and not a macOS iTerm2 session either — cannot reply in place"
+msgid "{project}：抓不到這個 session 的畫面（不在 tmux，也不是可控的 iTerm2／kitty 視窗），無法就地回覆"
+msgstr "{project}: cannot read this session's screen (not in tmux, and not a controllable iTerm2/kitty window) — cannot reply in place"
 
 msgid "{project}：讀不到 {backend} 畫面"
 msgstr "{project}: cannot read the {backend} screen"

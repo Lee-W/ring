@@ -10,10 +10,11 @@ TUI 開浮層讓你選 → ``send_permission_reply()`` 送出前再抓一次確�
 Backspace 清掉。
 
 ``send_permission_reply()`` 的流程本體只有一份，實際怎麼抓畫面／怎麼送鍵由
-``PermissionBackend``（tmux / iTerm2）決定——照 ``focus/base.py`` 的 Protocol 形狀走。
+``PermissionBackend``（tmux / iTerm2 / kitty）決定——照 ``focus/base.py`` 的 Protocol 形狀走。
 tmux 互動集中在這裡（照 ``focus/tmux.py`` 的形狀走 subprocess），iTerm2 互動走
-``ring.osascript``（照 ``focus/applescript.py`` 的形狀）。解析器是純函式，測試直接餵
-PoC 抓下來的真實畫面（``tests/fixtures/permission/``）。
+``ring.osascript``（照 ``focus/applescript.py`` 的形狀），kitty 互動走 ``kitty @``
+remote control（定位邏輯與 ``focus/kitty.py`` 的 focuser 共用 ``resolve_window()``）。
+解析器是純函式，測試直接餵 PoC 抓下來的真實畫面（``tests/fixtures/permission/``）。
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
 
+from ring.focus.kitty import resolve_window as kitty_resolve_window
 from ring.osascript import osascript
 from ring.registry import Session
 
@@ -275,14 +277,77 @@ class ITermBackend:
         return iterm_send_backspace(self.tty)
 
 
-def select_backend(session: Session) -> PermissionBackend | None:
-    """依 session 現有座標選 backend：tmux 座標優先，其次 macOS 上有 tty 就用 iTerm2。
+# ---------------------------------------------------------------------------
+# kitty 互動（走 kitty @ remote control，測試一律 mock）
+# ---------------------------------------------------------------------------
 
-    都沒有 → ``None``，呼叫端走既有的 toast（不送鍵）路徑。
+
+def _run_kitty(args: list[str]) -> subprocess.CompletedProcess[str] | None:
+    if not shutil.which("kitty"):
+        return None
+    try:
+        return subprocess.run(args, capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def kitty_capture(socket_path: str, window_id: int) -> str | None:
+    """抓 kitty window 目前的可見畫面（``get-text`` 預設 extent=screen、ansi=no）；失敗 → ``None``。"""
+    result = _run_kitty(["kitty", "@", "--to", f"unix:{socket_path}", "get-text", "--match", f"id:{window_id}"])
+    if result is None or result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def kitty_send_digit(socket_path: str, window_id: int, digit: str) -> bool:
+    """對 kitty window 送一個數字——``send-text`` 不會自動加 newline。"""
+    result = _run_kitty(
+        ["kitty", "@", "--to", f"unix:{socket_path}", "send-text", "--match", f"id:{window_id}", "--", digit]
+    )
+    return result is not None and result.returncode == 0
+
+
+def kitty_send_backspace(socket_path: str, window_id: int) -> bool:
+    """對 kitty window 送 Backspace（誤送補救用）；用 ``send-key`` 送出 kitty 自己對這顆鍵的翻譯（``0x7f``）。"""
+    result = _run_kitty(
+        ["kitty", "@", "--to", f"unix:{socket_path}", "send-key", "--match", f"id:{window_id}", "--", "backspace"]
+    )
+    return result is not None and result.returncode == 0
+
+
+@dataclass(frozen=True)
+class KittyBackend:
+    """kitty window 的 backend：依 ``(socket, window_id)`` 抓畫面／送鍵，全程走 ``kitty @`` remote control。"""
+
+    socket_path: str
+    window_id: int
+    name: str = "kitty"
+
+    def capture(self) -> str | None:
+        return kitty_capture(self.socket_path, self.window_id)
+
+    def send_digit(self, digit: str) -> bool:
+        return kitty_send_digit(self.socket_path, self.window_id, digit)
+
+    def send_backspace(self) -> bool:
+        return kitty_send_backspace(self.socket_path, self.window_id)
+
+
+def select_backend(session: Session) -> PermissionBackend | None:
+    """依 session 現有座標選 backend：tmux 座標優先，其次確認 tty 是否屬於某個 kitty window，
+    最後才是 macOS 上的 iTerm2。
+
+    都沒有 → ``None``，呼叫端走既有的 toast（不送鍵）路徑。kitty 這關會跑子行程
+    （每次按 ``p`` 一次，不在刷新迴圈裡），且不限平台——Linux 上的 kitty 也吃同一套協定。
     """
     target = session.tmux_pane or session.tmux_target
     if target:
         return TmuxBackend(target)
+    if session.tty:
+        resolved = kitty_resolve_window(session.tty)
+        if resolved is not None:
+            socket_path, window_id = resolved
+            return KittyBackend(socket_path, window_id)
     if session.tty and sys.platform == "darwin":
         return ITermBackend(session.tty)
     return None

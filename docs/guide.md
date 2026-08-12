@@ -101,13 +101,17 @@ zero-config 下每個專案只開一個 session 時也對得上。Codex 沒裝 h
 - **macOS 上直接開在 iTerm2 分頁的 session**（沒有 tmux）：用 session 的 `tty` 透過
   AppleScript 找到對應 iTerm2 分頁，抓畫面、送鍵都走 `osascript`。第一次用時 macOS
   會跳「允許控制 iTerm2」的自動化授權框，允許一次即可。
+- **kitty 視窗裡的 session**（沒有 tmux）：用 `kitty @ get-text` 抓畫面、`kitty @ send-text`
+  送數字，跟上面「跳轉」用的是同一套 `tty` → window 定位。**前置條件**同上面 kitty focuser
+  那段——remote control 要開。**限制**：tmux 內的 session 一律走 tmux backend，
+  不會被 kitty 搶走；Linux 端尚未實測。
 
 安全底線：畫面上解析不到可辨識的對話框（標記、編號、游標任一缺）就只提示、**絕不送鍵**——
 對話框不在時按鍵會落進聊天輸入框變成文字；萬一送出的瞬間對話框剛好消失、數字落進輸入框，
 RiNG 會自動補一個 Backspace 清掉並警告你。
 
-**限制**：要有 tmux pane 座標、或（macOS 上）測得到 tty 的 iTerm2 session 才抓得到畫面；
-其餘 session 請按 `Enter` 跳過去回。
+**限制**：要有 tmux pane 座標、（macOS 上）測得到 tty 的 iTerm2 session、或 remote control
+有開且配得到 window 的 kitty session，才抓得到畫面；其餘 session 請按 `Enter` 跳過去回。
 
 ### 等你時發通知
 

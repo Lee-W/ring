@@ -25,8 +25,10 @@ from pathlib import Path
 import pytest
 
 import ring.permission as permission
+from ring.focus import kitty as focus_kitty
 from ring.permission import (
     ITermBackend,
+    KittyBackend,
     PermissionDialog,
     ReplyOutcome,
     TmuxBackend,
@@ -42,6 +44,34 @@ _FIXTURES = Path(__file__).parent / "fixtures" / "permission"
 
 def _fixture(name: str) -> str:
     return (_FIXTURES / name).read_text(encoding="utf-8")
+
+
+@pytest.fixture(autouse=True)
+def _no_kitty_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """預設「沒有 kitty」：本機常駐的真實 kitty socket 不該讓這個檔的測試依機器狀態飄。
+
+    kitty 專屬測試（見下方 kitty 區段）自己 override `permission.kitty_resolve_window`。
+    """
+    monkeypatch.setattr(permission, "kitty_resolve_window", lambda tty: None)
+
+
+def _wire_kitty(monkeypatch: pytest.MonkeyPatch, results: list[tuple[int, str]]) -> list[list[str]]:
+    """把 kitty 的 subprocess 換成腳本：results 依序回放 (returncode, stdout)，記錄每次 argv。"""
+    calls: list[list[str]] = []
+
+    class _Result:
+        def __init__(self, returncode: int, stdout: str) -> None:
+            self.returncode = returncode
+            self.stdout = stdout
+
+    def fake_run(cmd: list[str], **kwargs: object) -> _Result:
+        calls.append(cmd)
+        rc, out = results.pop(0) if results else (1, "")
+        return _Result(rc, out)
+
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/kitty")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    return calls
 
 
 # ---------------------------------------------------------------------------
@@ -364,3 +394,124 @@ def test_select_backend_none_on_non_macos_without_tmux(monkeypatch: pytest.Monke
     """有 tty 但平台不是 macOS → 不接（iTerm2 backend 僅支援 macOS）。"""
     monkeypatch.setattr(sys, "platform", "linux")
     assert select_backend(_session(tty="/dev/ttys007")) is None
+
+
+# ---------------------------------------------------------------------------
+# kitty backend：抓畫面／送鍵一律 mock（_wire_kitty），select_backend 的定位結果
+# 直接 monkeypatch `permission.kitty_resolve_window`（定位邏輯本身在 test_focus.py 測）。
+# ---------------------------------------------------------------------------
+
+
+def test_select_backend_no_kitty_installed_falls_back_to_iterm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """1. 沒裝 kitty（which 回 None）→ select_backend() 不回 KittyBackend；macOS ＋ tty 時仍回 ITermBackend。"""
+    monkeypatch.setattr(permission, "kitty_resolve_window", focus_kitty.resolve_window)
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    backend = select_backend(_session(tty="/dev/ttys007"))
+    assert isinstance(backend, ITermBackend)
+    assert backend.tty == "/dev/ttys007"
+
+
+def test_select_backend_kitty_cannot_resolve_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """2. 有 kitty 但配不到 window（kitty_resolve_window 回 None）→ macOS 仍回 ITermBackend；非 macOS 回 None。"""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    backend = select_backend(_session(tty="/dev/ttys007"))
+    assert isinstance(backend, ITermBackend)
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert select_backend(_session(tty="/dev/ttys007")) is None
+
+
+def test_select_backend_returns_kitty_when_resolved(monkeypatch: pytest.MonkeyPatch) -> None:
+    """3. 配得到 window → 回 KittyBackend，且 socket_path / window_id 等於 resolve 的結果。"""
+    monkeypatch.setattr(permission, "kitty_resolve_window", lambda tty: ("/tmp/kitty-1", 3))
+    backend = select_backend(_session(tty="/dev/ttys007"))
+    assert isinstance(backend, KittyBackend)
+    assert backend.socket_path == "/tmp/kitty-1"
+    assert backend.window_id == 3
+
+
+def test_select_backend_prefers_tmux_even_when_kitty_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
+    """4. tmux 座標存在時仍優先 TmuxBackend，即使 kitty 也配得到。"""
+    monkeypatch.setattr(permission, "kitty_resolve_window", lambda tty: ("/tmp/kitty-1", 3))
+    backend = select_backend(_session(tmux_target="main:1.0", tty="/dev/ttys007"))
+    assert isinstance(backend, TmuxBackend)
+    assert backend.target == "main:1.0"
+
+
+def test_select_backend_kitty_not_limited_to_macos(monkeypatch: pytest.MonkeyPatch) -> None:
+    """5. 非 macOS ＋ 配得到 kitty window → 回 KittyBackend（kitty 這關不被 darwin 判斷擋住）。"""
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(permission, "kitty_resolve_window", lambda tty: ("/tmp/kitty-1", 3))
+    backend = select_backend(_session(tty="/dev/ttys007"))
+    assert isinstance(backend, KittyBackend)
+
+
+def test_kitty_capture_argv_exact(monkeypatch: pytest.MonkeyPatch) -> None:
+    """6. capture() 成功 → 回 fixture 內容，argv 逐字等於指令（沒有 --extent / --ansi）。"""
+    calls = _wire_kitty(monkeypatch, [(0, _fixture("dialog-bash.txt"))])
+    assert permission.kitty_capture("/tmp/kitty-1", 3) == _fixture("dialog-bash.txt")
+    assert calls == [["kitty", "@", "--to", "unix:/tmp/kitty-1", "get-text", "--match", "id:3"]]
+
+
+def test_kitty_capture_failure_returns_none_and_blocks_send(monkeypatch: pytest.MonkeyPatch) -> None:
+    """7. get-text 非 0（或 which 回 None）→ capture() 回 None；接進 send_permission_reply()
+    → NO_DIALOG 且完全沒有送鍵（argv 記錄裡沒有 send-text）。"""
+    _wire_kitty(monkeypatch, [(1, "")])
+    assert permission.kitty_capture("/tmp/kitty-1", 3) is None
+
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    assert permission.kitty_capture("/tmp/kitty-1", 3) is None
+
+    calls = _wire_kitty(monkeypatch, [(1, "")])
+    backend = KittyBackend("/tmp/kitty-1", 3)
+    outcome = send_permission_reply(backend, _dialog(), 1, delay=0)
+    assert outcome is ReplyOutcome.NO_DIALOG
+    assert not any("send-text" in arg for call in calls for arg in call)
+
+
+def test_kitty_send_digit_argv_exact_no_newline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """8. send_digit("2") 的 argv 逐字等於指令；任何一個參數都不含 \\n。"""
+    calls = _wire_kitty(monkeypatch, [(0, "")])
+    assert permission.kitty_send_digit("/tmp/kitty-1", 3, "2") is True
+    assert calls == [["kitty", "@", "--to", "unix:/tmp/kitty-1", "send-text", "--match", "id:3", "--", "2"]]
+    assert not any("\n" in arg for arg in calls[0])
+
+
+def test_kitty_send_backspace_argv_exact(monkeypatch: pytest.MonkeyPatch) -> None:
+    """9. send_backspace() 送出 send-key -- backspace（拍板 A 的位元組來源）。"""
+    calls = _wire_kitty(monkeypatch, [(0, "")])
+    assert permission.kitty_send_backspace("/tmp/kitty-1", 3) is True
+    assert calls == [["kitty", "@", "--to", "unix:/tmp/kitty-1", "send-key", "--match", "id:3", "--", "backspace"]]
+
+
+def test_kitty_full_flow_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    """10a. 整條流程：KittyBackend 跑 send_permission_reply(delay=0) → OK。"""
+    _wire_kitty(
+        monkeypatch,
+        [
+            (0, _fixture("dialog-bash.txt")),
+            (0, ""),
+            (0, _fixture("no-dialog-after-reply.txt")),
+        ],
+    )
+    backend = KittyBackend("/tmp/kitty-1", 3)
+    outcome = send_permission_reply(backend, _dialog(), 1, delay=0)
+    assert outcome is ReplyOutcome.OK
+
+
+def test_kitty_full_flow_misfire_sends_backspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """10b. 誤送：dialog-bash → no-dialog-misfire → MISFIRE，且有送出 backspace argv。"""
+    calls = _wire_kitty(
+        monkeypatch,
+        [
+            (0, _fixture("dialog-bash.txt")),
+            (0, ""),
+            (0, _fixture("no-dialog-misfire.txt")),
+            (0, ""),
+        ],
+    )
+    backend = KittyBackend("/tmp/kitty-1", 3)
+    outcome = send_permission_reply(backend, _dialog(), 2, delay=0)
+    assert outcome is ReplyOutcome.MISFIRE
+    assert calls[-1] == ["kitty", "@", "--to", "unix:/tmp/kitty-1", "send-key", "--match", "id:3", "--", "backspace"]
