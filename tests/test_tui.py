@@ -840,6 +840,55 @@ async def test_two_digit_option_not_auto_pressed(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.asyncio
+async def test_two_digit_cap_trips_exactly_at_ten(monkeypatch: pytest.MonkeyPatch) -> None:
+    """cap 分界點本身：`_submit` 的判準是 `number >= 10`——如果被誤寫成 `> 10`，
+    編號正好 10 的選項會漏過防護、真的送出按鍵。這條專門守編號 10（不是 11）。"""
+    sessions = [Session("a", "/x/maigo", Status.WAITING, 0.0, "→ Bash", "hook", tmux_target="main:1.0")]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+    monkeypatch.setattr(permission, "capture_pane", lambda target: _eleven_option_screen())
+    replied: list[int] = []
+
+    def fake_reply(target: str, dialog: permission.PermissionDialog, number: int) -> permission.ReplyOutcome:
+        replied.append(number)
+        return permission.ReplyOutcome.OK
+
+    monkeypatch.setattr(permission, "send_permission_reply", fake_reply)
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        await pilot.press(*(["j"] * 9))  # highlighted 0（選項 1）→ 9（選項 10）
+        await pilot.press("enter")
+        assert replied == []  # 沒有代按
+
+
+@pytest.mark.asyncio
+async def test_option_nine_just_below_cap_is_sent_normally(monkeypatch: pytest.MonkeyPatch) -> None:
+    """cap 分界點的鄰居：編號 9（一位數）必須正常送出——跟上一條成對，證明 `>= 10` 真的是
+    在 10 這個點翻轉，不是被『按到很後面的選項』這種巧合蓋過去。"""
+    sessions = [Session("a", "/x/maigo", Status.WAITING, 0.0, "→ Bash", "hook", tmux_target="main:1.0")]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+    monkeypatch.setattr(permission, "capture_pane", lambda target: _eleven_option_screen())
+    replied: list[int] = []
+
+    def fake_reply(target: str, dialog: permission.PermissionDialog, number: int) -> permission.ReplyOutcome:
+        replied.append(number)
+        return permission.ReplyOutcome.OK
+
+    monkeypatch.setattr(permission, "send_permission_reply", fake_reply)
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        await pilot.press(*(["j"] * 8))  # highlighted 0（選項 1）→ 8（選項 9）
+        await pilot.press("enter")
+        await pilot.pause()
+        assert replied == [9]  # 一位數編號照常送出
+
+
+@pytest.mark.asyncio
 async def test_permission_modal_vim_keys_move_option_cursor(monkeypatch: pytest.MonkeyPatch) -> None:
     """浮層的 OptionList 支援 vim 風 j/k/g/G 導覽，跟主表格同一組鍵。"""
     sessions = [Session("a", "/x/maigo", Status.WAITING, 0.0, "→ Bash", "hook", tmux_target="main:1.0")]
