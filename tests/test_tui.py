@@ -797,6 +797,97 @@ async def test_permission_reply_modal_lists_options_and_esc_cancels(monkeypatch:
         assert replied == []
 
 
+def _eleven_option_screen() -> str:
+    """程式內組一個 11 選項的權限對話框畫面，跟 test_permission.py 的同型 fixture 同形。"""
+    lines = [
+        "",
+        " Do you want to proceed?",
+        " ❯ 1. Yes",
+        *(f"   {n}. Option {n}" for n in range(2, 12)),
+        "",
+        " Esc to cancel · Tab to amend · ctrl+e to explain",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+@pytest.mark.asyncio
+async def test_two_digit_option_not_auto_pressed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """編號 ≥10 的選項：send_permission_reply 不被呼叫，status 顯示新的兩位數警告訊息，浮層關閉。"""
+    sessions = [Session("a", "/x/maigo", Status.WAITING, 0.0, "→ Bash", "hook", tmux_target="main:1.0")]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+    monkeypatch.setattr(permission, "capture_pane", lambda target: _eleven_option_screen())
+    replied: list[int] = []
+
+    def fake_reply(target: str, dialog: permission.PermissionDialog, number: int) -> permission.ReplyOutcome:
+        replied.append(number)
+        return permission.ReplyOutcome.OK
+
+    monkeypatch.setattr(permission, "send_permission_reply", fake_reply)
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        assert isinstance(app.screen, tui._PermissionModal)
+        await pilot.press("G")  # 跳到最後一個選項（編號 11）
+        await pilot.press("enter")
+        assert replied == []  # 沒有代按
+        from textual.widgets import Static
+
+        status = str(app.query_one("#status", Static).render())
+        assert "two-digit" in status
+        assert not isinstance(app.screen, tui._PermissionModal)
+
+
+@pytest.mark.asyncio
+async def test_permission_modal_vim_keys_move_option_cursor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """浮層的 OptionList 支援 vim 風 j/k/g/G 導覽，跟主表格同一組鍵。"""
+    sessions = [Session("a", "/x/maigo", Status.WAITING, 0.0, "→ Bash", "hook", tmux_target="main:1.0")]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+    monkeypatch.setattr(permission, "capture_pane", lambda target: _perm_screen("dialog-bash.txt"))
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        from textual.widgets import OptionList
+
+        option_list = app.screen.query_one(OptionList)
+        assert option_list.highlighted == 0  # 實測初始值：mount 時聚焦第一個選項
+        await pilot.press("j")  # 下移
+        assert option_list.highlighted == 1
+        await pilot.press("k")  # 上移
+        assert option_list.highlighted == 0
+        await pilot.press("G")  # 跳到最後一個選項
+        assert option_list.highlighted == 2
+        await pilot.press("g")  # 跳回第一個選項
+        assert option_list.highlighted == 0
+
+
+@pytest.mark.asyncio
+async def test_permission_modal_vim_j_then_enter_sends_moved_to_option(monkeypatch: pytest.MonkeyPatch) -> None:
+    """按 j 移動游標後再按 Enter，送出的是移動後那個選項，不是初始選項。"""
+    sessions = [Session("a", "/x/maigo", Status.WAITING, 0.0, "→ Bash", "hook", tmux_target="main:1.0")]
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [1])
+    monkeypatch.setattr(permission, "capture_pane", lambda target: _perm_screen("dialog-bash.txt"))
+    replied: list[int] = []
+
+    def fake_reply(target: str, dialog: permission.PermissionDialog, number: int) -> permission.ReplyOutcome:
+        replied.append(number)
+        return permission.ReplyOutcome.OK
+
+    monkeypatch.setattr(permission, "send_permission_reply", fake_reply)
+
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        await pilot.press("j")  # 移到選項 2
+        await pilot.press("enter")
+        await pilot.pause()
+        assert replied == [2]
+
+
 @pytest.mark.asyncio
 async def test_agent_kind_badge_shown_in_status_cell(monkeypatch: pytest.MonkeyPatch) -> None:
     """kind="agent" 的 session 在 status cell 尾綴加 ⚙ badge。"""

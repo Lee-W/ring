@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-08-12 19:34+0800\n"
+"POT-Creation-Date: 2026-08-12 23:28+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -481,7 +481,7 @@ msgid "  ⚠ hook 可能失效：來源檔有更新但沒有 heartbeat"
 msgstr ""
 
 #: src/ring/tui.py:514 src/ring/tui.py:538 src/ring/tui.py:578
-#: src/ring/tui.py:670
+#: src/ring/tui.py:682
 msgid "（沒有選到 session）"
 msgstr ""
 
@@ -514,62 +514,67 @@ msgstr ""
 msgid "{project}：畫面上沒有可辨識的權限對話框，未送出任何按鍵"
 msgstr ""
 
-#: src/ring/tui.py:609
+#: src/ring/tui.py:611
+#, python-brace-format
+msgid "{project}：選項 {number} 是兩位數編號，RiNG 不代按（送出的第一個數字會先選中別的選項）；請按 Enter 跳過去自己回"
+msgstr ""
+
+#: src/ring/tui.py:621
 #, python-brace-format
 msgid "… {project}：正在回覆權限"
 msgstr ""
 
-#: src/ring/tui.py:652
+#: src/ring/tui.py:664
 #, python-brace-format
 msgid "→ {project}：已回覆權限（{option}）"
 msgstr ""
 
-#: src/ring/tui.py:656
+#: src/ring/tui.py:668
 #, python-brace-format
 msgid "{project}：權限對話框已不在，未送出任何按鍵"
 msgstr ""
 
-#: src/ring/tui.py:657
+#: src/ring/tui.py:669
 #, python-brace-format
 msgid "{project}：對話框內容已變化，未送出；請再按一次 p"
 msgstr ""
 
-#: src/ring/tui.py:658
+#: src/ring/tui.py:670
 #, python-brace-format
 msgid "{project}：tmux send-keys 失敗，沒能回覆"
 msgstr ""
 
-#: src/ring/tui.py:659
+#: src/ring/tui.py:671
 #, python-brace-format
 msgid "{project}：已送出但對話框還在，請跳過去確認"
 msgstr ""
 
-#: src/ring/tui.py:661
+#: src/ring/tui.py:673
 #, python-brace-format
 msgid "{project}：對話框已不在，數字落進輸入框，已補 Backspace 清掉"
 msgstr ""
 
-#: src/ring/tui.py:663
+#: src/ring/tui.py:675
 #, python-brace-format
 msgid "{project}：已送出但拿不到畫面驗證，請跳過去確認"
 msgstr ""
 
-#: src/ring/tui.py:678
+#: src/ring/tui.py:690
 #, python-brace-format
 msgid "再按一次 d 隱藏 {project}（有新活動會自動重新出現）"
 msgstr ""
 
-#: src/ring/tui.py:683
+#: src/ring/tui.py:695
 #, python-brace-format
 msgid "{project} 是仍在執行的 process，無法隱藏；請跳過去結束它"
 msgstr ""
 
-#: src/ring/tui.py:691
+#: src/ring/tui.py:703
 #, python-brace-format
 msgid "已隱藏 {project}，並清掉 RiNG 狀態；有新活動會自動重新出現"
 msgstr ""
 
-#: src/ring/tui.py:693
+#: src/ring/tui.py:705
 #, python-brace-format
 msgid "已隱藏 {project}（沒有 RiNG registry 可清；有新活動會自動重新出現）"
 msgstr ""

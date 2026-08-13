@@ -3,8 +3,8 @@
 需要 textual（``pip install 'ring[tui]'``）。沒裝時 CLI 會自動退回 Rich poll。
 
 鍵：↑/↓（或 vim 的 j/k、g/G 跳頭尾）選 session、Enter/Space 跳到它所在的終端、
-p 就地回覆權限請求（tmux 內的 session）、a 切換是否顯示已離場、dd 隱藏 session
-（有新活動會自動重新出現）、r 刷新、q 離場。
+p 就地回覆權限請求（tmux 內的 session；回覆浮層裡同一組 j/k/g/G 也能用）、
+a 切換是否顯示已離場、dd 隱藏 session（有新活動會自動重新出現）、r 刷新、q 離場。
 """
 
 from __future__ import annotations
@@ -110,8 +110,25 @@ class _NameModal(ModalScreen[str | None]):
         self.dismiss(None)
 
 
+class _PermissionOptionList(OptionList):
+    """權限回覆浮層的選項清單。在 ``OptionList`` 既有的方向鍵之外，加上 vim 風的
+    j/k/g/G 導覽——跟主表格 ``_Grid`` 借同一組既有 action：j/k=cursor_down/up、
+    g/G=first/last。
+
+    全部 ``show=False``——footer 保持乾淨，這些只是給手習慣 vim 的人的隱藏快捷。
+    """
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("j", "cursor_down", show=False),
+        Binding("k", "cursor_up", show=False),
+        Binding("g", "first", show=False),
+        Binding("G", "last", show=False),
+    ]
+
+
 class _PermissionModal(ModalScreen[int | None]):
-    """就地回覆權限請求的浮層：列出對話框原文選項，↑/↓＋Enter 或直接按數字鍵選、Esc 取消。
+    """就地回覆權限請求的浮層：列出對話框原文選項，↑/↓（或 vim 的 j/k、g/G 跳頭尾）＋
+    Enter 或直接按數字鍵選、Esc 取消。
 
     dismiss 回傳：選項編號（int）或 ``None``（取消，不送任何鍵）。
     """
@@ -146,7 +163,7 @@ class _PermissionModal(ModalScreen[int | None]):
             context = " · ".join(part for part in (self._dialog.title, self._dialog.question) if part)
             if context:
                 yield Static(Text(context, style="grey50"))
-            yield OptionList(*(f"{n}. {text}" for n, text in self._dialog.options))
+            yield _PermissionOptionList(*(f"{n}. {text}" for n, text in self._dialog.options))
             yield Static(Text(_("Enter 或數字鍵送出、Esc 取消"), style="grey50"))
 
     def on_mount(self) -> None:
@@ -603,6 +620,18 @@ class RingApp(App[None]):
         def _submit(number: int | None) -> None:
             if number is None:
                 return  # Esc 取消，不送
+            if number >= 10:
+                # 送鍵是 backend.send_digit(str(number))：送 "10" 會先送出 "1"，
+                # 對話框上按 1 就等於選了選項 1——解析得出來不等於代按得安全。
+                self._toast(
+                    _(
+                        "{project}：選項 {number} 是兩位數編號，RiNG 不代按"
+                        "（送出的第一個數字會先選中別的選項）；請按 Enter 跳過去自己回",
+                        project=name,
+                        number=number,
+                    )
+                )
+                return
             if s.session_id in self._permission_replies_inflight:
                 return
             self._permission_replies_inflight.add(s.session_id)
