@@ -236,6 +236,40 @@ def test_parse_three_digit_number_not_treated_as_option() -> None:
     assert parse_permission_dialog(screen) is None
 
 
+def test_parse_continuation_without_owning_option_returns_none() -> None:
+    """安全閥：續行被收進 pending 之後，若一路收到畫面頂端都找不到歸屬的編號列，
+    必須回 None（寧可讓使用者自己去看，也不要拼出一份看起來合理但錯的選項清單）。
+
+    這條插在問句與選項 1 之間——有縮排、不長得像任何毒藥形狀（不是編號列、不含 ❯、
+    不是 footer/分隔線/標題列、不以 ? 結尾），所以會先被收進 pending 續行緩衝；
+    再往上撞到以 ? 結尾的問句列才中斷，此時 pending 非空，觸發安全閥。"""
+    base = _fixture("dialog-bash.txt")
+    old = " Do you want to proceed?\n ❯ 1. Yes\n"
+    new = " Do you want to proceed?\n   stray line with no owning option\n ❯ 1. Yes\n"
+    assert old in base
+    assert parse_permission_dialog(base.replace(old, new)) is None
+
+
+def test_parse_continuation_exhausts_screen_without_owning_option_returns_none() -> None:
+    """同一道安全閥，另一種觸發路徑：續行一路收到**畫面最頂端**（沒有問句、沒有其他結構列
+    擋在上面），迴圈耗盡整份畫面（``i`` 減到 -1）而不是撞到 break——`pending` 一樣非空，
+    一樣必須回 None。這條專門守住「迴圈自然耗盡」跟「撞到停止列 break」是兩條不同的路徑，
+    兩條都要回 None，不能只顧到其中一條。"""
+    screen = (
+        "\n".join(
+            [
+                "   stray line with no owning option",
+                " ❯ 1. Yes",
+                "   2. No",
+                "",
+                " Esc to cancel · Tab to amend · ctrl+e to explain",
+            ]
+        )
+        + "\n"
+    )
+    assert parse_permission_dialog(screen) is None
+
+
 # ---------------------------------------------------------------------------
 # 送鍵流程：mock capture / send（不碰真 tmux）
 # ---------------------------------------------------------------------------
