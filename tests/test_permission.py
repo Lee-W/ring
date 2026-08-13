@@ -8,6 +8,8 @@ tmux（PoC：claude 2.1.206 + tmux 3.7b，用 ``tmux capture-pane -p`` 抓下來
 - ``dialog-subagent.txt``：背景 subagent 的對話框（標題帶 "from the general-purpose agent"）
 - ``no-dialog-misfire.txt``：對話框不在時誤送「2」、數字落進聊天輸入框的樣子
 - ``no-dialog-after-reply.txt``：回覆成功後對話框消失、模型繼續跑的畫面
+- ``dialog-wrapped-option.txt``：**手工模擬折行，非真實截圖**——由 ``dialog-bash.txt`` 手改，
+  option 2 的文字撐長折成兩行（縮排 6 格），驗證「選項一折行就整份讀不到」的修法
 
 iTerm2（PoC：同一版 claude，直接開在 iTerm2 分頁、沒有 tmux，用 ``contents of session``
 抓下來）：
@@ -123,6 +125,115 @@ def test_digit_in_input_line() -> None:
     assert not digit_in_input_line(misfire, "3")
     # 對話框在場時「❯ 1. Yes」是游標選項，不是輸入框誤送。
     assert not digit_in_input_line(_fixture("dialog-bash.txt"), "1")
+
+
+# ---------------------------------------------------------------------------
+# 折行：選項文字跨行時仍要能正確讀出（且放寬判準不能誤吃別的結構列）
+# ---------------------------------------------------------------------------
+
+_WRAP_MARKER = "   2. Yes, and always allow access to poc-tmux-reply/ from this project\n"
+
+
+def test_parse_wrapped_option_middle() -> None:
+    """正向 A：中間選項（option 2）折行，續行縮排 6 格（對齊選項文字起點）。"""
+    dialog = parse_permission_dialog(_fixture("dialog-wrapped-option.txt"))
+    assert dialog is not None
+    assert [n for n, _text in dialog.options] == [1, 2, 3]
+    assert dialog.options[1][1] == "Yes, and always allow access to poc-tmux-reply/ from this project"
+    assert dialog.question == "Do you want to proceed?"
+    assert dialog.title == "Bash command"
+
+
+def test_parse_wrapped_option_last() -> None:
+    """正向 B：最後一個選項（option 3，footer 正上方）折行，仍要收集齊 3 個選項。"""
+    base = _fixture("dialog-bash.txt")
+    old = "   3. No\n"
+    new = "   3. No, actually let me think about this more carefully before\n      deciding\n"
+    assert old in base
+    dialog = parse_permission_dialog(base.replace(old, new))
+    assert dialog is not None
+    assert len(dialog.options) == 3
+    assert dialog.options[2][1] == "No, actually let me think about this more carefully before deciding"
+
+
+def test_parse_wrapped_option_2space_indent_matches_6space() -> None:
+    """正向 C：續行縮排格數不設限——2 格（模仿 dialog-bash.txt:17-18 問句折行樣式）
+    跟 A 用的 6 格結果逐字相同。"""
+    fixture_a = parse_permission_dialog(_fixture("dialog-wrapped-option.txt"))
+    base = _fixture("dialog-bash.txt")
+    two_space = "   2. Yes, and always allow access to poc-tmux-reply/ from this\n  project\n"
+    assert _WRAP_MARKER in base
+    dialog_2 = parse_permission_dialog(base.replace(_WRAP_MARKER, two_space))
+    assert dialog_2 == fixture_a
+
+
+@pytest.mark.parametrize(
+    "poison",
+    [
+        "   Esc to cancel · Tab to amend",
+        "   " + "─" * 12,
+        "   ❯ not an option",
+        "   Is this ok?",
+        "Not indented",
+    ],
+    ids=["footer-shape", "separator", "cursor-input-line", "question-shape", "not-indented"],
+)
+def test_parse_continuation_poison_lines_break_collection(poison: str) -> None:
+    """負向（比正向更重要）：五種「長得像續行、其實是別的結構列」的東西插進選項之間，
+    都必須讓收集當場中斷 → 選項不足 2 → 回 None。"""
+    base = _fixture("dialog-bash.txt")
+    assert _WRAP_MARKER in base
+    screen = base.replace(_WRAP_MARKER, _WRAP_MARKER + poison + "\n")
+    assert parse_permission_dialog(screen) is None
+
+
+def test_parse_continuation_benign_line_is_absorbed() -> None:
+    """負向對照：不長得像任何結構列的縮排文字，會被當成良性續行併入前一個選項——
+    證明排除規則是「有選擇性」的，不是把所有東西都擋掉。"""
+    base = _fixture("dialog-bash.txt")
+    assert _WRAP_MARKER in base
+    screen = base.replace(_WRAP_MARKER, _WRAP_MARKER + "   plus more words\n")
+    dialog = parse_permission_dialog(screen)
+    assert dialog is not None
+    assert len(dialog.options) == 3
+    assert dialog.options[1][1].endswith("plus more words")
+
+
+def test_parse_ten_plus_options() -> None:
+    """11 選項畫面（程式內組出來）：全部讀出、編號連續、options[9] 是 (10, ...)。"""
+    lines = [
+        "",
+        " Do you want to proceed?",
+        " ❯ 1. Yes",
+        *(f"   {n}. Option {n}" for n in range(2, 12)),
+        "",
+        " Esc to cancel · Tab to amend · ctrl+e to explain",
+    ]
+    screen = "\n".join(lines) + "\n"
+    dialog = parse_permission_dialog(screen)
+    assert dialog is not None
+    assert [n for n, _text in dialog.options] == list(range(1, 12))
+    assert dialog.options[9] == (10, "Option 10")
+
+
+def test_parse_three_digit_number_not_treated_as_option() -> None:
+    """`123. foo` 不是選項——`_OPTION_RE` 限 1–2 位，三位數編號列讓收集中斷回 None，
+    不會被安靜地讀成編號 123 的選項。"""
+    screen = (
+        "\n".join(
+            [
+                "",
+                " Do you want to proceed?",
+                " ❯ 1. Yes",
+                "   2. No",
+                "   123. foo",
+                "",
+                " Esc to cancel · Tab to amend · ctrl+e to explain",
+            ]
+        )
+        + "\n"
+    )
+    assert parse_permission_dialog(screen) is None
 
 
 # ---------------------------------------------------------------------------

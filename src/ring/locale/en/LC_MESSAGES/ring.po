@@ -727,6 +727,9 @@ msgstr "{project}: cannot read the {backend} screen"
 msgid "{project}：畫面上沒有可辨識的權限對話框，未送出任何按鍵"
 msgstr "{project}: no recognizable permission dialog on screen; no key was sent"
 
+msgid "{project}：選項 {number} 是兩位數編號，RiNG 不代按（送出的第一個數字會先選中別的選項）；請按 Enter 跳過去自己回"
+msgstr "{project}: option {number} is a two-digit number — RiNG won't press it for you (the first digit sent would select a different option); press Enter and answer it yourself"
+
 msgid "→ {project}：已回覆權限（{option}）"
 msgstr "→ {project}: permission answered ({option})"
 

@@ -54,6 +54,7 @@ Completes subcommands, flags, and `config set` keys; `ring focus` prompts for a 
 - With **Textual** (`[tui]` extra) in a real terminal: interactive TUI.
   Use `↑/↓` to select, `Enter` / `Space` to jump, `p` to reply to a permission request in place, `n` to name a session, `a` to toggle ended sessions, `dd` to hide a session (it reappears automatically once it has new activity), `r` to refresh, and `q` to quit.
   If you have vim muscle memory like I do, `j/k` move up/down and `g/G` jump to the first/last row.
+  The same j/k/g/G also work in the `p` permission reply modal.
   When the selected row is 🔴 waiting, a line under the table shows **what it is concretely waiting for** (the command to run, the question asked; hook mode only).
   Claude Code background agents carry a `⚙` badge. They have no terminal to jump to, so selecting one shows a `claude --resume` hint; completed agents are folded into ended sessions by default and remain available via `a`.
 - Otherwise: Rich polling; without Rich, plain text.

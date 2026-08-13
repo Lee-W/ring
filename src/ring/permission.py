@@ -35,8 +35,11 @@ from ring.registry import Session
 # 對話框 footer：「 Esc to cancel · Tab to amend · ctrl+e to explain」。
 # 注意大小寫——工作中狀態列的「esc to interrupt」是小寫 e，不會誤中。
 _FOOTER_RE = re.compile(r"\bEsc to cancel\b")
-# 編號選項列：「 ❯ 1. Yes」（游標）或「   2. Yes, and …」。
-_OPTION_RE = re.compile(r"^\s*(?:❯\s*)?(\d)\.\s+(\S.*?)\s*$")
+# 編號選項列：「 ❯ 1. Yes」（游標）或「   2. Yes, and …」。限 1–2 位是刻意的：
+# 「123. foo」這種列不該被當選項，交給續行/停止判準處理。
+_OPTION_RE = re.compile(r"^\s*(?:❯\s*)?(\d{1,2})\.\s+(\S.*?)\s*$")
+# 任何寬度的編號列（含 10./11./123.）——續行絕不可以長這樣，否則會把新選項吞掉。
+_NUMBERED_RE = re.compile(r"^\s*(?:❯\s*)?\d+[.)]\s")
 # 對話框標題列的 subagent 標頭：「Bash command · from the general-purpose agent」。
 _AGENT_RE = re.compile(r"·\s*from the (.+?) agent\b")
 # 對話框上緣的水平分隔線（整列 ─）。
@@ -76,12 +79,42 @@ class ReplyOutcome(Enum):
 # ---------------------------------------------------------------------------
 
 
+def _is_option_continuation(line: str) -> bool:
+    """判斷某一列是不是「上一個選項文字的續行」（選項太長被終端折成多行）。
+
+    續行必須「有縮排」（至少一個前導空白），因為整個對話框本體都是縮排的，
+    而它上方的 transcript 是齊左的——這一格縮排就把「齊左的對話紀錄」整類擋在外面。
+    但光靠縮排還不夠：下面每一條都在排除「長得像續行、其實是別的結構列」的東西，
+    排除掉才不會被誤併：
+
+    - 空白列：今天的天然邊界，不排除的話選項區塊會跨過空行往上吃到 transcript。
+    - 任何寬度的編號列（``_NUMBERED_RE``）：``10. Yes`` 必須被當成新選項，不是續行；
+      不排除的話會安靜少一個選項、照樣送鍵——比大聲失敗更糟。
+    - 含 ``❯``：只會出現在游標選項列或聊天輸入框；不排除的話誤送偵測用的輸入列
+      （``❯ 2``）會被併進選項文字。
+    - footer / 分隔線 / 標題列（``_FOOTER_RE`` / ``_SEPARATOR_RE`` / ``_AGENT_RE``）：
+      都是對話框的結構錨點；不排除的話畫面上若有殘影或標題，會被吃進選項。
+    - 以 ``?`` 結尾：問句列就在選項正上方、中間沒有空白列隔開，是最容易被誤併的一種——
+      不排除的話問句會被併進選項 1，然後問句偵測往上撞到說明列，最終回 ``None``。
+    """
+    if not line.strip() or not line.startswith((" ", "\t")):
+        return False
+    if _NUMBERED_RE.match(line) or "❯" in line:
+        return False
+    if _FOOTER_RE.search(line) or _SEPARATOR_RE.match(line) or _AGENT_RE.search(line):
+        return False
+    return not line.rstrip().endswith("?")
+
+
 def parse_permission_dialog(screen: str) -> PermissionDialog | None:
     """從 capture-pane 的畫面解析權限對話框；任何標記缺失就回 ``None``（絕不猜）。
 
     由下往上找，要求四個標記同時成立：
     1. footer 列（``Esc to cancel``）
-    2. footer 上方是連續的編號選項列，編號從 1 起連續、至少 2 個
+    2. footer 上方是連續的編號選項列，編號從 1 起連續、至少 2 個。選項文字可跨行——
+       續行必須有縮排，且不得長得像其他結構列（見 ``_is_option_continuation``）；
+       有續行卻找不到歸屬（收集到畫面頂端仍有未歸位的續行）一律回 ``None``，
+       寧可讓使用者自己去看，也不要拼出一份看起來合理但錯的選項清單。
     3. 至少一個選項列帶游標 ``❯``
     4. 選項上方第一個非空白列是問句（以 ``?`` 結尾，如 ``Do you want to proceed?``）
     """
@@ -90,20 +123,32 @@ def parse_permission_dialog(screen: str) -> PermissionDialog | None:
     if footer_idx is None:
         return None
 
-    # footer 上方跳過空白列，往上收集連續的編號選項列。
+    # footer 上方跳過空白列，往上收集連續的編號選項列（含續行）。
     i = footer_idx - 1
     while i >= 0 and not lines[i].strip():
         i -= 1
     collected: list[tuple[int, str]] = []
+    pending: list[str] = []  # 續行緩衝：由下往上收集，遇到編號列才知道該接到哪個選項後面
     saw_cursor = False
     while i >= 0:
         m = _OPTION_RE.match(lines[i])
-        if m is None:
-            break
-        collected.append((int(m.group(1)), m.group(2)))
-        if "❯" in lines[i]:
-            saw_cursor = True
-        i -= 1
+        if m is not None:
+            text = m.group(2)
+            if pending:
+                text = f"{text} {' '.join(reversed(pending))}"
+                pending = []
+            collected.append((int(m.group(1)), text))
+            if "❯" in lines[i]:
+                saw_cursor = True
+            i -= 1
+            continue
+        if _is_option_continuation(lines[i]):
+            pending.append(lines[i].strip())
+            i -= 1
+            continue
+        break
+    if pending:
+        return None  # 有續行找不到歸屬 → 畫面形狀不如預期，不猜
     options = tuple(reversed(collected))
     if len(options) < 2 or not saw_cursor:
         return None
