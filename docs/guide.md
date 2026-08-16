@@ -368,6 +368,12 @@ RiNG 會優先相信這些欄位；沒有時才退回 event / notification type 
   ```
 
 - **純文字通知**：未裝 `terminal-notifier` 則退化為 macOS 原生純文字通知（可帶聲音，點擊不可聚焦）。
+- **agent CLI 自己也會通知**：`ring install-hooks` 只寫 `~/.claude/settings.json` 的 `hooks`，
+  不會碰 Claude Code 自己的 `preferredNotifChannel`。兩條路平行：同一個權限請求會有兩則通知，
+  而且 Claude Code 那條還會在 Stop 後約 60 秒發 `idle_prompt`（閒著、換你）——那是 RiNG 刻意
+  判 🟡 不發的類別，跳過去只會看到空 prompt，沒有東西可回。`ring doctor` 的「Claude Code
+  自帶通知」一節會印出目前通道與終端；想讓 RiNG 當唯一來源，把 `preferredNotifChannel` 設成
+  `notifications_disabled`（代價是「跑完換你」就沒人通知了）。
 - **擴充**：要接其他桌面通知、webhook 或自訂提醒方式，可以新增 `Notifier` 後端並註冊，
   詳見「其他通知後端」。
 

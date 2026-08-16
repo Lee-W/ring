@@ -353,6 +353,15 @@ Config keys include `notify_sound`, `notify_sound_name`, `notify_ignore_dnd`,
 `notify_debounce_seconds`. Custom notification channels can be added by registering another
 `Notifier`.
 
+The agent CLI notifies on its own too. `ring install-hooks` only writes the `hooks` key in
+`~/.claude/settings.json`; it never touches Claude Code's own `preferredNotifChannel`. The two paths
+run in parallel, so a single permission request produces two banners — and Claude Code's path also
+fires `idle_prompt` roughly 60s after `Stop` ("idle, your turn"), a class RiNG deliberately keeps
+silent on, so jumping over lands you on an empty prompt with nothing to answer. The "Claude Code's
+Own Notifications" section of `ring doctor` prints the current channel and terminal; to make RiNG the
+only source, set `preferredNotifChannel` to `notifications_disabled` (the trade-off: nothing then
+notifies you when a turn actually finishes).
+
 Background subagent permission requests can make a session flap between waiting and working in
 quick succession. `waiting_cooldown_seconds` (180s by default) stops `ring hook`'s system
 notification and the TUI's bell/reminder from firing again the instant a session re-enters waiting

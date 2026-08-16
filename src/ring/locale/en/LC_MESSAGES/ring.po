@@ -802,3 +802,46 @@ msgstr "invalid duration: {value} (e.g. 30m, 1h)"
 
 msgid "🔇 quiet 已開啟，{duration} 後自動解除"
 msgstr "🔇 quiet turned on, auto-clears after {duration}"
+
+# ── doctor：Claude Code 自帶通知 ──
+msgid "Claude Code 自帶通知"
+msgstr "Claude Code's Own Notifications"
+
+msgid "Claude 設定檔"
+msgstr "Claude settings"
+
+msgid "settings 檔不存在 → 吃 Claude Code 內建預設"
+msgstr "settings file missing -> Claude Code falls back to its built-in default"
+
+msgid "未設定（＝{channel}）"
+msgstr "unset (= {channel})"
+
+msgid "目前終端"
+msgstr "current terminal"
+
+msgid "認不出（tmux／ssh 裡可能測不到，僅供參考）"
+msgstr "unrecognized (may be undetectable under tmux/ssh; treat as a hint only)"
+
+msgid "已關閉——只有 RiNG 會通知你"
+msgstr "disabled - RiNG is your only notifier"
+
+msgid "只響鈴、不跳通知框；RiNG 的通知不受影響"
+msgstr "bell only, no banner; RiNG's notifications are unaffected"
+
+msgid "Claude Code 也會自己跳通知——權限提示會跟 RiNG 重複"
+msgstr "Claude Code also posts its own banners - permission prompts will double up with RiNG"
+
+msgid "認不出這個通道會不會跳通知；沒明確關掉就有重複的可能"
+msgstr "unknown whether this channel posts banners; without an explicit opt-out, duplicates are possible"
+
+msgid "另外"
+msgstr "also"
+
+msgid "它還會在 Stop 後約 60 秒發 idle_prompt（閒著、換你），這類 RiNG 刻意不發"
+msgstr "it also fires idle_prompt ~60s after Stop (idle, your turn), a class RiNG deliberately stays silent on"
+
+msgid "只想留 RiNG"
+msgstr "to keep only RiNG"
+
+msgid "把 preferredNotifChannel 設成 notifications_disabled"
+msgstr "set preferredNotifChannel to notifications_disabled"

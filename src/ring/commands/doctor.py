@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import sys
 
+from ring.agent_notify import native_notify_status
 from ring.commands._args import strip_lang
 from ring.config import CONFIG_PATH, get_config
 from ring.focus.kitty import sockets as kitty_sockets
@@ -12,6 +13,43 @@ from ring.gc import DEFAULT_OLDER_THAN_SECONDS
 from ring.gc import collect_candidates as gc_collect_candidates
 from ring.i18n import gettext as _
 from ring.sources import discover_sessions, sources
+
+
+def _print_native_notify() -> None:
+    """印「Claude Code 自帶通知」這一節。
+
+    這節回答的是「除了 RiNG，還有誰會跳通知」——``ring install-hooks`` 不會關掉
+    Claude Code 自己的 ``preferredNotifChannel``（見 ``ring.agent_notify`` 模組說明），
+    兩邊會對同一個權限請求各發一則，而且 Claude Code 那條還會多發 Stop 之後的
+    idle_prompt。整節唯讀，任何一步失敗就整節略過，不影響其餘報告。
+    """
+    try:
+        status = native_notify_status()
+    except Exception:
+        print(f"  {_('狀態')}：{_('偵測失敗')}")
+        return
+
+    # 用 "Claude 設定檔" 而不是既有的 "設定檔" msgid：後者是最後一節 RiNG 自己 config
+    # 的標題（en 翻成 "Config File"），共用會把這行講成 RiNG 的設定檔，指錯地方。
+    print(f"  {_('Claude 設定檔')}：{status.path}")
+    if not status.exists:
+        print(f"  {_('狀態')}：{_('settings 檔不存在 → 吃 Claude Code 內建預設')}")
+    channel_str = status.channel if status.explicit else _("未設定（＝{channel}）", channel=status.channel)
+    print(f"  preferredNotifChannel：{channel_str}")
+    print(f"  {_('目前終端')}：{status.terminal or _('認不出（tmux／ssh 裡可能測不到，僅供參考）')}")
+
+    if status.kind == "off":
+        print(f"  {_('狀態')}：{_('已關閉——只有 RiNG 會通知你')}")
+        return
+    if status.kind == "bell":
+        print(f"  {_('狀態')}：{_('只響鈴、不跳通知框；RiNG 的通知不受影響')}")
+        return
+    if status.kind == "banner":
+        print(f"  {_('狀態')}：{_('Claude Code 也會自己跳通知——權限提示會跟 RiNG 重複')}")
+    else:
+        print(f"  {_('狀態')}：{_('認不出這個通道會不會跳通知；沒明確關掉就有重複的可能')}")
+    print(f"  {_('另外')}：{_('它還會在 Stop 後約 60 秒發 idle_prompt（閒著、換你），這類 RiNG 刻意不發')}")
+    print(f"  {_('只想留 RiNG')}：{_('把 preferredNotifChannel 設成 notifications_disabled')}")
 
 
 def run_doctor(args: list[str]) -> int:
@@ -98,6 +136,10 @@ def run_doctor(args: list[str]) -> int:
         else:
             reason = _("全部不可用")
         print(f"  {_('auto 實際選中')}：{_('不發通知')}（{reason}）")
+    print()
+
+    print(_("Claude Code 自帶通知"))
+    _print_native_notify()
     print()
 
     print(_("聚焦終端（focuser）"))
