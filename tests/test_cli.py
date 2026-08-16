@@ -1,9 +1,11 @@
+import json
 import time
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+import ring.agent_notify as agent_notify
 import ring.cli as cli
 from ring.registry import Session, Status
 
@@ -649,6 +651,83 @@ def test_doctor_mac_notification_style_hint(
     assert "Banner/Alert" in out
 
 
+def _doctor_scaffold(monkeypatch: pytest.MonkeyPatch) -> None:
+    """doctor 其餘節的最小 stub，讓測試只盯自己那一節。"""
+    monkeypatch.setattr("ring.sources._SOURCES", [_make_fake_source("hook", [])])
+    monkeypatch.setattr("ring.focus._FOCUSERS", [_make_fake_focuser("tmux")])
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [_make_fake_notifier("terminal-notifier", True, True)])
+    monkeypatch.setattr("ring.hook.hook_status", lambda: _make_fake_hook_status(), raising=False)
+
+
+def test_doctor_warns_when_claude_notifies_on_its_own(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """preferredNotifChannel 沒關 → doctor 要點出通知會跟 RiNG 重複，並給關法。"""
+    _doctor_scaffold(monkeypatch)
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"hooks": {}}))
+    monkeypatch.setattr(
+        "ring.commands.doctor.native_notify_status",
+        lambda: agent_notify.native_notify_status(settings, {"TERM": "xterm-kitty"}),
+    )
+
+    with monkeypatch.context() as m:
+        m.setattr("shutil.which", lambda name: None)
+        rc = cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "Claude Code 自帶通知" in out
+    assert "未設定（＝auto）" in out
+    assert "目前終端：kitty" in out
+    assert "權限提示會跟 RiNG 重複" in out
+    assert "idle_prompt" in out
+    assert "notifications_disabled" in out
+
+
+def test_doctor_reports_claude_notifications_disabled(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """明確關掉 → 報「只有 RiNG 會通知你」，且不再嘮叨關法。"""
+    _doctor_scaffold(monkeypatch)
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"preferredNotifChannel": "notifications_disabled"}))
+    monkeypatch.setattr(
+        "ring.commands.doctor.native_notify_status",
+        lambda: agent_notify.native_notify_status(settings, {"TERM": "xterm-kitty"}),
+    )
+
+    with monkeypatch.context() as m:
+        m.setattr("shutil.which", lambda name: None)
+        rc = cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "只有 RiNG 會通知你" in out
+    assert "把 preferredNotifChannel 設成" not in out
+
+
+def test_doctor_native_notify_failure_is_isolated(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """這一節炸掉不能拖垮整份報告——後面的節照印，rc 仍為 0。"""
+    _doctor_scaffold(monkeypatch)
+
+    def boom() -> object:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("ring.commands.doctor.native_notify_status", boom)
+
+    with monkeypatch.context() as m:
+        m.setattr("shutil.which", lambda name: None)
+        rc = cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "聚焦終端" in out
+    assert "設定檔" in out
+
+
 def test_doctor_focuser_availability(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """tmux/iTerm2/Terminal 各自可用/不可用狀態正確反映。"""
     fake_src = _make_fake_source("hook", [])
@@ -706,7 +785,9 @@ def test_doctor_kitty_focuser_availability(monkeypatch: pytest.MonkeyPatch, caps
     monkeypatch.setattr("ring.focus._FOCUSERS", [kitty_f])
 
     def kitty_line(out: str) -> str:
-        return next(line for line in out.splitlines() if "kitty" in line)
+        # 只認 focuser 那一節的欄位格式（`  kitty  <狀態>`）——「Claude Code 自帶通知」
+        # 那節的「目前終端：kitty」也含 kitty，用寬鬆的 in 會抓錯行。
+        return next(line for line in out.splitlines() if line.strip().startswith("kitty"))
 
     with (
         patch("shutil.which", lambda name: "/usr/bin/kitty" if name == "kitty" else None),

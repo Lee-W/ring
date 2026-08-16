@@ -113,7 +113,8 @@ ignore = [
 skip = '.git*,*.lock'
 check-hidden = true
 # README 縮寫 **N**otification 被 markdown 粗體拆成 `otification`，codespell 會誤判為 notification 拼錯
-ignore-words-list = 'otification'
+# iterm：TERM_PROGRAM 的值是 `iTerm.app`（沒有結尾的 2），codespell 會把它當 term 拼錯
+ignore-words-list = 'otification,iterm'
 
 [tool.poe.tasks]
 format.help = "Format the code"
