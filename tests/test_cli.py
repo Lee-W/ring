@@ -18,6 +18,44 @@ def _hermetic_notify_queue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr("ring.notify_queue._QUIET_PATH", tmp_path / "quiet")
 
 
+@pytest.fixture(autouse=True)
+def _stable_native_notify(monkeypatch: pytest.MonkeyPatch) -> None:
+    """釘住 doctor「Claude Code 自帶通知」那一節的輸入。
+
+    那一節會讀真實的 ``~/.claude/settings.json`` 與當下終端的環境變數，輸出因此會隨
+    執行的機器而變——本機在 kitty 裡跑印「目前終端：kitty」，CI 認不出終端則印含
+    「tmux／ssh」的提示字，害本機全綠、CI 紅。釘成 CI 那種「認不出」的值，讓兩邊看到
+    同一份輸出；要驗這一節本身的測試再自己覆寫。
+    """
+    monkeypatch.setattr(
+        "ring.commands.doctor.native_notify_status",
+        lambda: agent_notify.NativeNotifyStatus(
+            path=Path("/nonexistent/settings.json"),
+            exists=False,
+            channel=agent_notify.DEFAULT_CHANNEL,
+            explicit=False,
+            terminal="",
+            kind="unknown",
+        ),
+    )
+
+
+def _focuser_lines(out: str) -> list[str]:
+    """只取「聚焦終端（focuser）」那一節的欄位行。
+
+    doctor 別節也會出現終端名（「Claude Code 自帶通知」印目前終端，認不出時的提示字
+    還含 tmux／ssh），拿 ``substring in 整份輸出`` 抓行會抓到別節——CI 已經因此紅過一次。
+    """
+    lines = out.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("聚焦終端"))
+    section: list[str] = []
+    for line in lines[start + 1 :]:
+        if not line.strip():
+            break
+        section.append(line)
+    return section
+
+
 def _sessions() -> list[Session]:
     return [Session("a", "/x/maigo", Status.WORKING, 0.0, "→ Edit", "scan")]
 
@@ -762,7 +800,7 @@ def test_doctor_focuser_availability(monkeypatch: pytest.MonkeyPatch, capsys: py
     assert rc == 0
 
     # 逐行精確斷言：tmux 可用、iTerm2 可用、Terminal 不可用
-    lines = out.splitlines()
+    lines = _focuser_lines(out)
     tmux_line = next(line for line in lines if "tmux" in line and "iTerm2" not in line)
     iterm_line = next(line for line in lines if "iTerm2" in line)
     terminal_line = next(line for line in lines if "Terminal" in line and "iTerm2" not in line)
@@ -785,9 +823,7 @@ def test_doctor_kitty_focuser_availability(monkeypatch: pytest.MonkeyPatch, caps
     monkeypatch.setattr("ring.focus._FOCUSERS", [kitty_f])
 
     def kitty_line(out: str) -> str:
-        # 只認 focuser 那一節的欄位格式（`  kitty  <狀態>`）——「Claude Code 自帶通知」
-        # 那節的「目前終端：kitty」也含 kitty，用寬鬆的 in 會抓錯行。
-        return next(line for line in out.splitlines() if line.strip().startswith("kitty"))
+        return next(line for line in _focuser_lines(out) if "kitty" in line)
 
     with (
         patch("shutil.which", lambda name: "/usr/bin/kitty" if name == "kitty" else None),
@@ -836,7 +872,7 @@ def test_doctor_linux_wm_focuser_availability(
     monkeypatch.setattr("ring.focus._FOCUSERS", [linux_wm_f])
 
     def linux_wm_line(out: str) -> str:
-        return next(line for line in out.splitlines() if "linux-wm" in line)
+        return next(line for line in _focuser_lines(out) if "linux-wm" in line)
 
     with (
         patch("ring.commands.doctor.sys.platform", "linux"),
