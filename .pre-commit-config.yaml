@@ -10,7 +10,7 @@ repos:
   - id: check-hooks-apply
   - id: check-useless-excludes
 - repo: https://github.com/pre-commit/pre-commit-hooks
-  rev: v5.0.0
+  rev: v6.0.0
   hooks:
   - id: check-vcs-permalinks
   - id: end-of-file-fixer
@@ -24,20 +24,20 @@ repos:
     args: [--unsafe]
   - id: detect-private-key
 - repo: https://github.com/astral-sh/uv-pre-commit
-  rev: 0.10.3
+  rev: 0.12.5
   hooks:
   - id: uv-lock
   - id: uv-sync
     args: [--frozen, --all-groups]
     stages: [pre-commit, post-checkout, post-merge, post-rewrite]
 - repo: https://github.com/codespell-project/codespell
-  rev: v2.4.2
+  rev: v2.4.3
   hooks:
   - id: codespell
     additional_dependencies: [tomli]
     args: [--write-changes]
 - repo: https://github.com/commitizen-tools/commitizen
-  rev: v4.13.9
+  rev: v4.17.0
   hooks:
   - id: commitizen
   - id: commitizen-branch
