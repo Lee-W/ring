@@ -23,7 +23,7 @@ stateDiagram-v2
     WAITING --> WORKING: 回覆後工具開始或完成
     WORKING --> WAITING: 權限提示／互動通知／結尾提問
     IDLE --> WAITING: 權限提示／互動通知
-    WAITING --> IDLE: 一般通知或無提問的回合結束
+    WAITING --> IDLE: 無提問的回合結束（Stop）
     WORKING --> ENDED: session 結束（SessionEnd）
     IDLE --> ENDED: session 結束（SessionEnd）
     WAITING --> ENDED: session 結束（SessionEnd）
@@ -39,7 +39,7 @@ stateDiagram-v2
 - **Codex 權限等待 → 延遲升成 `WAITING`**：Codex 沒有後續 notification。若最後事件仍是裸 `PermissionRequest`，且 hook 靜默時間超過 `codex_permission_wait_seconds`，讀取側會把該 hook row 升成 `WAITING`；任何後續事件都會清掉這項判定。
 - **`PreToolUse` → `WAITING` 或 `WORKING`**：`AskUserQuestion`，或 payload 帶有非空的 `questions`、`options`、`choices` 時是 `WAITING`；其餘工具開始執行時是 `WORKING`。
 - **`PostToolUse` → `WORKING`**：工具已經執行，代表先前的互動已處理，並清掉殘留的等待狀態。
-- **`Notification` → `WAITING` 或 `IDLE`**：`permission_prompt`、`elicitation_dialog` 或其他需要動作的 payload 是 `WAITING`；一般通知是 `IDLE`。
+- **`Notification` → `WAITING` 或 `IDLE`**：`permission_prompt`、`elicitation_dialog` 或其他需要動作的 payload 是 `WAITING`；一般通知是 `IDLE`。但一般通知只會把 `WORKING` 收成 `IDLE`，**不會**把既有的 `WAITING` 降回 `IDLE`——Claude Code 在輸入區閒置滿 60 秒送的 `idle_prompt` 正好證明它還在等你，不是你已經回應了。清掉 `WAITING` 只認 `UserPromptSubmit` / `PreToolUse` / `PostToolUse` / 下一輪 `Stop`。
 - **顯式覆寫**：payload 的 `requires_action`、`action_required`、`needs_user_action`、`requires_input`、`interactive`，或可辨識的 `waiting_for` 會優先決定 `WAITING` / `IDLE`。`SessionStart`、`UserPromptSubmit` 與 `SessionEnd` 不受這項覆寫影響。
 - **`SessionEnd` → `ENDED`**：hook handler 直接刪除 registry 檔，session 會從預設看板消失；看板上可見的 `ENDED` 主要來自零設定掃描超過活躍時間窗的紀錄。
 

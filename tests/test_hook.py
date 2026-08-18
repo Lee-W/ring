@@ -1390,3 +1390,115 @@ def test_stop_trailing_question_disabled_by_config(monkeypatch: pytest.MonkeyPat
     data = json.loads((tmp_path / "s1.json").read_text())
     assert data["status"] == Status.IDLE.value
     assert "waiting_kind" not in data
+
+
+# ---------------------------------------------------------------------------
+# 一般 Notification 不得把既有的 🔴 等你降回 🟡（_notification_keeps_waiting）
+# ---------------------------------------------------------------------------
+
+
+def _idle_prompt(session_id: str = "s1") -> dict[str, Any]:
+    """Claude Code 在輸入區閒置滿 60 秒送的通知（取自 hook_payloads.jsonl 實錄形狀）。"""
+    return {
+        "session_id": session_id,
+        "hook_event_name": "Notification",
+        "notification_type": "idle_prompt",
+        "message": "Claude is waiting for your input",
+        "cwd": "/x",
+    }
+
+
+def test_idle_prompt_keeps_stop_question_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Stop 結尾提問升成 🔴 之後，60 秒後的 idle_prompt 不得把它降回 🟡。
+
+    這是「回覆放太久沒動作就自己變成跑完停著」的成因：idle_prompt 的語意是「還在等你」，
+    降黃等於把真正需要你的那一列從看板上抹掉。waiting_kind / waiting_detail 一併沿用。
+    """
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "Stop",
+            "cwd": "/x",
+            "last_assistant_message": "先做了 A。\n\n要不要順便修 B？",
+        },
+    )
+    assert hook.run_hook() == 0
+
+    _feed(monkeypatch, _idle_prompt())
+    assert hook.run_hook() == 0
+
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WAITING.value
+    assert data["waiting_kind"] == "question"
+    assert "要不要順便修 B？" in data["waiting_detail"]
+
+
+def test_idle_prompt_keeps_permission_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """權限等待也一樣保紅——閒置提醒不是「使用者核可了」的證據。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {"session_id": "s1", "hook_event_name": "Notification", "notification_type": "permission_prompt", "cwd": "/x"},
+    )
+    assert hook.run_hook() == 0
+
+    _feed(monkeypatch, _idle_prompt())
+    assert hook.run_hook() == 0
+
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WAITING.value
+    assert data["waiting_kind"] == "permission"
+
+
+def test_idle_prompt_does_not_re_notify(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """保住既有 🔴 不算新的等待事件 → 不重發系統通知（重複提醒歸 TUI 排程器）。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    spy = _SpyNotifier()
+    monkeypatch.setattr("ring.notify._NOTIFIERS", [spy])
+    _feed(
+        monkeypatch,
+        {"session_id": "s1", "hook_event_name": "Notification", "notification_type": "permission_prompt", "cwd": "/x"},
+    )
+    assert hook.run_hook() == 0
+    assert len(spy.sent) == 1
+
+    _feed(monkeypatch, _idle_prompt())
+    assert hook.run_hook() == 0
+
+    assert len(spy.sent) == 1, "沿用既有 🔴 不該再發一則系統通知"
+
+
+def test_idle_prompt_still_settles_working_to_idle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """既有狀態是 🟢 時，idle_prompt 照舊收斂成 🟡——保紅只擋降級，不改其他語意。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {"session_id": "s1", "hook_event_name": "PostToolUse", "tool_name": "Bash", "cwd": "/x"},
+    )
+    assert hook.run_hook() == 0
+
+    _feed(monkeypatch, _idle_prompt())
+    assert hook.run_hook() == 0
+
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.IDLE.value
+
+
+def test_user_reply_still_clears_waiting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """真的回應了（UserPromptSubmit）仍照舊清掉 🔴，保紅不會讓紅色卡住。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    _feed(
+        monkeypatch,
+        {"session_id": "s1", "hook_event_name": "Notification", "notification_type": "permission_prompt", "cwd": "/x"},
+    )
+    assert hook.run_hook() == 0
+    _feed(monkeypatch, _idle_prompt())
+    assert hook.run_hook() == 0
+
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "UserPromptSubmit", "cwd": "/x"})
+    assert hook.run_hook() == 0
+
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["status"] == Status.WORKING.value
