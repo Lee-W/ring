@@ -23,7 +23,7 @@ jobs:
     if: "!startsWith(github.event.head_commit.message, 'bump:')"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -37,7 +37,7 @@ jobs:
 
       - name: Set up uv
         if: steps.cz.outputs.version != steps.cz.outputs.previous_version
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: "3.13"
 
@@ -51,7 +51,7 @@ jobs:
 
       - name: Create GitHub Release
         if: steps.cz.outputs.version != steps.cz.outputs.previous_version
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.cz.outputs.version }}
           body_path: body.md
