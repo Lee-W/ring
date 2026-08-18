@@ -18,6 +18,9 @@ Agent CLI 在各事件把一段 JSON 從 stdin 餵進來。我們據此 upsert �
                                     兜底轉 🔴；Codex 沒有這種事件，改由讀取側的靜默逾時
                                     判定補上，見 registry._promote_codex_permission_wait）
   actionable Notification / AskUserQuestion → 🔴 等你（需要你決策）
+  一般 Notification                → 🟡 跑完停著；但既有狀態已是 🔴 時保住 🔴——Claude Code
+                                    閒置滿 60 秒送的 idle_prompt 不是「使用者回應了」的證據
+                                    （見 _notification_keeps_waiting）
   SessionEnd                      → 刪檔（乾淨離場）
 """
 
@@ -197,6 +200,16 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
     path = RING_REGISTRY / f"{quote(event.session_id, safe=':')}.json"
     prev_row = _previous_row(path)
     prev_status = str(prev_row["status"]) if "status" in prev_row else None
+    # 一般 Notification 只能升 🔴、不能降 🟡——閒置提醒不是「使用者回應了」的證據。
+    keep_waiting = _notification_keeps_waiting(event, prev_row)
+    if keep_waiting:
+        event = replace(
+            event,
+            status=Status.WAITING,
+            waiting_for=str(prev_row.get("waiting_for", "")),
+            waiting_kind=str(prev_row.get("waiting_kind", "")),
+            detail=str(prev_row.get("waiting_detail", "")),
+        )
     if event.status is Status.ENDED:
         path.unlink(missing_ok=True)  # 乾淨離場：直接消失
         if prev_status is not None and prev_status != Status.ENDED.value:
@@ -267,7 +280,9 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
     if last_notified is not None:
         payload["waiting_notified_at"] = last_notified
     should_ring = False
-    if event.status is Status.WAITING:
+    if event.status is Status.WAITING and not keep_waiting:
+        # keep_waiting＝只是沿用上一筆就已成立的 🔴，不是新的等待事件，不重發通知
+        # （重複提醒由 TUI 的提醒排程器負責，見 tui._ring_on_waiting_alerts）。
         should_ring = _waiting_ring_allowed(last_notified, now)
         if should_ring:
             payload["waiting_notified_at"] = now
@@ -282,6 +297,26 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
 
     if should_ring:
         _ring_waiting_now(event, payload, last_action)
+
+
+def _notification_keeps_waiting(event: NormalizedHookEvent, prev_row: dict[str, Any]) -> bool:
+    """這筆一般 Notification 是否該保住上一筆的 🔴 等你（而不是照正規化結果降成 🟡）。
+
+    Claude Code 在輸入區閒置滿 60 秒就送一筆 ``notification_type=idle_prompt`` 的
+    Notification（訊息 "Claude is waiting for your input"）。它的語意正是「還在等你」，
+    卻因為不屬於 action-required 型別而被 hook_protocol 正規化成 🟡——結果 Stop 結尾
+    提問升上來的 🔴（waiting_kind="question"）會在整整 60 秒後自己變黃，看板上「在等你」
+    的那一列就這樣消失。2026-08-18 取證：hook_payloads.jsonl 裡 58 筆 idle_prompt 有 55
+    筆緊接在 Stop 之後 60 秒，events.jsonl 對應的 waiting→idle 轉換也都是 held 60s。
+
+    只有真的證明使用者已經回應的事件（UserPromptSubmit / PreToolUse / PostToolUse /
+    下一輪 Stop）才該清掉 WAITING；Notification 一律只能升 🔴、不能降 🟡。這裡回 True 時
+    由呼叫端沿用舊 row 的 waiting_for / waiting_kind / waiting_detail（payload 每次重建，
+    不帶就會遺失），並且不重發通知。
+    """
+    if event.event != "Notification" or event.status is not Status.IDLE:
+        return False
+    return str(prev_row.get("status", "")) == Status.WAITING.value
 
 
 def _maybe_flag_trailing_question(event: NormalizedHookEvent, data: dict[str, Any]) -> NormalizedHookEvent:

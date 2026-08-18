@@ -112,6 +112,11 @@ def _merge_duplicate_session(current: Session, candidate: Session) -> Session:
     權限請求。因此還要求 candidate 的 ``_tail_kind`` 不是 ``"interrupted"``——
     只有真人 prompt（"working"）或對話真的收尾（"waiting"）才算「使用者真的回應了」，
     單純簿記寫入（tail 仍是 interrupted）不該觸發覆蓋。
+
+    例外：``waiting_kind="question"``（Stop 結尾提問升上來的 🔴）本來就伴隨 end_turn
+    的對話尾——scan 看到 ``_tail_kind == "waiting"`` 只是同一件事的另一種說法，不是
+    「使用者回應了」。這種 row 只由真人 prompt（tail "working"）或後續 hook 事件清掉，
+    否則 Stop 之後任何一筆簿記寫入推進 mtime 都會讓紅色憑空消失。
     """
     if (
         current.source == "hook"
@@ -120,6 +125,7 @@ def _merge_duplicate_session(current: Session, candidate: Session) -> Session:
         and candidate.status is not Status.WAITING
         and candidate.last_active > current.last_active
         and candidate._tail_kind != "interrupted"
+        and not (current.waiting_kind == "question" and candidate._tail_kind == "waiting")
     ):
         if not candidate.tty:
             candidate.tty = current.tty

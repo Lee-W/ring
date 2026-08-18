@@ -23,7 +23,7 @@ stateDiagram-v2
     WAITING --> WORKING: tool started or completed after a reply
     WORKING --> WAITING: permission prompt / actionable notification / trailing question
     IDLE --> WAITING: permission prompt / actionable notification
-    WAITING --> IDLE: ordinary notification or Stop without a question
+    WAITING --> IDLE: Stop without a question
     WORKING --> ENDED: SessionEnd
     IDLE --> ENDED: SessionEnd
     WAITING --> ENDED: SessionEnd
@@ -39,7 +39,7 @@ stateDiagram-v2
 - **Codex permission wait → delayed `WAITING`**: Codex has no later notification. If the last event remains a bare `PermissionRequest` beyond `codex_permission_wait_seconds`, the read path promotes that hook row to `WAITING`; any later hook event clears the condition.
 - **`PreToolUse` → `WAITING` or `WORKING`**: `AskUserQuestion`, or non-empty `questions`, `options`, or `choices`, means `WAITING`; any other tool start means `WORKING`.
 - **`PostToolUse` → `WORKING`**: the tool ran, so the prior interaction was handled and any stale waiting state is cleared.
-- **`Notification` → `WAITING` or `IDLE`**: `permission_prompt`, `elicitation_dialog`, or another action-required payload means `WAITING`; an ordinary notification means `IDLE`.
+- **`Notification` → `WAITING` or `IDLE`**: `permission_prompt`, `elicitation_dialog`, or another action-required payload means `WAITING`; an ordinary notification means `IDLE`. An ordinary notification only settles `WORKING` into `IDLE`; it never demotes an existing `WAITING` — Claude Code's `idle_prompt`, sent after 60 seconds of an idle input box, proves it is still waiting for you, not that you answered. Only `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, or the next `Stop` clears `WAITING`.
 - **Explicit override**: `requires_action`, `action_required`, `needs_user_action`, `requires_input`, `interactive`, or a recognized `waiting_for` value takes precedence and selects `WAITING` / `IDLE`. `SessionStart`, `UserPromptSubmit`, and `SessionEnd` are not overridden.
 - **`SessionEnd` → `ENDED`**: the hook handler deletes the registry file, so the session leaves the default board. Visible `ENDED` rows mainly come from zero-config records aging beyond the active window.
 

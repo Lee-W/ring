@@ -248,3 +248,82 @@ def test_same_cwd_scan_sessions_get_distinct_fallback_targets(monkeypatch: pytes
     by_id = {s.session_id: s.tmux_target for s in result}
 
     assert by_id == {"scan-a": "main:1.0", "scan-b": "main:1.1"}
+
+
+def test_end_turn_scan_does_not_clear_hook_question_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stop 結尾提問的 🔴（waiting_kind="question"）不該被 end_turn 的 scan row 清掉。
+
+    這種等待本來就伴隨 end_turn 的對話尾——scan 讀到 ``_tail_kind == "waiting"`` 只是
+    同一件事的另一種說法，不是「使用者回應了」。Stop 之後任何一筆簿記寫入推進 mtime
+    都會讓 candidate 比 hook row 新，不擋就等於紅色憑空消失。
+    """
+    hook_session = Session(
+        "same-id",
+        "/work/app",
+        Status.WAITING,
+        100.0,
+        "要不要順便修 B？",
+        "hook",
+        tty="/dev/ttys001",
+        provider="claude-code",
+        waiting_kind="question",
+    )
+    scan_session = Session(
+        "same-id",
+        "/work/app",
+        Status.IDLE,
+        110.0,  # 簿記寫入推進的 mtime
+        "end turn",
+        "scan",
+        provider="claude-code",
+    )
+    scan_session._tail_kind = "waiting"  # assistant end_turn 收尾＝提問本身，不是回應
+    monkeypatch.setattr(
+        sources,
+        "_SOURCES",
+        [_StaticSource("hook", [hook_session]), _StaticSource("scan", [scan_session])],
+    )
+    monkeypatch.setattr("ring.tmux_scan._tmux_targets", lambda: {})
+
+    result = sources.discover_sessions()
+
+    assert len(result) == 1
+    assert result[0].source == "hook"
+    assert result[0].status is Status.WAITING
+
+
+def test_user_prompt_scan_still_clears_hook_question_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """真人送出 prompt（tail "working"）仍照舊清掉提問等待——保紅不讓紅色卡死。"""
+    hook_session = Session(
+        "same-id",
+        "/work/app",
+        Status.WAITING,
+        100.0,
+        "要不要順便修 B？",
+        "hook",
+        tty="/dev/ttys001",
+        provider="claude-code",
+        waiting_kind="question",
+    )
+    scan_session = Session(
+        "same-id",
+        "/work/app",
+        Status.WORKING,
+        110.0,
+        "user replied",
+        "scan",
+        provider="claude-code",
+    )
+    scan_session._tail_kind = "working"
+    monkeypatch.setattr(
+        sources,
+        "_SOURCES",
+        [_StaticSource("hook", [hook_session]), _StaticSource("scan", [scan_session])],
+    )
+    monkeypatch.setattr("ring.tmux_scan._tmux_targets", lambda: {})
+
+    result = sources.discover_sessions()
+
+    assert len(result) == 1
+    assert result[0].source == "scan"
+    assert result[0].status is Status.WORKING
