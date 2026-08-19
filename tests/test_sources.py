@@ -103,6 +103,7 @@ def test_newer_scan_clears_stale_hook_waiting(monkeypatch: pytest.MonkeyPatch) -
         "scan",
         provider="claude-code",
     )
+    scan_session._tail_kind = "working"
     monkeypatch.setattr(
         sources,
         "_SOURCES",
@@ -145,6 +146,48 @@ def test_newer_scan_bookkeeping_write_does_not_clear_hook_waiting(monkeypatch: p
         provider="claude-code",
     )
     scan_session._tail_kind = "interrupted"  # 對話尾仍是工具呼叫進行中，使用者沒有真的回應
+    monkeypatch.setattr(
+        sources,
+        "_SOURCES",
+        [_StaticSource("hook", [hook_session]), _StaticSource("scan", [scan_session])],
+    )
+    monkeypatch.setattr("ring.tmux_scan._tmux_targets", lambda: {})
+
+    result = sources.discover_sessions()
+
+    assert len(result) == 1
+    assert result[0].source == "hook"
+    assert result[0].status is Status.WAITING
+
+
+def test_newer_scan_unknown_tail_does_not_clear_hook_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """scan 沒讀到可判斷的對話訊息時，放久變 IDLE 也不是「使用者已回應」的證據。
+
+    ``_tail_kind == "none"`` 可能來自空檔、全是簿記噪音，或讀取視窗裡沒有真訊息。
+    舊判準只排除 interrupted，會讓這種不確定 row 覆蓋 hook 的 WAITING；等 scan 的
+    閒置門檻一到，看板就會把仍需回應的 session 顯示成「跑完停著」。
+    """
+    hook_session = Session(
+        "same-id",
+        "/work/app",
+        Status.WAITING,
+        100.0,
+        "permission",
+        "hook",
+        tty="/dev/ttys001",
+        provider="claude-code",
+        waiting_kind="permission",
+    )
+    scan_session = Session(
+        "same-id",
+        "/work/app",
+        Status.IDLE,
+        110.0,
+        "no conversation evidence",
+        "scan",
+        provider="claude-code",
+    )
+    scan_session._tail_kind = "none"
     monkeypatch.setattr(
         sources,
         "_SOURCES",
