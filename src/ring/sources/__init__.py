@@ -109,9 +109,10 @@ def _merge_duplicate_session(current: Session, candidate: Session) -> Session:
     只看 last_active 先後還不夠：Claude Code 在送出需要權限的 tool_use 之後，會繼續
     往同一份 transcript 追加幾筆非對話簿記紀錄（last-prompt / ai-title / mode /
     permission-mode 等），這些紀錄一樣會推進檔案 mtime，但不代表使用者真的回應了
-    權限請求。因此還要求 candidate 的 ``_tail_kind`` 不是 ``"interrupted"``——
-    只有真人 prompt（"working"）或對話真的收尾（"waiting"）才算「使用者真的回應了」，
-    單純簿記寫入（tail 仍是 interrupted）不該觸發覆蓋。
+    權限請求。因此還要求 candidate 的 ``_tail_kind`` 是明確的 ``"working"`` 或
+    ``"waiting"``——只有真人 prompt 或對話真的收尾才算「使用者真的回應了」。
+    單純簿記寫入（tail 仍是 interrupted），以及尾端沒有任何可判斷訊息（"none"），
+    都不是回應證據；尤其不能因為 scan row 放久後從 WORKING 變成 IDLE，就把紅色清掉。
 
     例外：``waiting_kind="question"``（Stop 結尾提問升上來的 🔴）本來就伴隨 end_turn
     的對話尾——scan 看到 ``_tail_kind == "waiting"`` 只是同一件事的另一種說法，不是
@@ -124,7 +125,7 @@ def _merge_duplicate_session(current: Session, candidate: Session) -> Session:
         and candidate.provider == current.provider
         and candidate.status is not Status.WAITING
         and candidate.last_active > current.last_active
-        and candidate._tail_kind != "interrupted"
+        and candidate._tail_kind in {"working", "waiting"}
         and not (current.waiting_kind == "question" and candidate._tail_kind == "waiting")
     ):
         if not candidate.tty:
