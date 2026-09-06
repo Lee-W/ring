@@ -86,6 +86,7 @@ BARE_SESSION_START_GRACE_SECONDS = 120.0
 # 同義 provider 名先正規化（例如 "claude" → "claude-code"）。
 _PROVIDER_ALIASES: dict[str, str] = {"claude": "claude-code"}
 _PROVIDER_PROCS: dict[str, Callable[[], list[tuple[str, str]] | None]] = {}
+_PROVIDER_PIDS: dict[str, Callable[[], list[int] | None]] = {}
 
 
 def _canonical_provider(provider: str) -> str:
@@ -269,13 +270,25 @@ def prune_hidden_sessions(
         return stale
 
 
-def register_provider_procs(provider: str, detector: Callable[[], list[tuple[str, str]] | None]) -> None:
+def register_provider_procs(
+    provider: str,
+    detector: Callable[[], list[tuple[str, str]] | None],
+    *,
+    pid_detector: Callable[[], list[int] | None] | None = None,
+) -> None:
     """註冊某 provider 的 live-process 偵測器（回傳 ``[(cwd, tty), …]``）。
 
     有偵測器的 provider 才會在 ``_hook_sessions`` 走 process-based 存活清理；沒註冊的
     provider 一律 fail-open（不靠 process 判離場，交給該工具自己的 SessionEnd hook）。
+    有提供 ``pid_detector`` 時，新格式 hook row 會優先用精準 PID 驗活；未提供或舊格式
+    row 則繼續使用 cwd / tty 判定。
     """
-    _PROVIDER_PROCS[_canonical_provider(provider)] = detector
+    canonical = _canonical_provider(provider)
+    _PROVIDER_PROCS[canonical] = detector
+    if pid_detector is None:
+        _PROVIDER_PIDS.pop(canonical, None)
+    else:
+        _PROVIDER_PIDS[canonical] = pid_detector
 
 
 def collect_provider_procs() -> dict[str, list[tuple[str, str]] | None]:
@@ -285,6 +298,20 @@ def collect_provider_procs() -> dict[str, list[tuple[str, str]] | None]:
     必須把它與「真的偵測到零個 live process」分開處理，不能兩者都判離場。
     """
     return {provider: detector() for provider, detector in _PROVIDER_PROCS.items()}
+
+
+def collect_provider_pids(providers: set[str] | None = None) -> dict[str, list[int] | None]:
+    """取得 provider 的 live PID，供新格式 hook row 做精準存活比對。
+
+    ``providers`` 只限制要呼叫哪些偵測器；沒有 PID 偵測器的 provider 不會出現在
+    結果中，讀取側會沿用 cwd / tty fallback。``None`` 仍代表這輪偵測失敗。
+    """
+    wanted = None if providers is None else {_canonical_provider(provider) for provider in providers}
+    result: dict[str, list[int] | None] = {}
+    for provider, detector in _PROVIDER_PIDS.items():
+        if wanted is None or provider in wanted:
+            result[provider] = detector()
+    return result
 
 
 class Status(StrEnum):
@@ -316,6 +343,7 @@ class Session:
     tmux_pane: str | None = None  # stable tmux pane id from hook, e.g. "%12"
     tty: str | None = None  # e.g. "/dev/ttys003"，給非-tmux 終端（iTerm2 等）聚焦用
     hook_pid: int | None = None
+    agent_pid: int | None = None  # provider CLI 的長命 process；精準排除同 cwd 的舊 hook row
     heartbeat_at: float = 0.0
     source_path: str = ""
     hook_stale: bool = False
@@ -786,8 +814,8 @@ def _codex_procs() -> list[tuple[str, str]] | None:
 
 
 # 內建 provider 的 live-process 偵測器。外部工具用 register_provider_procs() 加自己的。
-register_provider_procs("claude-code", _claude_procs)
-register_provider_procs("codex", _codex_procs)
+register_provider_procs("claude-code", _claude_procs, pid_detector=running_foreground_claude_pids)
+register_provider_procs("codex", _codex_procs, pid_detector=running_codex_pids)
 
 
 def _codex_tail_kind(records: list[dict[str, Any]]) -> str:
@@ -1069,6 +1097,7 @@ def _hook_sessions(
     procs: list[tuple[str, str]] | None = None,
     *,
     procs_by_provider: dict[str, list[tuple[str, str]] | None] | None = None,
+    pids_by_provider: dict[str, list[int] | None] | None = None,
     purge_session_start_phantoms: bool = True,
 ) -> list[Session]:
     if not RING_REGISTRY.is_dir():
@@ -1098,6 +1127,7 @@ def _hook_sessions(
                 tmux_pane=str(data.get("tmux_pane", "")) or None,
                 tty=str(data.get("tty", "")) or None,
                 hook_pid=int(data["hook_pid"]) if str(data.get("hook_pid", "")).isdigit() else None,
+                agent_pid=int(data["agent_pid"]) if str(data.get("agent_pid", "")).isdigit() else None,
                 heartbeat_at=float(data.get("heartbeat_at", data.get("last_active", 0.0))),
                 source_path=str(data.get("source_path", "")),
                 todo=tuple(todo) if isinstance(todo, list) and len(todo) == 2 else None,
@@ -1135,16 +1165,25 @@ def _hook_sessions(
     for s in out:
         if s.source == "hook":
             s.hook_stale = _hook_heartbeat_stale(s.source_path, s.heartbeat_at, s.status)
+    pid_providers = {
+        _canonical_provider(s.provider)
+        for s in out
+        if s.agent_pid is not None and _canonical_provider(s.provider) in _PROVIDER_PIDS
+    }
+    if pids_by_provider is None and pid_providers:
+        pids_by_provider = collect_provider_pids(pid_providers)
     # SessionEnd 沒觸發（crash）會留下幽靈檔。判定離場：
-    #   1. 該 cwd 完全沒有 live proc → 一定離場。
-    #   2. 該 cwd 的 hook row 數「多於一筆」時，用 tty 挑出 tty 對不上的那幾筆標離場——
+    #   1. 新格式 row 有 provider CLI PID 時，直接用 PID 判斷，不讓同 cwd 的另一個新
+    #      session 替已離場的舊 WAITING row 證明存活。
+    #   2. 舊格式 row 的 cwd 完全沒有 live proc → 一定離場。
+    #   3. 該 cwd 的 hook row 數「多於一筆」時，用 tty 挑出 tty 對不上的那幾筆標離場——
     #      不論這筆數是否 <= live proc 數：計數只是巧合對上（例如同 cwd 剛好有跟 RiNG
     #      hook 無關的 live process 佔掉名額），不代表每筆 row 都真的還活著；row 數 > 1
     #      時 tty 交叉比對才有意義去挑出誰是 stale 的。
-    #   3. 該 cwd 只有「單一」hook row 時，無論 tty 是否對得上都不靠 tty 殺——hook 寫進來
+    #   4. 該 cwd 只有「單一」舊格式 hook row 時，無論 tty 是否對得上都不靠 tty 殺——hook 寫進來
     #      的 tty 不一定可靠（終端 tty 會被作業系統重配，甚至跨 session 錯置），拿它隱藏
     #      唯一活著的 session 會讓整列憑空消失。
-    #   4. 「這個 provider 這輪 ps／lsof 掃描失敗」（值為 ``None``）是「未知」，不是
+    #   5. 「這個 provider 這輪 ps／lsof 掃描失敗」（值為 ``None``）是「未知」，不是
     #      「真的偵測到零個 live process」——未知時完全不動這個 provider 底下任何一筆
     #      row 的狀態，保留既有狀態，避免單次系統瞬間卡頓（ps timeout）把整版 session
     #      誤判 ENDED（見 ring-vanishing-sessions 診斷）。
@@ -1187,6 +1226,13 @@ def _hook_sessions(
                 continue  # 沒有 proc 偵測器 → 無法驗活性 → fail-open，交給 SessionEnd
             if pk == "claude-code" and s.session_id in background_ids:
                 continue
+            if s.agent_pid is not None and pids_by_provider is not None and pk in pids_by_provider:
+                live_pids = pids_by_provider[pk]
+                if live_pids is not None:
+                    if s.agent_pid not in live_pids:
+                        s.status = Status.ENDED
+                    # PID 活著或確定已死都已精準判完；不再讓 cwd / tty 猜測覆寫結果。
+                    continue
             rows_by_key.setdefault((pk, _real(s.cwd)), []).append(s)
 
         for key, rows in rows_by_key.items():
@@ -1206,7 +1252,7 @@ def _hook_sessions(
                     s.status = Status.ENDED
                 continue
 
-            # 單筆 row：不靠 tty 殺，理由見上方註解 3——避免唯一活著的 session 因 tty
+            # 單筆舊格式 row：不靠 tty 殺，理由見上方註解 4——避免唯一活著的 session 因 tty
             # 重配而憑空消失（test_hook_sessions_keeps_lone_live_session_with_wrong_tty）。
             if len(rows) == 1:
                 continue

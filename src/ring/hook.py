@@ -120,25 +120,22 @@ def _ps_row(pid: int) -> tuple[int, str] | None:
         return None
 
 
-def _session_tty(process_names: tuple[str, ...]) -> str:
-    """hook 是 agent CLI 的後代——往上找到 provider process，回它的控制終端 tty。
-
-    這是「session → 哪個終端」最精準的對應（不必靠 cwd 猜），給非-tmux 終端 focuser（iTerm2 等）跳轉用。
-    """
+def _session_pid(process_names: tuple[str, ...]) -> int | None:
+    """hook 是 agent CLI 的後代——往上找到真正的 provider process PID。"""
     if not process_names:
-        return ""
+        return None
     pid = os.getppid()
     for _attempt in range(12):
         row = _ps_row(pid)
         if row is None:
-            return ""
+            return None
         ppid, comm = row
         if Path(comm.strip()).name in process_names:
-            return _pid_tty(pid)
+            return pid
         if ppid <= 1:
-            return ""
+            return None
         pid = ppid
-    return ""
+    return None
 
 
 def _controlling_tty() -> str:
@@ -239,6 +236,15 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
         "last_action": last_action,
         "hook_pid": os.getpid(),
     }
+    is_subagent_event = any(
+        data.get(key) not in {None, ""} for key in ("agent_id", "agentId", "agent_type", "agentType")
+    )
+    agent_pid = None if is_subagent_event else _session_pid(adapter.process_names)
+    if agent_pid is not None:
+        payload["agent_pid"] = agent_pid
+    elif is_subagent_event and str(prev_row.get("agent_pid", "")).isdigit():
+        # subagent 的 hook 共用 host session_id；不可讓背景 process PID 覆寫前景 session 綁定。
+        payload["agent_pid"] = int(prev_row["agent_pid"])
     if tp:
         payload["source_path"] = tp
     tmux_pane = os.environ.get("TMUX_PANE", "").strip()
@@ -268,7 +274,7 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
             waiting_detail = pending_detail
         if waiting_detail:
             payload["waiting_detail"] = waiting_detail
-    tty = event.tty or _controlling_tty() or _session_tty(adapter.process_names)
+    tty = event.tty or _controlling_tty() or (_pid_tty(agent_pid) if agent_pid is not None else "")
     if tty:
         payload["tty"] = tty
 

@@ -176,7 +176,9 @@ notify_debounce_seconds = 5  # 0 = 關閉（預設）；正數＝合流窗口秒
 
 RiNG 正常收到 `SessionEnd` 時會刪掉自己的 hook registry；如果 agent crash 或 hook 沒跑到結尾，
 可能留下已離場的 `~/.config/ring/sessions/*.json`。這些檔案預設不會顯示在看板上，但可以用
-`ring gc` 清掉。
+`ring gc` 清掉。新寫入的 hook 狀態也會綁定真正的 agent process PID；即使之後在同一目錄
+開了另一個 Claude，舊的等待狀態也不會被誤認成仍然存活。舊格式狀態則繼續用 cwd / tty
+做相容判定。
 
 ```sh
 ring gc --dry-run        # 預覽會刪哪些檔案

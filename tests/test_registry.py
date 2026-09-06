@@ -915,22 +915,22 @@ def _write_hook_session(
     last_active: float = 123.0,
     status: str = "waiting",
     last_event: str = "",
+    agent_pid: int | None = None,
 ) -> None:
     registry_dir.mkdir(parents=True, exist_ok=True)
-    (registry_dir / f"{sid}.json").write_text(
-        json.dumps(
-            {
-                "session_id": sid,
-                "provider": provider,
-                "cwd": cwd,
-                "status": status,
-                "last_active": last_active,
-                "last_action": "—",
-                "tty": tty,
-                "last_event": last_event,
-            }
-        )
-    )
+    row: dict[str, Any] = {
+        "session_id": sid,
+        "provider": provider,
+        "cwd": cwd,
+        "status": status,
+        "last_active": last_active,
+        "last_action": "—",
+        "tty": tty,
+        "last_event": last_event,
+    }
+    if agent_pid is not None:
+        row["agent_pid"] = agent_pid
+    (registry_dir / f"{sid}.json").write_text(json.dumps(row))
 
 
 def test_hook_sessions_ends_stale_tty_even_when_same_cwd_has_live_proc(
@@ -1041,6 +1041,39 @@ def test_hook_sessions_keeps_lone_live_session_with_wrong_tty(monkeypatch: pytes
     sessions = _hook_sessions([("/work/app", "/dev/ttys006")])  # 實際 live tty 不同
 
     assert sessions[0].status is Status.WAITING, "唯一活著的 session 不該因 tty 對不上而消失"
+
+
+def test_hook_sessions_exact_pid_ends_stale_wait_from_previous_same_cwd_process(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """同 cwd 開了新 Claude 時，舊 process 留下的 WAITING row 不得被新 process 復活。"""
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(registry_dir, "stale", "/work/app", "/dev/ttys003", agent_pid=111)
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+    monkeypatch.setitem(registry._PROVIDER_PIDS, "claude-code", lambda: [222])
+
+    sessions = _hook_sessions(
+        procs_by_provider={"claude-code": [("/work/app", "/dev/ttys003")]},
+    )
+
+    assert sessions[0].agent_pid == 111
+    assert sessions[0].status is Status.ENDED
+
+
+def test_hook_sessions_exact_pid_keeps_live_wait_despite_cwd_or_tty_mismatch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """精準 PID 仍活著時，不再讓 session 中途 cd 或 tty 重配把 WAITING row 誤殺。"""
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(registry_dir, "live", "/work/app/subdir", "/dev/ttys001", agent_pid=222)
+    monkeypatch.setattr("ring.registry.RING_REGISTRY", registry_dir)
+
+    sessions = _hook_sessions(
+        procs_by_provider={"claude-code": [("/work/app", "/dev/ttys009")]},
+        pids_by_provider={"claude-code": [222]},
+    )
+
+    assert sessions[0].status is Status.WAITING
 
 
 def test_hook_sessions_ends_bare_session_start_background_row(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

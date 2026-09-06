@@ -10,6 +10,8 @@ from ring.config import Config
 from ring.hook import _is_ring_hook_command, install_hooks, uninstall_hooks
 from ring.registry import Session, Status
 
+real_session_pid = hook._session_pid
+
 
 @pytest.fixture(autouse=True)
 def _hermetic_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -26,6 +28,7 @@ def _hermetic_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr("ring.notify_queue._QUEUE_PATH", tmp_path / "notify-queue.json")
     monkeypatch.setattr("ring.notify_queue._QUIET_PATH", tmp_path / "quiet")
     monkeypatch.setattr("ring.notify_queue.get_config", lambda: Config())
+    monkeypatch.setattr(hook, "_session_pid", lambda _process_names: None)
 
 
 def _feed(monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any]) -> None:
@@ -40,6 +43,17 @@ def _settings_with_ring_hook(settings: Path, cmd: str = "ring hook", timeout: in
     settings.write_text(json.dumps(data, indent=2))
 
 
+def test_session_pid_walks_to_provider_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("ring.hook.os.getppid", lambda: 300)
+    parents = {
+        300: (200, "/bin/zsh"),
+        200: (100, "/Users/test/.local/bin/claude"),
+    }
+    monkeypatch.setattr(hook, "_ps_row", parents.get)
+
+    assert real_session_pid(("claude",)) == 200
+
+
 def test_stop_writes_idle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
     _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "Stop", "cwd": "/x"})
@@ -49,10 +63,11 @@ def test_stop_writes_idle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
     assert data["cwd"] == "/x"
 
 
-def test_hook_event_writes_tmux_binding_and_hook_pid(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_hook_event_writes_tmux_binding_and_process_pids(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
     monkeypatch.setenv("TMUX_PANE", "%42")
     monkeypatch.setattr(hook, "_controlling_tty", lambda: "/dev/ttys042")
+    monkeypatch.setattr(hook, "_session_pid", lambda _process_names: 4242)
     _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "Stop", "cwd": "/x"})
 
     assert hook.run_hook() == 0
@@ -61,6 +76,31 @@ def test_hook_event_writes_tmux_binding_and_hook_pid(monkeypatch: pytest.MonkeyP
     assert data["tmux_pane"] == "%42"
     assert data["tty"] == "/dev/ttys042"
     assert isinstance(data["hook_pid"], int)
+    assert data["agent_pid"] == 4242
+
+
+def test_subagent_event_preserves_foreground_agent_pid(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """subagent hook 共用 host session id，不得把背景 process PID 寫成前景 session 身分。"""
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    monkeypatch.setattr(hook, "_session_pid", lambda _process_names: 111)
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PreToolUse", "cwd": "/x"})
+    assert hook.run_hook() == 0
+
+    monkeypatch.setattr(hook, "_session_pid", lambda _process_names: 222)
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "PostToolUse",
+            "cwd": "/x",
+            "agent_id": "agent-a",
+            "agent_type": "general-purpose",
+        },
+    )
+    assert hook.run_hook() == 0
+
+    data = json.loads((tmp_path / "s1.json").read_text())
+    assert data["agent_pid"] == 111
 
 
 def test_hook_event_writes_heartbeat_and_source_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -579,7 +619,7 @@ def test_delegates_to_agent_hooks_when_backend_set(monkeypatch: pytest.MonkeyPat
         return types.SimpleNamespace(returncode=0)
 
     monkeypatch.setattr("ring.hook.subprocess.run", fake_run)
-    # payload 帶 tty，避免 _session_tty 去呼叫 ps（那也是 subprocess.run）
+    # payload 帶 tty；_session_pid 已由 autouse fixture 隔離，不會把 ps 混進 calls。
     _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "PermissionRequest", "cwd": "/x", "tty": "/dev/ttys1"})
 
     assert hook.run_hook() == 0
