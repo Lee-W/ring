@@ -179,7 +179,9 @@ empty. Quiet is a global setting, not per-session.
 
 When RiNG receives `SessionEnd`, it removes its own hook registry entry. If an agent crashes or the
 final hook does not run, ended `~/.config/ring/sessions/*.json` files can remain. They are hidden from
-the board by default, and you can remove them with `ring gc`.
+the board by default, and you can remove them with `ring gc`. Newly written hook state is also bound
+to the actual agent process PID, so a different Claude started later in the same directory cannot
+make an old waiting state appear live again. Legacy state continues to use the cwd / tty fallback.
 
 ```sh
 ring gc --dry-run        # preview what would be deleted
