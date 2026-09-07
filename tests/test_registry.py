@@ -1076,6 +1076,82 @@ def test_hook_sessions_exact_pid_keeps_live_wait_despite_cwd_or_tty_mismatch(
     assert sessions[0].status is Status.WAITING
 
 
+@pytest.mark.parametrize("provider", ["claude-code", "codex"])
+@pytest.mark.parametrize("legacy_tty", ["/dev/ttys001", "/dev/ttys002", ""])
+def test_hook_sessions_mixed_formats_do_not_share_claimed_process(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, provider: str, legacy_tty: str
+) -> None:
+    registry_dir = tmp_path / "sessions"
+    # 即使舊列較新、tty 被重配或缺失，也不能搶走已由 PID 認領的 process。
+    _write_hook_session(registry_dir, "old", "/work/app", legacy_tty, provider, last_active=300)
+    _write_hook_session(
+        registry_dir,
+        "new",
+        "/work/app",
+        "/dev/ttys002",
+        provider,
+        agent_pid=222,
+        last_active=200,
+        status="working",
+    )
+    monkeypatch.setattr(registry, "RING_REGISTRY", registry_dir)
+    monkeypatch.setattr(registry, "background_agent_session_ids", set)
+
+    sessions = _hook_sessions(
+        procs_by_provider={provider: [("/work/app", "/dev/ttys002")]},
+        pids_by_provider={provider: [222]},
+    )
+
+    assert {s.session_id: s.status for s in sessions} == {"old": Status.ENDED, "new": Status.WORKING}
+
+
+@pytest.mark.parametrize(
+    ("procs", "pids", "expected"),
+    [
+        pytest.param(
+            [("/work/app", "/dev/ttys001"), ("/work/app", "/dev/ttys002")],
+            [111, 222],
+            {"old": Status.WAITING, "new": Status.WORKING},
+            id="both-live",
+        ),
+        pytest.param(
+            [("/work/app", "/dev/ttys001")], [111], {"old": Status.WAITING, "new": Status.ENDED}, id="bound-pid-dead"
+        ),
+        pytest.param(None, None, {"old": Status.WAITING, "new": Status.WORKING}, id="scan-unknown"),
+        pytest.param(
+            [("/work/app", "/dev/ttys002")],
+            None,
+            {"old": Status.ENDED, "new": Status.WORKING},
+            id="pid-unknown-tty-fallback",
+        ),
+    ],
+)
+def test_hook_sessions_mixed_formats_preserve_unclaimed_processes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    procs: list[tuple[str, str]] | None,
+    pids: list[int] | None,
+    expected: dict[str, Status],
+) -> None:
+    registry_dir = tmp_path / "sessions"
+    _write_hook_session(registry_dir, "old", "/work/app", "/dev/ttys001", last_active=100)
+    _write_hook_session(
+        registry_dir,
+        "new",
+        "/work/app",
+        "/dev/ttys002",
+        agent_pid=222,
+        last_active=200,
+        status="working",
+    )
+    monkeypatch.setattr(registry, "RING_REGISTRY", registry_dir)
+    monkeypatch.setattr(registry, "background_agent_session_ids", set)
+
+    sessions = _hook_sessions(procs_by_provider={"claude-code": procs}, pids_by_provider={"claude-code": pids})
+
+    assert {s.session_id: s.status for s in sessions} == expected
+
+
 def test_hook_sessions_ends_bare_session_start_background_row(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """背景 job／agent 的承載 session（只送 SessionStart、無 tty）不該一直掛在看板上。
 

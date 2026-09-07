@@ -178,7 +178,12 @@ RiNG 正常收到 `SessionEnd` 時會刪掉自己的 hook registry；如果 agen
 可能留下已離場的 `~/.config/ring/sessions/*.json`。這些檔案預設不會顯示在看板上，但可以用
 `ring gc` 清掉。新寫入的 hook 狀態也會綁定真正的 agent process PID；即使之後在同一目錄
 開了另一個 Claude，舊的等待狀態也不會被誤認成仍然存活。舊格式狀態則繼續用 cwd / tty
-做相容判定。
+做相容判定；新舊格式並存時，已由 PID 認領的 process 不會重複分配給舊等待紀錄。
+一般 hook 暫時查不到 PID 時會保留既有綁定；`SessionStart` 或成功偵測到另一個 PID 時則重新綁定。
+
+背景 subagent 的工具進度不會清掉前景或其他 agent 的等待，也不會覆寫前景終端位置。
+有明確 agent ID 的 subagent 仍能解除自己發出的等待。同一 session 的 hook 更新會序列化，
+避免並行寫入互撞；系統通知在釋放鎖後才發送，不會持鎖阻擋後續 hook。
 
 ```sh
 ring gc --dry-run        # 預覽會刪哪些檔案

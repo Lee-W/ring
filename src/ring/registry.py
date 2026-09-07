@@ -1220,25 +1220,33 @@ def _hook_sessions(
         # 這裡的 fallback 只是避免拿 None 做 in 運算炸掉。
         background_ids = background_agent_session_ids() or set()
         rows_by_key: dict[tuple[str, str], list[Session]] = {}
+        pid_resolved: set[str] = set()
+        claimed_pids: dict[tuple[str, str], set[int]] = {}
         for s in out:
             pk = _canonical_provider(s.provider)
             if pk not in _PROVIDER_PROCS:
                 continue  # 沒有 proc 偵測器 → 無法驗活性 → fail-open，交給 SessionEnd
             if pk == "claude-code" and s.session_id in background_ids:
                 continue
+            key = (pk, _real(s.cwd))
+            rows_by_key.setdefault(key, []).append(s)
             if s.agent_pid is not None and pids_by_provider is not None and pk in pids_by_provider:
                 live_pids = pids_by_provider[pk]
                 if live_pids is not None:
                     if s.agent_pid not in live_pids:
                         s.status = Status.ENDED
-                    # PID 活著或確定已死都已精準判完；不再讓 cwd / tty 猜測覆寫結果。
-                    continue
-            rows_by_key.setdefault((pk, _real(s.cwd)), []).append(s)
+                    else:
+                        claimed_pids.setdefault(key, set()).add(s.agent_pid)
+                    # 保留完整分組基數與已認領的名額，但 fallback 不得覆寫精準 PID 結果。
+                    pid_resolved.add(s.session_id)
 
         for key, rows in rows_by_key.items():
             pk, row_cwd = key
             if pk in unknown_providers:
                 continue  # 這輪掃描失敗，未知不等於離場，保留既有狀態
+            fallback_rows = [s for s in rows if s.session_id not in pid_resolved]
+            if not fallback_rows:
+                continue
             live_n = proc_counts.get(key, 0)
             if live_n == 0:
                 if _has_ancestor_live_process(row_cwd, proc_cwds_by_provider.get(pk, [])):
@@ -1248,7 +1256,7 @@ def _hook_sessions(
                     # cd 進子目錄的 session 誤判 ENDED（見
                     # test_hook_sessions_keeps_live_session_when_cwd_moved_to_subdir）。
                     continue
-                for s in rows:
+                for s in fallback_rows:
                     s.status = Status.ENDED
                 continue
 
@@ -1259,19 +1267,15 @@ def _hook_sessions(
 
             live_ttys = proc_ttys.get(key, set())
             if live_ttys:
-                for s in rows:
+                for s in fallback_rows:
                     if s.tty and s.tty not in live_ttys:
                         s.status = Status.ENDED
 
-            if len(rows) <= live_n:
-                # 沒有多餘列要修剪，但上面的 tty 交叉比對仍然有效——即使計數巧合對上，
-                # tty 對不上的那幾筆（例如已 crash 的舊 row）還是會被標離場，不會永遠
-                # 靠計數巧合躲過清理。
-                continue
-
-            remaining = [s for s in rows if s.status is not Status.ENDED]
-            if len(remaining) > live_n:
+            # 新舊格式不能共用同一個 process 名額；只修剪未經 PID 確認的列。
+            available = max(0, live_n - len(claimed_pids.get(key, set())))
+            remaining = [s for s in fallback_rows if s.status is not Status.ENDED]
+            if len(remaining) > available:
                 remaining.sort(key=lambda s: s.last_active, reverse=True)
-                for s in remaining[live_n:]:
+                for s in remaining[available:]:
                     s.status = Status.ENDED
     return out
