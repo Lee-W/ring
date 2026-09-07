@@ -1,12 +1,19 @@
+import fcntl
 import io
 import json
+import multiprocessing
+import subprocess
+from multiprocessing.synchronize import Event as ProcessEvent
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 import ring.hook as hook
+import ring.registry as registry
+import ring.sources as sources
 from ring.config import Config
+from ring.focus import kitty
 from ring.hook import _is_ring_hook_command, install_hooks, uninstall_hooks
 from ring.registry import Session, Status
 
@@ -101,6 +108,307 @@ def test_subagent_event_preserves_foreground_agent_pid(monkeypatch: pytest.Monke
 
     data = json.loads((tmp_path / "s1.json").read_text())
     assert data["agent_pid"] == 111
+
+
+@pytest.fixture
+def hook_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    path = tmp_path / "sessions"
+    monkeypatch.setattr(hook, "RING_REGISTRY", path)
+    monkeypatch.setattr(hook, "unhide_session", lambda sid: None)
+    monkeypatch.setattr(hook, "_controlling_tty", lambda: "")
+    monkeypatch.setattr(hook, "_pid_tty", lambda pid: "/dev/ttys002")
+    monkeypatch.setattr(hook, "_session_pid", lambda names: 222)
+    monkeypatch.delenv("TMUX_PANE", raising=False)
+    return path
+
+
+@pytest.mark.parametrize("event_name", ["PreToolUse", "PostToolUse", "PermissionRequest"])
+def test_subagent_progress_preserves_foreground_wait(
+    monkeypatch: pytest.MonkeyPatch, hook_registry: Path, event_name: str
+) -> None:
+    notifications: list[Any] = []
+    monkeypatch.setattr(hook, "_ring_waiting_now", lambda *args: notifications.append(args))
+    foreground = {"session_id": "s1", "cwd": "/work/app"}
+    hook._record_session_state(
+        dict(foreground, hook_event_name="Notification", notification_type="permission_prompt", message="approve me"),
+        "claude-code",
+    )
+    before = json.loads((hook_registry / "s1.json").read_text())
+    hook._record_session_state(
+        dict(foreground, hook_event_name=event_name, tool_name="Read", agent_id="background-a"),
+        "claude-code",
+    )
+    after = json.loads((hook_registry / "s1.json").read_text())
+    fields = ("status", "waiting_kind", "waiting_detail", "waiting_notified_at")
+    assert {k: after.get(k) for k in fields} == {k: before.get(k) for k in fields}
+    assert len(notifications) == 1
+
+    hook._record_session_state(dict(foreground, hook_event_name="UserPromptSubmit"), "claude-code")
+    assert json.loads((hook_registry / "s1.json").read_text())["status"] == "working"
+
+
+@pytest.mark.parametrize(
+    ("waiting_agent", "progress_agent", "expected"),
+    [("a", "a", "working"), ("a", "b", "waiting")],
+    ids=["own-wait-resolved", "other-agent-still-waiting"],
+)
+def test_subagent_progress_only_resolves_its_own_wait(
+    hook_registry: Path, waiting_agent: str, progress_agent: str, expected: str
+) -> None:
+    payload = {"session_id": "s1", "cwd": "/work/app"}
+    hook._record_session_state(
+        dict(payload, hook_event_name="PermissionRequest", requires_action=True, agent_id=waiting_agent),
+        "claude-code",
+    )
+    hook._record_session_state(
+        dict(payload, hook_event_name="PostToolUse", tool_name="Read", agent_id=progress_agent),
+        "claude-code",
+    )
+    assert json.loads((hook_registry / "s1.json").read_text())["status"] == expected
+
+
+@pytest.mark.parametrize("agent_key", ["agent_id", "agentId", "agent_type", "agentType"])
+def test_subagent_preserves_foreground_terminal_and_transcript(
+    monkeypatch: pytest.MonkeyPatch, hook_registry: Path, agent_key: str
+) -> None:
+    monkeypatch.setenv("TMUX_PANE", "%1")
+    hook._record_session_state(
+        {"session_id": "s1", "cwd": "/work/app", "hook_event_name": "PreToolUse", "transcript_path": "/host.jsonl"},
+        "claude-code",
+    )
+    before = json.loads((hook_registry / "s1.json").read_text())
+    monkeypatch.setenv("TMUX_PANE", "%2")
+    hook._record_session_state(
+        {
+            "session_id": "s1",
+            "cwd": "/background",
+            "hook_event_name": "PostToolUse",
+            "transcript_path": "/background.jsonl",
+            "tty": "/dev/ttys999",
+            agent_key: "background-a",
+        },
+        "claude-code",
+    )
+    after = json.loads((hook_registry / "s1.json").read_text())
+    fields = ("agent_pid", "tty", "tmux_pane", "cwd", "origin_cwd", "source_path")
+    assert {k: after.get(k) for k in fields} == {k: before.get(k) for k in fields}
+
+
+@pytest.mark.parametrize(
+    ("event_name", "new_pid", "expected_pid", "expected_tty"),
+    [
+        pytest.param("Notification", None, 222, "/dev/ttys002", id="unknown-lookup-keeps-binding"),
+        pytest.param("SessionStart", None, None, None, id="new-session-does-not-inherit-unknown-binding"),
+        pytest.param("PreToolUse", 333, 333, None, id="new-pid-does-not-inherit-old-terminal"),
+    ],
+)
+def test_foreground_binding_survives_lookup_failure_but_not_rebinding(
+    monkeypatch: pytest.MonkeyPatch,
+    hook_registry: Path,
+    event_name: str,
+    new_pid: int | None,
+    expected_pid: int | None,
+    expected_tty: str | None,
+) -> None:
+    payload = {"session_id": "s1", "cwd": "/work/app"}
+    hook._record_session_state(
+        dict(payload, hook_event_name="Notification", notification_type="permission_prompt"),
+        "claude-code",
+    )
+    monkeypatch.setattr(hook, "_session_pid", lambda names: new_pid)
+    monkeypatch.setattr(hook, "_pid_tty", lambda pid: "")
+    hook._record_session_state(
+        dict(payload, hook_event_name=event_name, notification_type="idle_prompt"),
+        "claude-code",
+    )
+    after = json.loads((hook_registry / "s1.json").read_text())
+    assert (after.get("agent_pid"), after.get("tty")) == (expected_pid, expected_tty)
+
+
+def _concurrent_hook_writer(
+    registry_path: Path,
+    first_reading: ProcessEvent,
+    second_started: ProcessEvent,
+    second_reading: ProcessEvent,
+    release_first: ProcessEvent,
+    observations: Any,
+    notification_type: str,
+) -> None:
+    """spawn 子程序也獨立隔離 registry、通知與設定，不繼承 pytest 的全域 mock。"""
+    previous_row = hook._previous_row
+
+    def read_previous(path: Path) -> dict[str, Any]:
+        row = previous_row(path)
+        role = multiprocessing.current_process().name
+        observations.put((role, row.get("status")))
+        if role == "first":
+            first_reading.set()
+            assert release_first.wait(5)
+        else:
+            second_reading.set()
+        return row
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(hook, "RING_REGISTRY", registry_path)
+        patch.setattr(hook, "get_config", lambda: Config())
+        patch.setattr(hook, "unhide_session", lambda sid: None)
+        patch.setattr(hook, "log_transition", lambda *args: None)
+        patch.setattr(hook, "_session_pid", lambda names: None)
+        patch.setattr(hook, "_controlling_tty", lambda: "")
+        patch.setattr(hook, "_previous_row", read_previous)
+        patch.setattr(hook, "_ring_waiting_now", lambda *args: None)
+        if multiprocessing.current_process().name == "second":
+            second_started.set()
+        hook._record_session_state(
+            {
+                "session_id": "s1",
+                "cwd": "/work/app",
+                "hook_event_name": "Notification",
+                "notification_type": notification_type,
+            },
+            "claude-code",
+        )
+
+
+def test_hook_concurrent_processes_read_committed_predecessor(hook_registry: Path) -> None:
+    """第二個 writer 必須在第一個提交後才讀 prev_row，不能只保護 rename。"""
+    ctx = multiprocessing.get_context("spawn")
+    first_reading, second_started, second_reading, release_first = (ctx.Event() for _ in range(4))
+    observations = ctx.Queue()
+    args = (hook_registry, first_reading, second_started, second_reading, release_first, observations)
+    workers = [
+        ctx.Process(name="first", target=_concurrent_hook_writer, args=(*args, "permission_prompt")),
+        ctx.Process(name="second", target=_concurrent_hook_writer, args=(*args, "idle_prompt")),
+    ]
+    try:
+        workers[0].start()
+        assert first_reading.wait(5)
+        workers[1].start()
+        assert second_started.wait(5)
+        # 讓第二個 writer 嘗試讀取；有鎖時必須等待，不可讀到未提交的空 row。
+        entered_early = second_reading.wait(0.2)
+    finally:
+        release_first.set()
+        for worker in workers:
+            if worker.pid is not None:
+                worker.join(5)
+                if worker.is_alive():
+                    worker.terminate()
+                    worker.join(5)
+    assert [worker.exitcode for worker in workers] == [0, 0]
+    assert not entered_early
+    read_states = dict(observations.get(timeout=2) for _ in workers)
+    observations.close()
+    observations.join_thread()
+    assert read_states == {"first": None, "second": "waiting"}
+    assert json.loads((hook_registry / "s1.json").read_text())["status"] == "waiting"
+
+
+@pytest.mark.parametrize("failure_stage", ["write", "replace", "end"])
+def test_hook_io_failure_does_not_prevent_delegation(
+    monkeypatch: pytest.MonkeyPatch,
+    hook_registry: Path,
+    failure_stage: str,
+) -> None:
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise OSError("registry unavailable")
+
+    calls: list[str] = []
+
+    def delegate(raw: str, provider: str) -> int:
+        calls.append(provider)
+        return 0
+
+    monkeypatch.setattr(hook, "_delegate_to_agent_hooks", delegate)
+    method = {"write": "write_text", "replace": "replace", "end": "unlink"}[failure_stage]
+    monkeypatch.setattr(Path, method, fail)
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "SessionEnd" if failure_stage == "end" else "Stop"})
+    assert hook.run_hook() == 0
+    assert calls == ["claude-code"]
+
+
+def test_hook_notification_runs_after_unlock(monkeypatch: pytest.MonkeyPatch, hook_registry: Path) -> None:
+    notified: list[str] = []
+
+    def notify(event: Any, payload: dict[str, Any], last_action: str) -> None:
+        # 即使 notifier 很慢，前景的下一筆 hook 也必須能取得 lock。
+        with (hook_registry / "s1.json.lock").open("a") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        notified.append(event.session_id)
+        hook._record_session_state(
+            {"session_id": "s1", "cwd": "/work/app", "hook_event_name": "UserPromptSubmit"},
+            "claude-code",
+        )
+
+    monkeypatch.setattr(hook, "_ring_waiting_now", notify)
+    hook._record_session_state(
+        {
+            "session_id": "s1",
+            "cwd": "/work/app",
+            "hook_event_name": "Notification",
+            "notification_type": "permission_prompt",
+        },
+        "claude-code",
+    )
+    assert notified == ["s1"]
+    assert json.loads((hook_registry / "s1.json").read_text())["status"] == "working"
+
+
+@pytest.mark.parametrize("initial_status", ["working", "waiting"])
+def test_subagent_session_end_cannot_delete_host(hook_registry: Path, initial_status: str) -> None:
+    payload: dict[str, Any] = {"session_id": "s1", "hook_event_name": "PreToolUse"}
+    if initial_status == "waiting":
+        payload["requires_action"] = True
+    hook._record_session_state(payload, "claude-code")
+    path = hook_registry / "s1.json"
+    before = path.read_bytes()
+    assert json.loads(before)["status"] == initial_status
+    hook._record_session_state({"session_id": "s1", "hook_event_name": "SessionEnd", "agent_id": "a"}, "claude-code")
+    assert path.read_bytes() == before
+
+    hook._record_session_state({"session_id": "s1", "hook_event_name": "SessionEnd"}, "claude-code")
+    assert not path.exists()
+
+
+def test_lookup_failure_does_not_revive_dead_owner(monkeypatch: pytest.MonkeyPatch, hook_registry: Path) -> None:
+    payload = {"session_id": "s1", "cwd": "/work/app", "hook_event_name": "Notification"}
+    hook._record_session_state(dict(payload, notification_type="permission_prompt"), "claude-code")
+    monkeypatch.setattr(hook, "_session_pid", lambda names: None)
+    hook._record_session_state(dict(payload, notification_type="idle_prompt"), "claude-code")
+    monkeypatch.setattr(registry, "RING_REGISTRY", hook_registry)
+    monkeypatch.setattr(registry, "background_agent_session_ids", set)
+
+    sessions = registry._hook_sessions(
+        procs_by_provider={"claude-code": [("/work/app", "/dev/ttys003")]},
+        pids_by_provider={"claude-code": [333]},
+    )
+    assert [(s.session_id, s.agent_pid, s.status) for s in sessions] == [("s1", 222, Status.ENDED)]
+
+
+def test_subagent_without_tty_keeps_host_focusable(monkeypatch: pytest.MonkeyPatch, hook_registry: Path) -> None:
+    payload = {"session_id": "s1", "cwd": "/work/app"}
+    hook._record_session_state(dict(payload, hook_event_name="PreToolUse"), "claude-code")
+    hook._record_session_state(dict(payload, hook_event_name="PostToolUse", agent_id="a"), "claude-code")
+    monkeypatch.setattr(registry, "RING_REGISTRY", hook_registry)
+    monkeypatch.setattr(registry, "background_agent_session_ids", set)
+    current = registry._hook_sessions(
+        procs_by_provider={"claude-code": [("/work/app", "/dev/ttys002")]},
+        pids_by_provider={"claude-code": [222]},
+    )[0]
+    scan = Session("s1", "/work/app", Status.WORKING, current.last_active + 1, "tool", "scan", _tail_kind="interrupted")
+    session = sources._merge_duplicate_session(current, scan)
+    matched_ttys: list[str] = []
+
+    def resolve(tty: str) -> tuple[str, int]:
+        matched_ttys.append(tty)
+        return "/tmp/fake-kitty", 1
+
+    monkeypatch.setattr(kitty, "resolve_window", resolve)
+    monkeypatch.setattr(kitty, "_run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
+    monkeypatch.setattr(kitty, "osascript", lambda script: (0, "", ""))
+    assert kitty.focuser.try_focus(session) == (True, "kitty 1")
+    assert matched_ttys == ["/dev/ttys002"]
 
 
 def test_hook_event_writes_heartbeat_and_source_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

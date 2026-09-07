@@ -181,7 +181,15 @@ When RiNG receives `SessionEnd`, it removes its own hook registry entry. If an a
 final hook does not run, ended `~/.config/ring/sessions/*.json` files can remain. They are hidden from
 the board by default, and you can remove them with `ring gc`. Newly written hook state is also bound
 to the actual agent process PID, so a different Claude started later in the same directory cannot
-make an old waiting state appear live again. Legacy state continues to use the cwd / tty fallback.
+make an old waiting state appear live again. Legacy state continues to use the cwd / tty fallback;
+when formats coexist, processes already claimed by PID are not allocated again to legacy waits.
+Ordinary hooks retain the existing binding if a PID lookup temporarily fails. `SessionStart` or a
+successful lookup of a different PID establishes a new binding.
+
+Background subagent progress does not clear a foreground or another agent's wait, or overwrite the
+foreground terminal binding. A subagent with an explicit agent ID can still resolve its own wait.
+Updates for the same session are serialized to prevent concurrent writes from colliding. System
+notifications run after the lock is released, so they do not hold up subsequent hooks.
 
 ```sh
 ring gc --dry-run        # preview what would be deleted

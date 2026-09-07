@@ -26,12 +26,15 @@ Agent CLI 在各事件把一段 JSON 從 stdin 餵進來。我們據此 upsert �
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -185,18 +188,64 @@ def run_hook(provider: str = "claude-code") -> int:
     return _delegate_to_agent_hooks(raw, selected_provider)
 
 
+@contextmanager
+def _session_state_lock(path: Path) -> Iterator[None]:
+    """同 session 的 hook 序列化整段 read-modify-write，包含 SessionEnd。
+
+    lock 檔不隨 row 刪除，避免仍在排隊的 writer 鎖住舊 inode、另一個 writer 卻鎖住新 inode。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.with_suffix(".json.lock").open("a", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
-    """把事件正規化後 upsert / 刪除 RiNG registry 檔（看板狀態）。失敗安靜吞，不回傳。"""
+    """正規化後序列化 registry 更新；I/O 失敗不影響 hook 後續委派。"""
     adapter = adapter_for(selected_provider)
     event = adapter.normalize(data)
     if event is None:
         return
     event = _maybe_flag_trailing_question(event, data)
 
-    unhide_session(event.session_id)
     path = RING_REGISTRY / f"{quote(event.session_id, safe=':')}.json"
+    try:
+        with _session_state_lock(path):
+            notification = _update_session_state(path, event, data, adapter.process_names)
+    except OSError:
+        return
+    # 系統通知可能等待外部程序，不可持鎖阻擋後續解除等待的 hook。
+    if notification is not None:
+        _ring_waiting_now(*notification)
+
+
+def _update_session_state(
+    path: Path, event: NormalizedHookEvent, data: dict[str, Any], process_names: tuple[str, ...]
+) -> tuple[NormalizedHookEvent, dict[str, Any], str] | None:
+    """持有 session lock 時合併並寫入；回傳需在鎖外發送的通知。"""
     prev_row = _previous_row(path)
     prev_status = str(prev_row["status"]) if "status" in prev_row else None
+    agent_id = next((value for key in ("agent_id", "agentId") if isinstance(value := data.get(key), str) and value), "")
+    is_subagent_event = bool(agent_id) or any(
+        isinstance(data.get(key), str) and data[key] for key in ("agent_type", "agentType")
+    )
+    if is_subagent_event:
+        # 共用 host session_id 不代表能解除前景或另一個 agent 的等待。
+        # 舊 row 沒有等待來源時視為前景；僅知道 agent_type 也不能證明是同一個等待者。
+        if event.status is Status.ENDED or (
+            prev_status == Status.WAITING.value and (not agent_id or prev_row.get("waiting_agent_id") != agent_id)
+        ):
+            return None
+        if prev_row:
+            event = replace(
+                event,
+                cwd=str(prev_row.get("cwd", event.cwd)),
+                transcript_path=str(prev_row.get("source_path", "")),
+            )
+    unhide_session(event.session_id)
     # 一般 Notification 只能升 🔴、不能降 🟡——閒置提醒不是「使用者回應了」的證據。
     keep_waiting = _notification_keeps_waiting(event, prev_row)
     if keep_waiting:
@@ -211,7 +260,16 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
         path.unlink(missing_ok=True)  # 乾淨離場：直接消失
         if prev_status is not None and prev_status != Status.ENDED.value:
             log_transition(event.session_id, event.provider, event.cwd, Status.ENDED.value)
-        return
+        return None
+
+    previous_pid = int(prev_row["agent_pid"]) if str(prev_row.get("agent_pid", "")).isdigit() else None
+    agent_pid = None if is_subagent_event else _session_pid(process_names)
+    same_binding = is_subagent_event or (
+        event.event != "SessionStart" and (agent_pid is None or agent_pid == previous_pid)
+    )
+    if same_binding and agent_pid is None:
+        # 查詢未知不是 session 換人；保留已取得的前景身分，成功的新 lookup 仍可重新綁定。
+        agent_pid = previous_pid
 
     last_action, todo = event.last_action or "—", None
     tp = event.transcript_path
@@ -226,7 +284,7 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
         "session_id": event.session_id,
         "provider": event.provider,
         "cwd": event.cwd,
-        "origin_cwd": event.cwd,
+        "origin_cwd": prev_row.get("origin_cwd", event.cwd) if is_subagent_event else event.cwd,
         "status": event.status.value,
         # 最後一個 hook 事件名：讀取側據此做 codex 的核可等待判定（最後事件是
         # PermissionRequest 且靜默逾時 → 🔴），任何後續事件覆寫它就自然清紅。
@@ -236,18 +294,12 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
         "last_action": last_action,
         "hook_pid": os.getpid(),
     }
-    is_subagent_event = any(
-        data.get(key) not in {None, ""} for key in ("agent_id", "agentId", "agent_type", "agentType")
-    )
-    agent_pid = None if is_subagent_event else _session_pid(adapter.process_names)
     if agent_pid is not None:
         payload["agent_pid"] = agent_pid
-    elif is_subagent_event and str(prev_row.get("agent_pid", "")).isdigit():
-        # subagent 的 hook 共用 host session_id；不可讓背景 process PID 覆寫前景 session 綁定。
-        payload["agent_pid"] = int(prev_row["agent_pid"])
     if tp:
         payload["source_path"] = tp
-    tmux_pane = os.environ.get("TMUX_PANE", "").strip()
+    previous_pane = str(prev_row.get("tmux_pane", "")) if same_binding else ""
+    tmux_pane = previous_pane if is_subagent_event else os.environ.get("TMUX_PANE", "").strip() or previous_pane
     if tmux_pane:
         payload["tmux_pane"] = tmux_pane
     if todo:
@@ -269,19 +321,26 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
     if event.status is Status.WAITING and event.waiting_kind:
         payload["waiting_kind"] = event.waiting_kind
     if event.status is Status.WAITING:
+        waiting_agent_id = prev_row.get("waiting_agent_id", "") if keep_waiting else agent_id
+        if waiting_agent_id:
+            payload["waiting_agent_id"] = waiting_agent_id
         waiting_detail = event.detail
         if event.event == "Notification" and event.waiting_kind == "permission" and pending_detail:
             waiting_detail = pending_detail
         if waiting_detail:
             payload["waiting_detail"] = waiting_detail
-    tty = event.tty or _controlling_tty() or (_pid_tty(agent_pid) if agent_pid is not None else "")
+    previous_tty = str(prev_row.get("tty", "")) if same_binding else ""
+    if is_subagent_event:
+        tty = previous_tty or (_pid_tty(agent_pid) if agent_pid is not None else "")
+    else:
+        tty = event.tty or _controlling_tty() or (_pid_tty(agent_pid) if agent_pid is not None else "") or previous_tty
     if tty:
         payload["tty"] = tty
 
     # waiting 通知冷卻（防翻轉轟炸）：hook 是短命 process，冷卻狀態持久化在 registry row
     # 的 waiting_notified_at（上次 waiting 通知的 epoch 時間戳）。離開 WAITING 也要把時間戳
     # 帶進新 row（payload 每次重建，不帶會遺失），快速翻回 WAITING 時才判得出「還在冷卻期」。
-    # 舊 row 沒這欄位 = 從未通知過 → 照發。並發寫沿用既有 tmp+replace 的 last-write-wins。
+    # 舊 row 沒這欄位 = 從未通知過 → 照發。讀取與預約通知時間同樣受 session lock 保護。
     last_notified = _as_epoch(prev_row.get("waiting_notified_at"))
     if last_notified is not None:
         payload["waiting_notified_at"] = last_notified
@@ -293,7 +352,6 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
         if should_ring:
             payload["waiting_notified_at"] = now
 
-    RING_REGISTRY.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload))
     tmp.replace(path)  # atomic
@@ -302,7 +360,8 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
         log_transition(event.session_id, event.provider, event.cwd, event.status.value)
 
     if should_ring:
-        _ring_waiting_now(event, payload, last_action)
+        return event, payload, last_action
+    return None
 
 
 def _notification_keeps_waiting(event: NormalizedHookEvent, prev_row: dict[str, Any]) -> bool:
