@@ -477,7 +477,7 @@ class RingApp(App[None]):
             acknowledged_revision = self._permission_acks.get(s.session_id)
             if acknowledged_revision is None:
                 continue
-            if s.last_active > acknowledged_revision:
+            if s.last_active > acknowledged_revision or len(s.waiting_requests) > 1:
                 # 新 hook event（可能是下一個權限請求）已到，重新採信 provider 狀態。
                 del self._permission_acks[s.session_id]
                 continue
@@ -486,6 +486,7 @@ class RingApp(App[None]):
                 s.status = Status.WORKING
                 s.waiting_kind = ""
                 s.waiting_detail = ""
+                s.waiting_requests = ()
             else:
                 # provider 已用同 revision 清掉 WAITING，不再需要本地 acknowledgment。
                 del self._permission_acks[s.session_id]
@@ -663,20 +664,29 @@ class RingApp(App[None]):
             self._permission_replies_inflight.discard(s.session_id)
         option = next((f"{n}. {text}" for n, text in dialog.options if n == number), str(number))
         if outcome is permission.ReplyOutcome.OK:
-            if s.session_id == self._focused_sid:
-                self._focused_sid = None  # 已就地回覆，解除通知標記
-            self._permission_acks[s.session_id] = s.last_active
+            # 畫面只證實一個對話框消失，無法證明其他 agent 的等待也已解除。
+            can_ack = len(s.waiting_requests) <= 1
+            if can_ack:
+                if s.session_id == self._focused_sid:
+                    self._focused_sid = None  # 已就地回覆，解除通知標記
+                self._permission_acks[s.session_id] = s.last_active
             # 先直接更新現有資料，別為了一筆 acknowledgment 同步重掃所有 process。
             # 下一次既有輪詢仍會正常全量同步、重排表格。
             row = next(
                 ((idx, current) for idx, current in enumerate(self._sessions) if current.session_id == s.session_id),
                 None,
             )
-            if row is not None and row[1].last_active <= s.last_active:
+            if (
+                can_ack
+                and row is not None
+                and row[1].last_active <= s.last_active
+                and len(row[1].waiting_requests) <= 1
+            ):
                 idx, current = row
                 current.status = Status.WORKING
                 current.waiting_kind = ""
                 current.waiting_detail = ""
+                current.waiting_requests = ()
                 self.query_one(DataTable).update_cell_at(Coordinate(idx, 0), self._status_cell(current))
             self._toast(_("→ {project}：已回覆權限（{option}）", project=name, option=option), ok=True)
             self._update_detail()

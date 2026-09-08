@@ -167,6 +167,346 @@ def test_subagent_progress_only_resolves_its_own_wait(
     assert json.loads((hook_registry / "s1.json").read_text())["status"] == expected
 
 
+@pytest.mark.parametrize(
+    ("first_agent", "second_agent"),
+    [
+        pytest.param("a", "b", id="two-subagents"),
+        pytest.param("", "b", id="foreground-first"),
+        pytest.param("a", "", id="foreground-second"),
+    ],
+)
+def test_overlapping_waits_resolve_independently(hook_registry: Path, first_agent: str, second_agent: str) -> None:
+    payload = {"session_id": "s1", "cwd": "/work/app"}
+    observed = []
+    for agent, event in [
+        (first_agent, "PermissionRequest"),
+        (second_agent, "PermissionRequest"),
+        (first_agent, "PostToolUse"),
+        (second_agent, "PostToolUse"),
+    ]:
+        data: dict[str, Any] = dict(payload, hook_event_name=event, agent_id=agent)
+        if event == "PermissionRequest":
+            data.update(requires_action=True, tool_name="Bash", tool_input={"command": agent or "foreground"})
+        hook._record_session_state(data, "claude-code")
+        observed.append(json.loads((hook_registry / "s1.json").read_text())["status"])
+    assert observed == ["waiting", "waiting", "waiting", "working"]
+
+
+@pytest.mark.parametrize("background_event", ["PermissionRequest", "PostToolUse"])
+def test_background_does_not_supply_or_clear_foreground_permission_detail(
+    hook_registry: Path, background_event: str
+) -> None:
+    payload = {"session_id": "s1", "cwd": "/work/app"}
+    hook._record_session_state(
+        dict(payload, hook_event_name="PermissionRequest", tool_name="Bash", tool_input={"command": "git push"}),
+        "claude-code",
+    )
+    hook._record_session_state(
+        dict(
+            payload,
+            hook_event_name=background_event,
+            agent_id="b",
+            tool_name="Read",
+            tool_input={"file_path": "README.md"},
+        ),
+        "claude-code",
+    )
+    hook._record_session_state(
+        dict(
+            payload,
+            hook_event_name="Notification",
+            notification_type="permission_prompt",
+            message="Claude needs your permission",
+        ),
+        "claude-code",
+    )
+    row = json.loads((hook_registry / "s1.json").read_text())
+    # An unqualified notification with competing candidates must not guess a command.
+    expected = "Claude needs your permission" if background_event == "PermissionRequest" else "Bash: git push"
+    assert row["waiting_detail"] == expected
+
+
+@pytest.mark.parametrize("first_agent", ["", "a"])
+def test_legacy_wait_survives_migration_and_other_agent_resolution(hook_registry: Path, first_agent: str) -> None:
+    hook_registry.mkdir(parents=True)
+    path = hook_registry / "s1.json"
+    path.write_text(
+        json.dumps(
+            {
+                "session_id": "s1",
+                "status": "waiting",
+                "waiting_agent_id": first_agent,
+                "waiting_kind": "question",
+                "waiting_detail": "first question",
+            }
+        )
+    )
+    payload = {"session_id": "s1", "cwd": "/work/app"}
+    hook._record_session_state(
+        dict(
+            payload, hook_event_name="PermissionRequest", requires_action=True, agent_id="b", message="second question"
+        ),
+        "claude-code",
+    )
+    hook._record_session_state(dict(payload, hook_event_name="PostToolUse", agent_id=first_agent), "claude-code")
+    row = json.loads(path.read_text())
+    assert (row["status"], row["waiting_agent_id"], row["waiting_detail"]) == ("waiting", "b", "second question")
+
+
+@pytest.mark.parametrize("owner", ["", "a", "b"])
+def test_idle_notification_does_not_clear_overlapping_waits(hook_registry: Path, owner: str) -> None:
+    payload = {"session_id": "s1", "cwd": "/work/app"}
+    for agent in ("a", "b"):
+        hook._record_session_state(
+            dict(payload, hook_event_name="PermissionRequest", requires_action=True, agent_id=agent), "claude-code"
+        )
+    path = hook_registry / "s1.json"
+    before = json.loads(path.read_text())["waiting_requests"]
+    hook._record_session_state(
+        dict(payload, hook_event_name="Notification", notification_type="idle_prompt", agent_id=owner), "claude-code"
+    )
+    assert json.loads(path.read_text())["waiting_requests"] == before
+
+
+def test_subagent_end_resolves_only_its_own_wait(hook_registry: Path) -> None:
+    payload = {"session_id": "s1", "cwd": "/work/app"}
+    for agent in ("a", "b"):
+        hook._record_session_state(
+            dict(payload, hook_event_name="PermissionRequest", requires_action=True, agent_id=agent), "claude-code"
+        )
+    hook._record_session_state(dict(payload, hook_event_name="SessionEnd", agent_id="a"), "claude-code")
+    row = json.loads((hook_registry / "s1.json").read_text())
+    assert (row["status"], row["waiting_agent_id"]) == ("waiting", "b")
+
+
+def test_other_wait_remains_visible_in_json_after_owner_resumes(
+    monkeypatch: pytest.MonkeyPatch, hook_registry: Path
+) -> None:
+    import ring.cli as cli
+
+    monkeypatch.setattr(registry, "RING_REGISTRY", hook_registry)
+    monkeypatch.setattr(registry, "background_agent_session_ids", set)
+    monkeypatch.setattr(cli, "running_agent_pids", list)
+    monkeypatch.setattr(cli, "load_labels", dict)
+    payload = {"session_id": "s1", "cwd": "/work/app"}
+    hook._record_session_state(dict(payload, hook_event_name="SessionStart"), "claude-code")
+    for agent in ("a", "b"):
+        hook._record_session_state(
+            dict(
+                payload,
+                hook_event_name="PermissionRequest",
+                requires_action=True,
+                agent_id=agent,
+                message=f"question {agent}",
+            ),
+            "claude-code",
+        )
+    hook._record_session_state(dict(payload, hook_event_name="PostToolUse", agent_id="a"), "claude-code")
+    sessions = registry._hook_sessions(
+        procs_by_provider={"claude-code": [("/work/app", "/dev/ttys002")]}, pids_by_provider={"claude-code": [222]}
+    )
+    assert [r.owner for r in sessions[0].waiting_requests] == ["agent:b"]
+    snapshot = json.loads(cli.render_json(sessions))
+    assert snapshot["counts"]["waiting"] == 1
+    assert [(s["session_id"], s["status"], s["waiting_detail"]) for s in snapshot["sessions"]] == [
+        ("s1", "waiting", "question b")
+    ]
+
+
+@pytest.mark.parametrize("event_name", ["SessionStart", "PreToolUse"])
+def test_new_foreground_binding_discards_old_waits_and_pending_details(
+    monkeypatch: pytest.MonkeyPatch, hook_registry: Path, event_name: str
+) -> None:
+    payload = {"session_id": "s1", "cwd": "/work/app"}
+    hook._record_session_state(dict(payload, hook_event_name="SessionStart"), "claude-code")
+    hook._record_session_state(
+        dict(
+            payload,
+            hook_event_name="PermissionRequest",
+            agent_id="b",
+            tool_name="Bash",
+            tool_input={"command": "old command"},
+        ),
+        "claude-code",
+    )
+    hook._record_session_state(
+        dict(payload, hook_event_name="Notification", notification_type="permission_prompt", agent_id="b"),
+        "claude-code",
+    )
+    if event_name == "PreToolUse":
+        monkeypatch.setattr(hook, "_session_pid", lambda names: 333)
+    hook._record_session_state(dict(payload, hook_event_name=event_name), "claude-code")
+    row = json.loads((hook_registry / "s1.json").read_text())
+    assert (row["status"], row["waiting_requests"], row["pending_permissions"]) == ("working", {}, [])
+
+
+@pytest.mark.parametrize("agent_key", ["agent_type", "agentType"])
+def test_unidentified_subagent_progress_cannot_resolve_known_wait(hook_registry: Path, agent_key: str) -> None:
+    payload = {"session_id": "s1", "cwd": "/work/app"}
+    hook._record_session_state(
+        dict(payload, hook_event_name="PermissionRequest", requires_action=True, agent_id="a"), "claude-code"
+    )
+    hook._record_session_state(
+        dict(payload, hook_event_name="PostToolUse", **{agent_key: "general-purpose"}), "claude-code"
+    )
+    row = json.loads((hook_registry / "s1.json").read_text())
+    assert (row["status"], row["waiting_agent_id"]) == ("waiting", "a")
+
+
+@pytest.mark.parametrize("notification_agent", ["", "a"])
+def test_unique_pending_request_can_supply_wait_owner(hook_registry: Path, notification_agent: str) -> None:
+    payload = {"session_id": "s1", "cwd": "/work/app"}
+    hook._record_session_state(
+        dict(
+            payload,
+            hook_event_name="PermissionRequest",
+            agent_id="a",
+            tool_name="Bash",
+            tool_input={"command": "git push"},
+        ),
+        "claude-code",
+    )
+    hook._record_session_state(
+        dict(
+            payload, hook_event_name="Notification", notification_type="permission_prompt", agent_id=notification_agent
+        ),
+        "claude-code",
+    )
+    path = hook_registry / "s1.json"
+    row = json.loads(path.read_text())
+    assert (row["waiting_agent_id"], row["waiting_detail"]) == ("a", "Bash: git push")
+    hook._record_session_state(dict(payload, hook_event_name="PostToolUse", agent_id="a"), "claude-code")
+    assert json.loads(path.read_text())["status"] == "working"
+
+
+@pytest.mark.parametrize("request_key", ["tool_use_id", "toolUseId"])
+def test_pending_permission_clear_matches_tool_use_id(hook_registry: Path, request_key: str) -> None:
+    payload = {"session_id": "s1", "cwd": "/work/app", "agent_id": "a"}
+    for request_id in ("one", "two"):
+        hook._record_session_state(
+            dict(
+                payload,
+                hook_event_name="PermissionRequest",
+                tool_name="Bash",
+                tool_input={"command": request_id},
+                **{request_key: request_id},
+            ),
+            "claude-code",
+        )
+    hook._record_session_state(dict(payload, hook_event_name="PostToolUse", **{request_key: "one"}), "claude-code")
+    hook._record_session_state(
+        dict(payload, hook_event_name="Notification", notification_type="permission_prompt", **{request_key: "two"}),
+        "claude-code",
+    )
+    row = json.loads((hook_registry / "s1.json").read_text())
+    assert row["waiting_detail"] == "Bash: two"
+    assert [item["request_id"] for item in row["pending_permissions"]] == ["two"]
+
+
+@pytest.mark.parametrize("completion_id", ["", "not-a-pending-id"])
+def test_ambiguous_tool_completion_keeps_pending_candidates(hook_registry: Path, completion_id: str) -> None:
+    payload = {"session_id": "s1", "cwd": "/work/app", "agent_id": "a"}
+    for request_id in ("one", "two"):
+        hook._record_session_state(
+            dict(
+                payload,
+                hook_event_name="PermissionRequest",
+                tool_use_id=request_id,
+                tool_name="Bash",
+                tool_input={"command": request_id},
+            ),
+            "claude-code",
+        )
+    hook._record_session_state(dict(payload, hook_event_name="PostToolUse", tool_use_id=completion_id), "claude-code")
+    hook._record_session_state(
+        dict(
+            payload,
+            hook_event_name="Notification",
+            notification_type="permission_prompt",
+            message="Claude needs your permission",
+        ),
+        "claude-code",
+    )
+    row = json.loads((hook_registry / "s1.json").read_text())
+    assert row["waiting_detail"] == "Claude needs your permission"
+    assert [item["request_id"] for item in row["pending_permissions"]] == ["one", "two"]
+
+
+@pytest.mark.parametrize(
+    ("age", "expected"),
+    [
+        pytest.param(120.0, "Bash: git push", id="at-ttl"),
+        pytest.param(120.1, "Claude needs your permission", id="over-ttl"),
+    ],
+)
+def test_legacy_pending_permission_respects_ttl(
+    monkeypatch: pytest.MonkeyPatch, hook_registry: Path, age: float, expected: str
+) -> None:
+    hook_registry.mkdir(parents=True)
+    path = hook_registry / "s1.json"
+    path.write_text(
+        json.dumps(
+            {
+                "session_id": "s1",
+                "status": "working",
+                "pending_permission_detail": "Bash: git push",
+                "pending_permission_detail_at": 1000.0 - age,
+            }
+        )
+    )
+    monkeypatch.setattr("ring.hook.time.time", lambda: 1000.0)
+    hook._record_session_state(
+        {
+            "session_id": "s1",
+            "hook_event_name": "Notification",
+            "notification_type": "permission_prompt",
+            "message": "Claude needs your permission",
+        },
+        "claude-code",
+    )
+    assert json.loads(path.read_text())["waiting_detail"] == expected
+
+
+def test_new_session_does_not_inherit_old_notification_cooldown(
+    monkeypatch: pytest.MonkeyPatch, hook_registry: Path
+) -> None:
+    notices: list[str] = []
+    monkeypatch.setattr(hook, "get_config", lambda: Config(waiting_cooldown_seconds=60))
+    monkeypatch.setattr("ring.hook.time.time", lambda: 1000.0)
+    monkeypatch.setattr(hook, "_ring_waiting_now", lambda event, payload, action: notices.append(event.session_id))
+    payload = {"session_id": "s1", "cwd": "/work/app"}
+    waiting = dict(payload, hook_event_name="PermissionRequest", requires_action=True)
+    hook._record_session_state(waiting, "claude-code")
+    hook._record_session_state(dict(payload, hook_event_name="SessionStart"), "claude-code")
+    hook._record_session_state(waiting, "claude-code")
+    assert notices == ["s1", "s1"]
+
+
+def test_new_wait_notification_describes_its_owner_not_the_displayed_wait(
+    monkeypatch: pytest.MonkeyPatch, hook_registry: Path
+) -> None:
+    monkeypatch.setattr(hook, "get_config", lambda: Config(waiting_cooldown_seconds=0))
+    notices: list[str] = []
+    monkeypatch.setattr(
+        hook, "_ring_waiting_now", lambda event, payload, action: notices.append(payload["waiting_detail"])
+    )
+    payload = {"session_id": "s1", "cwd": "/work/app"}
+    for agent in ("a", "b"):
+        hook._record_session_state(
+            dict(
+                payload,
+                hook_event_name="PermissionRequest",
+                requires_action=True,
+                agent_id=agent,
+                message=f"question {agent}",
+            ),
+            "claude-code",
+        )
+    row = json.loads((hook_registry / "s1.json").read_text())
+    assert row["waiting_detail"] == "question a"
+    assert notices == ["question a", "question b"]
+
+
 @pytest.mark.parametrize("agent_key", ["agent_id", "agentId", "agent_type", "agentType"])
 def test_subagent_preserves_foreground_terminal_and_transcript(
     monkeypatch: pytest.MonkeyPatch, hook_registry: Path, agent_key: str
@@ -1397,6 +1737,7 @@ def test_stale_stashed_permission_detail_not_used(monkeypatch: pytest.MonkeyPatc
     row_path = tmp_path / "s1.json"
     row = json.loads(row_path.read_text())
     row["pending_permission_detail_at"] -= 999.0
+    row["pending_permissions"][0]["at"] -= 999.0
     row_path.write_text(json.dumps(row))
 
     _feed(monkeypatch, _permission_prompt_notification(cwd="/x"))

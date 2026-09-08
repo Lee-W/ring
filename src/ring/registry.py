@@ -55,6 +55,7 @@ from ring.transcript import (
     _recent_actions,
     _tail_records,
 )
+from ring.waiting import WaitingRequest, read_waiting_requests
 
 CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
 RING_REGISTRY = Path.home() / ".config" / "ring" / "sessions"
@@ -359,6 +360,7 @@ class Session:
     # 只是借一個「真實 session 的欄位」組出來的通知 payload，讓 notify_title / notify_message
     # 改用彙總句式。session_id 本身維持真實值（不覆寫成 sentinel），點擊通知才能正確 focus。
     is_summary: bool = field(default=False, repr=False, compare=False)
+    waiting_requests: tuple[WaitingRequest, ...] = ()
 
     @property
     def project(self) -> str:
@@ -1134,6 +1136,7 @@ def _hook_sessions(
                 provider=provider,
                 waiting_kind=str(data.get("waiting_kind", "")),
                 waiting_detail=str(data.get("waiting_detail", "")),
+                waiting_requests=tuple(read_waiting_requests(data).values()),
                 origin_cwd=str(data.get("origin_cwd", "")),
             )
             if _promote_codex_permission_wait(

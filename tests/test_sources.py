@@ -202,6 +202,37 @@ def test_newer_scan_unknown_tail_does_not_clear_hook_waiting(monkeypatch: pytest
     assert result[0].status is Status.WAITING
 
 
+@pytest.mark.parametrize("row_updated_at", [100.0, 120.0])
+def test_foreground_scan_only_resolves_foreground_wait(row_updated_at: float) -> None:
+    from ring.waiting import FOREGROUND_OWNER, WaitingRequest
+
+    foreground = WaitingRequest(FOREGROUND_OWNER, "permission", "foreground", since=100.0)
+    background = WaitingRequest("agent:b", "question", "background", since=100.0)
+    current = Session(
+        "s1",
+        "/app",
+        Status.WAITING,
+        row_updated_at,
+        "tool",
+        "hook",
+        provider="claude-code",
+        waiting_kind="permission",
+        waiting_detail="foreground",
+        waiting_requests=(foreground, background),
+    )
+    candidate = Session(
+        "s1", "/app", Status.WORKING, 110.0, "user reply", "scan", provider="claude-code", _tail_kind="working"
+    )
+    result = sources._merge_duplicate_session(current, candidate)
+    assert result.status is Status.WAITING
+    assert (result.waiting_requests, result.waiting_kind, result.waiting_detail) == (
+        (background,),
+        "question",
+        "background",
+    )
+    assert current.waiting_requests == (foreground, background)
+
+
 def test_older_scan_does_not_clear_hook_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
     hook_session = Session("same-id", "/work/app", Status.WAITING, 100.0, "permission", "hook", provider="claude-code")
     scan_session = Session("same-id", "/work/app", Status.IDLE, 90.0, "older", "scan", provider="claude-code")

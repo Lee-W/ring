@@ -35,7 +35,7 @@ import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -55,6 +55,14 @@ from ring.registry import (
 )
 from ring.stats import log_transition
 from ring.transcript import _extract_todo, _latest_action, _tail_records
+from ring.waiting import (
+    FOREGROUND_OWNER,
+    UNKNOWN_OWNER,
+    WaitingRequest,
+    event_owner,
+    primary_wait,
+    read_waiting_requests,
+)
 
 _HOOK_EVENTS = list(HOOK_EVENTS)
 
@@ -228,17 +236,19 @@ def _update_session_state(
     """持有 session lock 時合併並寫入；回傳需在鎖外發送的通知。"""
     prev_row = _previous_row(path)
     prev_status = str(prev_row["status"]) if "status" in prev_row else None
-    agent_id = next((value for key in ("agent_id", "agentId") if isinstance(value := data.get(key), str) and value), "")
-    is_subagent_event = bool(agent_id) or any(
-        isinstance(data.get(key), str) and data[key] for key in ("agent_type", "agentType")
-    )
+    owner = event_owner(data)
+    is_subagent_event = owner != FOREGROUND_OWNER
     if is_subagent_event:
-        # 共用 host session_id 不代表能解除前景或另一個 agent 的等待。
-        # 舊 row 沒有等待來源時視為前景；僅知道 agent_type 也不能證明是同一個等待者。
-        if event.status is Status.ENDED or (
-            prev_status == Status.WAITING.value and (not agent_id or prev_row.get("waiting_agent_id") != agent_id)
-        ):
-            return None
+        # Subagent SessionEnd 不是 host session 的結束。
+        if event.status is Status.ENDED:
+            raw_pending = prev_row.get("pending_permissions", [])
+            owns_pending = isinstance(raw_pending, list) and any(
+                isinstance(item, dict) and item.get("owner") == owner for item in raw_pending
+            )
+            if owner == UNKNOWN_OWNER or (owner not in read_waiting_requests(prev_row) and not owns_pending):
+                return None
+            # 只結束這個 agent 的待決事項；host 仍在工作，不能刪掉共用 registry。
+            event = replace(event, status=Status.WORKING)
         if prev_row:
             event = replace(
                 event,
@@ -246,16 +256,6 @@ def _update_session_state(
                 transcript_path=str(prev_row.get("source_path", "")),
             )
     unhide_session(event.session_id)
-    # 一般 Notification 只能升 🔴、不能降 🟡——閒置提醒不是「使用者回應了」的證據。
-    keep_waiting = _notification_keeps_waiting(event, prev_row)
-    if keep_waiting:
-        event = replace(
-            event,
-            status=Status.WAITING,
-            waiting_for=str(prev_row.get("waiting_for", "")),
-            waiting_kind=str(prev_row.get("waiting_kind", "")),
-            detail=str(prev_row.get("waiting_detail", "")),
-        )
     if event.status is Status.ENDED:
         path.unlink(missing_ok=True)  # 乾淨離場：直接消失
         if prev_status is not None and prev_status != Status.ENDED.value:
@@ -271,6 +271,28 @@ def _update_session_state(
         # 查詢未知不是 session 換人；保留已取得的前景身分，成功的新 lookup 仍可重新綁定。
         agent_pid = previous_pid
 
+    reset_waits = not is_subagent_event and (
+        event.event == "SessionStart" or (previous_pid is not None and agent_pid != previous_pid)
+    )
+    previous_state = {} if reset_waits else prev_row
+    requests = read_waiting_requests(previous_state)
+    keep_waiting = _notification_keeps_waiting(event, prev_row)
+    now = time.time()
+    pending, matched = _pending_permission_details(event, previous_state, data, owner, now)
+    if event.event == "Notification" and event.waiting_kind == "permission" and matched is not None:
+        # 無 agent ID 的 Notification 只有唯一候選時才可借用其來源與摘要。
+        owner = str(matched["owner"])
+        event = replace(event, detail=str(matched["detail"]))
+    if event.status is Status.WAITING:
+        requests[owner] = WaitingRequest(owner, event.waiting_kind, event.detail, event.waiting_for, now)
+    elif not keep_waiting and owner != UNKNOWN_OWNER:
+        requests.pop(owner, None)
+        if owner == FOREGROUND_OWNER:
+            # 沒有 agent ID 的舊／匿名等待只能由前景的明確回應解除。
+            requests.pop(UNKNOWN_OWNER, None)
+    selected = primary_wait(requests) if requests else None
+    status = Status.WAITING if selected is not None else event.status
+
     last_action, todo = event.last_action or "—", None
     tp = event.transcript_path
     if tp:
@@ -279,13 +301,12 @@ def _update_session_state(
             last_action = _latest_action(records)
             todo = _extract_todo(records)
 
-    now = time.time()
     payload: dict[str, Any] = {
         "session_id": event.session_id,
         "provider": event.provider,
         "cwd": event.cwd,
         "origin_cwd": prev_row.get("origin_cwd", event.cwd) if is_subagent_event else event.cwd,
-        "status": event.status.value,
+        "status": status.value,
         # 最後一個 hook 事件名：讀取側據此做 codex 的核可等待判定（最後事件是
         # PermissionRequest 且靜默逾時 → 🔴），任何後續事件覆寫它就自然清紅。
         "last_event": event.event,
@@ -293,6 +314,8 @@ def _update_session_state(
         "heartbeat_at": now,
         "last_action": last_action,
         "hook_pid": os.getpid(),
+        "waiting_requests": {key: asdict(request) for key, request in requests.items()},
+        "pending_permissions": pending,
     }
     if agent_pid is not None:
         payload["agent_pid"] = agent_pid
@@ -304,7 +327,9 @@ def _update_session_state(
         payload["tmux_pane"] = tmux_pane
     if todo:
         payload["todo"] = list(todo)
-    if event.waiting_for:
+    if selected is not None and selected.waiting_for:
+        payload["waiting_for"] = selected.waiting_for
+    elif selected is None and event.waiting_for:
         payload["waiting_for"] = event.waiting_for
 
     # 裸 PermissionRequest（→ WORKING）帶著最具體的 tool/指令摘要；真的停下來等人時，
@@ -313,22 +338,17 @@ def _update_session_state(
     # （還新鮮的話）拿它當 waiting_detail，看板與通知才看得到具體是哪條指令在等核可。
     # Codex 沒有 Notification：這份暫存改由讀取側的靜默逾時判定拿去當 waiting_detail
     # （見 registry._promote_codex_permission_wait）。
-    pending_detail, pending_at = _pending_permission_detail(event, prev_row, now)
-    if pending_detail:
-        payload["pending_permission_detail"] = pending_detail
-        payload["pending_permission_detail_at"] = pending_at
+    if matched is not None:
+        payload["pending_permission_detail"] = matched["detail"]
+        payload["pending_permission_detail_at"] = matched["at"]
 
-    if event.status is Status.WAITING and event.waiting_kind:
-        payload["waiting_kind"] = event.waiting_kind
-    if event.status is Status.WAITING:
-        waiting_agent_id = prev_row.get("waiting_agent_id", "") if keep_waiting else agent_id
-        if waiting_agent_id:
-            payload["waiting_agent_id"] = waiting_agent_id
-        waiting_detail = event.detail
-        if event.event == "Notification" and event.waiting_kind == "permission" and pending_detail:
-            waiting_detail = pending_detail
-        if waiting_detail:
-            payload["waiting_detail"] = waiting_detail
+    if selected is not None:
+        if selected.kind:
+            payload["waiting_kind"] = selected.kind
+        if selected.owner.startswith("agent:"):
+            payload["waiting_agent_id"] = selected.owner.removeprefix("agent:")
+        if selected.detail:
+            payload["waiting_detail"] = selected.detail
     previous_tty = str(prev_row.get("tty", "")) if same_binding else ""
     if is_subagent_event:
         tty = previous_tty or (_pid_tty(agent_pid) if agent_pid is not None else "")
@@ -341,13 +361,12 @@ def _update_session_state(
     # 的 waiting_notified_at（上次 waiting 通知的 epoch 時間戳）。離開 WAITING 也要把時間戳
     # 帶進新 row（payload 每次重建，不帶會遺失），快速翻回 WAITING 時才判得出「還在冷卻期」。
     # 舊 row 沒這欄位 = 從未通知過 → 照發。讀取與預約通知時間同樣受 session lock 保護。
-    last_notified = _as_epoch(prev_row.get("waiting_notified_at"))
+    last_notified = _as_epoch(previous_state.get("waiting_notified_at"))
     if last_notified is not None:
         payload["waiting_notified_at"] = last_notified
     should_ring = False
-    if event.status is Status.WAITING and not keep_waiting:
-        # keep_waiting＝只是沿用上一筆就已成立的 🔴，不是新的等待事件，不重發通知
-        # （重複提醒由 TUI 的提醒排程器負責，見 tui._ring_on_waiting_alerts）。
+    if event.status is Status.WAITING:
+        # 只通知本事件提出的等待；沿用其他 owner 的 🔴 不算新的等待事件。
         should_ring = _waiting_ring_allowed(last_notified, now)
         if should_ring:
             payload["waiting_notified_at"] = now
@@ -356,11 +375,12 @@ def _update_session_state(
     tmp.write_text(json.dumps(payload))
     tmp.replace(path)  # atomic
 
-    if prev_status != event.status.value:
-        log_transition(event.session_id, event.provider, event.cwd, event.status.value)
+    if prev_status != status.value:
+        log_transition(event.session_id, event.provider, event.cwd, status.value)
 
     if should_ring:
-        return event, payload, last_action
+        # 看板可能仍選著另一個等待者；即時通知要描述這次事件本身。
+        return event, payload | {"waiting_kind": event.waiting_kind, "waiting_detail": event.detail}, last_action
     return None
 
 
@@ -376,8 +396,8 @@ def _notification_keeps_waiting(event: NormalizedHookEvent, prev_row: dict[str, 
 
     只有真的證明使用者已經回應的事件（UserPromptSubmit / PreToolUse / PostToolUse /
     下一輪 Stop）才該清掉 WAITING；Notification 一律只能升 🔴、不能降 🟡。這裡回 True 時
-    由呼叫端沿用舊 row 的 waiting_for / waiting_kind / waiting_detail（payload 每次重建，
-    不帶就會遺失），並且不重發通知。
+    由呼叫端保留 waiting_requests 的各來源內容（payload 每次重建，不帶就會遺失），
+    再選出摘要欄位，並且不重發通知。
     """
     if event.event != "Notification" or event.status is not Status.IDLE:
         return False
@@ -419,29 +439,64 @@ def _as_epoch(v: Any) -> float | None:
 
 
 # 暫存的權限 detail 新鮮期（秒）：permission_prompt Notification 通常在裸 PermissionRequest
-# 後 ~6 秒到；超過這個窗口的暫存視為過期（大概率屬於已解決的舊請求），不再拿來當 detail。
+# 後 ~6 秒到；超過這個窗口的暫存視為過期（多半屬於已解決的舊請求），不再拿來當 detail。
 _PENDING_DETAIL_TTL = 120.0
 
 # 這些事件代表權限已放行（工具跑完）或回合已推進（新輸入 / 回合結束）→ 清掉暫存。
-_PENDING_DETAIL_CLEAR_EVENTS = {"PostToolUse", "UserPromptSubmit", "Stop"}
+_PENDING_DETAIL_CLEAR_EVENTS = {"PostToolUse", "UserPromptSubmit", "Stop", "SessionEnd"}
 
 
-def _pending_permission_detail(event: NormalizedHookEvent, prev_row: dict[str, Any], now: float) -> tuple[str, float]:
-    """決定這次要寫進 row 的「暫存權限 detail」：(detail, 暫存時間戳)；不留就回 ("", 0.0)。
-
-    - 裸 PermissionRequest（→ WORKING）帶 detail → 以這次的 detail 起新暫存
-    - PostToolUse / UserPromptSubmit / Stop → 清掉（已放行或回合推進，舊暫存失效）
-    - 其餘事件 → 沿用 prev_row 的暫存（row 每次重建，不帶會遺失），但過期就丟
-    """
-    if event.event == "PermissionRequest" and event.status is Status.WORKING and event.detail:
-        return event.detail, now
-    if event.event in _PENDING_DETAIL_CLEAR_EVENTS:
-        return "", 0.0
-    prev_detail = prev_row.get("pending_permission_detail")
-    prev_at = _as_epoch(prev_row.get("pending_permission_detail_at"))
-    if isinstance(prev_detail, str) and prev_detail and prev_at is not None and now - prev_at <= _PENDING_DETAIL_TTL:
-        return prev_detail, prev_at
-    return "", 0.0
+def _pending_permission_details(
+    event: NormalizedHookEvent, prev_row: dict[str, Any], data: dict[str, Any], owner: str, now: float
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """依來源／tool use ID 保存候選；沒有唯一配對時不向通知提供摘要。"""
+    raw = prev_row.get("pending_permissions")
+    if not isinstance(raw, list):
+        raw = [
+            {
+                "owner": FOREGROUND_OWNER,
+                "request_id": "",
+                "detail": prev_row.get("pending_permission_detail"),
+                "at": prev_row.get("pending_permission_detail_at"),
+            }
+        ]
+    pending = [
+        item
+        for item in raw
+        if isinstance(item, dict)
+        and isinstance(item.get("owner"), str)
+        and isinstance(item.get("request_id"), str)
+        and isinstance(item.get("detail"), str)
+        and item["detail"]
+        and (at := _as_epoch(item.get("at"))) is not None
+        and 0 <= now - at <= _PENDING_DETAIL_TTL
+    ]
+    request_id = next(
+        (value for key in ("tool_use_id", "toolUseId") if isinstance(value := data.get(key), str) and value), ""
+    )
+    if owner != UNKNOWN_OWNER:
+        if event.event in _PENDING_DETAIL_CLEAR_EVENTS:
+            ambiguous_completion = (
+                event.event == "PostToolUse" and not request_id and sum(item["owner"] == owner for item in pending) > 1
+            )
+            pending = [
+                item
+                for item in pending
+                if ambiguous_completion
+                or item["owner"] != owner
+                or (event.event == "PostToolUse" and request_id and item["request_id"] != request_id)
+            ]
+        if event.event == "PermissionRequest" and event.status is Status.WORKING and event.detail:
+            pending = [item for item in pending if (item["owner"], item["request_id"]) != (owner, request_id)]
+            pending.append({"owner": owner, "request_id": request_id, "detail": event.detail, "at": now})
+    # 缺少來源的 Notification 可能來自背景請求；多個候選時不把最後一筆當答案。
+    unqualified = event.event == "Notification" and owner == FOREGROUND_OWNER
+    candidates = [
+        item
+        for item in pending
+        if (unqualified or item["owner"] == owner) and (not request_id or item["request_id"] == request_id)
+    ]
+    return pending, candidates[0] if len(candidates) == 1 else None
 
 
 def _waiting_ring_allowed(last_notified: float | None, now: float) -> bool:

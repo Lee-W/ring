@@ -1118,6 +1118,44 @@ async def test_permission_reply_ack_suppresses_stale_waiting_until_new_hook(
 
 
 @pytest.mark.asyncio
+async def test_permission_reply_does_not_ack_other_waiters(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ring.waiting import WaitingRequest
+
+    def fresh_board(show_all: bool) -> list[Session]:
+        return [
+            Session(
+                "a",
+                "/app",
+                Status.WAITING,
+                100.0,
+                "Bash",
+                "hook",
+                tmux_target="main:1.0",
+                waiting_kind="permission",
+                waiting_detail="first command",
+                waiting_requests=(WaitingRequest("agent:a"), WaitingRequest("agent:b")),
+            )
+        ]
+
+    monkeypatch.setattr(tui, "board", fresh_board)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [])
+    monkeypatch.setattr(permission, "capture_pane", lambda target: _perm_screen("dialog-bash.txt"))
+    monkeypatch.setattr(permission, "send_permission_reply", lambda *args: permission.ReplyOutcome.OK)
+    app = tui.RingApp(lang="en")
+    async with app.run_test() as pilot:
+        await pilot.press("p")
+        await pilot.press("2")
+        await app.workers.wait_for_complete()
+        assert app._sessions[0].status is Status.WAITING
+        assert "a" not in app._permission_acks
+        # Even an older single-wait acknowledgment cannot suppress a multi-wait snapshot.
+        app._permission_acks["a"] = 100.0
+        app._reload()
+        assert app._sessions[0].status is Status.WAITING
+        assert "a" not in app._permission_acks
+
+
+@pytest.mark.asyncio
 async def test_permission_reply_does_not_block_tui(monkeypatch: pytest.MonkeyPatch) -> None:
     """send/capture 還在等終端反應時，選項鍵應立刻返回，Textual 事件迴圈不能卡住。"""
     sessions = [Session("a", "/x/maigo", Status.WAITING, 0.0, "→ Bash", "hook", tmux_target="main:1.0")]

@@ -88,8 +88,10 @@ ones with a "from the … agent" header), and lists the numbered options verbati
 After you pick one, RiNG **captures the screen again** to confirm the dialog is still there and
 unchanged (it may have been answered while you were deciding), only then sends that single
 digit, and re-checks that the dialog actually disappeared.
-Once the reply is verified, the TUI immediately clears that waiting revision. Only a newer hook
-event, such as another permission request, can mark the session as waiting again.
+Once the reply is verified, the TUI immediately clears that waiting revision if the session has
+only one pending wait. Only a newer hook event, such as another permission request, can mark it
+as waiting again. When multiple agents share a waiting session, answering one dialog does not
+resolve the others: the waiting marker remains until their hooks confirm progress.
 
 - **Sessions inside tmux**: reads the screen with `tmux capture-pane` and sends keys with
   `tmux send-keys`.
@@ -186,8 +188,18 @@ when formats coexist, processes already claimed by PID are not allocated again t
 Ordinary hooks retain the existing binding if a PID lookup temporarily fails. `SessionStart` or a
 successful lookup of a different PID establishes a new binding.
 
-Background subagent progress does not clear a foreground or another agent's wait, or overwrite the
-foreground terminal binding. A subagent with an explicit agent ID can still resolve its own wait.
+Waits within a session are stored separately by agent. If A and B both need input, A resuming or
+ending resolves only A's wait; B keeps the session waiting. Response evidence from the foreground
+transcript cannot resolve a background agent's wait, and background progress does not overwrite
+the foreground terminal binding. The summary prefers a foreground wait, otherwise the first
+outstanding wait in insertion order. Board and JSON counts still count sessions, not subagents.
+
+Pending permission summaries are also separated by agent and tool-use ID. Another agent finishing
+a tool does not clear them. A `permission_prompt` without an agent ID borrows a summary only when
+there is a unique candidate; ambiguous candidates fall back to the notification's generic message.
+Legacy single-wait state remains readable. A new `SessionStart` or a confirmed change of foreground
+PID clears outstanding state from the previous binding.
+
 Updates for the same session are serialized to prevent concurrent writes from colliding. System
 notifications run after the lock is released, so they do not hold up subsequent hooks.
 

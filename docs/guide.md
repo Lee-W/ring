@@ -96,7 +96,8 @@ zero-config 下每個專案只開一個 session 時也對得上。Codex 沒裝 h
 「from the … agent」標頭的），把編號選項原文列成浮層讓你選；選定後 RiNG 會**再抓一次
 畫面**確認對話框還在且沒變（防止你考慮期間它已被回掉），才代你按下那個數字，
 並回頭驗證對話框確實消失。
-確認回覆成功後，TUI 會立即清掉該筆「等你」；只有時間較新的 hook 事件（例如下一個權限請求）能再次把它標成等待。
+確認回覆成功後，若該 session 只有一個等待事項，TUI 會立即清掉該筆「等你」；只有時間較新的 hook 事件（例如下一個權限請求）能再次把它標成等待。
+若同一 session 有多個 agent 在等，回覆一個對話框不代表其他事項也已解決，因此保留等待標記，直到對應 agent 的 hook 確認解除。
 
 - **tmux 內的 session**：用 `tmux capture-pane` 抓畫面、`tmux send-keys` 送鍵。
 - **macOS 上直接開在 iTerm2 分頁的 session**（沒有 tmux）：用 session 的 `tty` 透過
@@ -181,9 +182,18 @@ RiNG 正常收到 `SessionEnd` 時會刪掉自己的 hook registry；如果 agen
 做相容判定；新舊格式並存時，已由 PID 認領的 process 不會重複分配給舊等待紀錄。
 一般 hook 暫時查不到 PID 時會保留既有綁定；`SessionStart` 或成功偵測到另一個 PID 時則重新綁定。
 
-背景 subagent 的工具進度不會清掉前景或其他 agent 的等待，也不會覆寫前景終端位置。
-有明確 agent ID 的 subagent 仍能解除自己發出的等待。同一 session 的 hook 更新會序列化，
-避免並行寫入互撞；系統通知在釋放鎖後才發送，不會持鎖阻擋後續 hook。
+同一 session 的等待依 agent 分開保存：A、B 都在等時，A 恢復工作或離場只解除 A 的等待，
+B 仍會留在「等你」。前景 transcript 的回應證據也不能代替背景 agent 解除等待；
+背景進度不會覆寫前景終端位置。摘要優先顯示前景等待，否則顯示最先加入且尚未解除的等待；
+看板與 JSON 計數仍以 session 為單位，不把每個 subagent 算成一列。
+
+權限指令摘要也依 agent 與工具請求 ID 分開暫存，其他 agent 的工具完成不會清掉它。
+缺少 agent ID 的 `permission_prompt` 只有唯一候選時才借用其摘要；多個候選無法區分時，
+顯示通知本身的泛用訊息，不猜是哪條指令。舊版單一等待紀錄仍可讀取，新 `SessionStart`
+或確定換成另一個前景 PID 時會清掉舊綁定的待決事項。
+
+同一 session 的 hook 更新會序列化，避免並行寫入互撞；系統通知在釋放鎖後才發送，
+不會持鎖阻擋後續 hook。
 
 ```sh
 ring gc --dry-run        # 預覽會刪哪些檔案

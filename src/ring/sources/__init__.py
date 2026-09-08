@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import ring.registry as registry
 import ring.tmux_scan as tmux_scan
 from ring.registry import Session, Status
@@ -16,6 +18,7 @@ from ring.sources.codex import source as _codex
 from ring.sources.hook_registry import source as _hook_registry
 from ring.sources.local_llm import llama_cpp_source as _llama_cpp
 from ring.sources.local_llm import ollama_source as _ollama
+from ring.waiting import FOREGROUND_OWNER, primary_wait
 
 # 註冊表（順序＝彙整順序）。hook registry 先於 zero-config source，精準事件優先。
 _SOURCES: list[SessionSource] = [_hook_registry, _claude_code, _codex, _ollama, _llama_cpp]
@@ -119,15 +122,28 @@ def _merge_duplicate_session(current: Session, candidate: Session) -> Session:
     「使用者回應了」。這種 row 只由真人 prompt（tail "working"）或後續 hook 事件清掉，
     否則 Stop 之後任何一筆簿記寫入推進 mtime 都會讓紅色憑空消失。
     """
+    foreground_wait = next((r for r in current.waiting_requests if r.owner == FOREGROUND_OWNER), None)
+    # 背景 hook 會更新 row 的 last_active，但不能讓已解決的前景等待又蓋過 transcript 證據。
+    waiting_since = foreground_wait.since if foreground_wait is not None else current.last_active
     if (
         current.source == "hook"
         and current.status is Status.WAITING
         and candidate.provider == current.provider
         and candidate.status is not Status.WAITING
-        and candidate.last_active > current.last_active
+        and candidate.last_active > waiting_since
         and candidate._tail_kind in {"working", "waiting"}
         and not (current.waiting_kind == "question" and candidate._tail_kind == "waiting")
     ):
+        # Host transcript 只能證明前景已回應，不能代替另一個 subagent 解除等待。
+        remaining = {r.owner: r for r in current.waiting_requests if r.owner != FOREGROUND_OWNER}
+        if remaining:
+            selected = primary_wait(remaining)
+            return replace(
+                current,
+                waiting_requests=tuple(remaining.values()),
+                waiting_kind=selected.kind,
+                waiting_detail=selected.detail,
+            )
         if not candidate.tty:
             candidate.tty = current.tty
         if not candidate.tmux_target:
