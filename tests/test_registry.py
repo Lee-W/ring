@@ -1695,6 +1695,11 @@ def test_hook_sessions_promotes_codex_permission_wait_after_threshold(
     assert sessions[0].status is Status.WAITING
     assert sessions[0].waiting_kind == "permission"
     assert sessions[0].waiting_detail == "Bash: cp /tmp/fix.py pelicanconf.py"
+    requests = sessions[0].waiting_requests
+    assert len(requests) == 1
+    assert requests[0].kind == "permission"
+    assert requests[0].detail == sessions[0].waiting_detail
+    assert _hook_sessions([("/repo", "")])[0].waiting_requests[0].request_id == requests[0].request_id
 
 
 def test_hook_sessions_keeps_codex_permission_request_working_within_threshold(

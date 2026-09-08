@@ -1092,6 +1092,26 @@ def test_format_json_outputs_machine_readable_board(
     assert by_id["a"]["project"] == "maigo"
 
 
+def test_format_json_exports_live_wait_requests_without_activity_based_revisions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    from ring.waiting import WaitingRequest, renew_wait
+
+    monkeypatch.setattr(cli, "running_agent_pids", lambda: [])
+    monkeypatch.setattr(cli, "load_labels", lambda: {})
+    request = renew_wait(None, WaitingRequest("agent:a", "question", "Which branch?", since=100.0))
+    session = Session("s", "/repo", Status.WAITING, 100.0, "old action", "hook", waiting_requests=(request,))
+    exported = json.loads(cli.render_json([session]))["sessions"][0]["waiting_requests"]
+    assert exported == [{"id": request.request_id, "owner": "agent:a", "kind": "question", "detail": "Which branch?"}]
+    session.last_active = 200.0
+    session.heartbeat_at = 200.0
+    assert json.loads(cli.render_json([session]))["sessions"][0]["waiting_requests"] == exported
+    session.status = Status.ENDED
+    assert json.loads(cli.render_json([session]))["sessions"][0]["waiting_requests"] == []
+
+
 def test_format_oneline_counts_nonzero_statuses(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

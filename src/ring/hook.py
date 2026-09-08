@@ -62,6 +62,8 @@ from ring.waiting import (
     event_owner,
     primary_wait,
     read_waiting_requests,
+    renew_wait,
+    tool_request_id,
 )
 
 _HOOK_EVENTS = list(HOOK_EVENTS)
@@ -279,12 +281,30 @@ def _update_session_state(
     keep_waiting = _notification_keeps_waiting(event, prev_row)
     now = time.time()
     pending, matched = _pending_permission_details(event, previous_state, data, owner, now)
+    request_id = tool_request_id(data)
     if event.event == "Notification" and event.waiting_kind == "permission" and matched is not None:
         # 無 agent ID 的 Notification 只有唯一候選時才可借用其來源與摘要。
         owner = str(matched["owner"])
         event = replace(event, detail=str(matched["detail"]))
+        request_id = str(matched["request_id"])
     if event.status is Status.WAITING:
-        requests[owner] = WaitingRequest(owner, event.waiting_kind, event.detail, event.waiting_for, now)
+        previous_wait = requests.get(owner)
+        if (
+            event.event == "Notification"
+            and event.waiting_kind == "permission"
+            and not request_id
+            and not pending
+            and previous_wait is not None
+            and previous_wait.kind == "permission"
+            and previous_wait.tool_use_id
+        ):
+            # 暫存摘要 TTL 過後的泛用提醒不是另一筆請求，也不該蓋掉已知的工具摘要。
+            request_id = previous_wait.tool_use_id
+            event = replace(event, detail=previous_wait.detail)
+        requests[owner] = renew_wait(
+            previous_wait,
+            WaitingRequest(owner, event.waiting_kind, event.detail, event.waiting_for, now, tool_use_id=request_id),
+        )
     elif not keep_waiting and owner != UNKNOWN_OWNER:
         requests.pop(owner, None)
         if owner == FOREGROUND_OWNER:
@@ -310,6 +330,8 @@ def _update_session_state(
         # 最後一個 hook 事件名：讀取側據此做 codex 的核可等待判定（最後事件是
         # PermissionRequest 且靜默逾時 → 🔴），任何後續事件覆寫它就自然清紅。
         "last_event": event.event,
+        "last_event_owner": owner,
+        "last_tool_use_id": request_id,
         "last_active": now,
         "heartbeat_at": now,
         "last_action": last_action,
@@ -471,9 +493,7 @@ def _pending_permission_details(
         and (at := _as_epoch(item.get("at"))) is not None
         and 0 <= now - at <= _PENDING_DETAIL_TTL
     ]
-    request_id = next(
-        (value for key in ("tool_use_id", "toolUseId") if isinstance(value := data.get(key), str) and value), ""
-    )
+    request_id = tool_request_id(data)
     if owner != UNKNOWN_OWNER:
         if event.event in _PENDING_DETAIL_CLEAR_EVENTS:
             ambiguous_completion = (

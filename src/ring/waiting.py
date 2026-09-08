@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
+from uuid import uuid4
 
 FOREGROUND_OWNER = "foreground"
 UNKNOWN_OWNER = "unknown"
@@ -19,6 +22,12 @@ def event_owner(data: dict[str, Any]) -> str:
     return FOREGROUND_OWNER
 
 
+def tool_request_id(data: dict[str, Any]) -> str:
+    return next(
+        (value for key in ("tool_use_id", "toolUseId") if isinstance(value := data.get(key), str) and value), ""
+    )
+
+
 @dataclass(frozen=True)
 class WaitingRequest:
     owner: str
@@ -26,6 +35,33 @@ class WaitingRequest:
     detail: str = ""
     waiting_for: str = ""
     since: float = 0.0
+    revision: str = ""
+    tool_use_id: str = ""
+
+    @property
+    def request_id(self) -> str:
+        """跨輪詢穩定的不透明 ID；舊 row／讀取側升紅不可每次產生隨機值。"""
+        if self.revision:
+            return self.revision
+        identity = json.dumps([self.owner, self.since, self.tool_use_id])
+        return "legacy:" + hashlib.sha256(identity.encode()).hexdigest()
+
+
+def renew_wait(previous: WaitingRequest | None, current: WaitingRequest) -> WaitingRequest:
+    """同一工具的重複事件／相同提醒保留識別；明確的新請求才換 ID。"""
+    if previous is not None and previous.owner == current.owner and previous.kind == current.kind:
+        if previous.tool_use_id and current.tool_use_id:
+            same_request = previous.tool_use_id == current.tool_use_id
+        else:
+            same_request = (previous.detail, previous.waiting_for) == (current.detail, current.waiting_for)
+        if same_request:
+            return replace(
+                current,
+                since=previous.since,
+                revision=previous.request_id,
+                tool_use_id=current.tool_use_id or previous.tool_use_id,
+            )
+    return replace(current, revision=uuid4().hex)
 
 
 def read_waiting_requests(row: dict[str, Any]) -> dict[str, WaitingRequest]:
@@ -56,7 +92,7 @@ def read_waiting_requests(row: dict[str, Any]) -> dict[str, WaitingRequest]:
             owner,
             **{
                 key: value.get(key, "") if isinstance(value.get(key, ""), str) else ""
-                for key in ("kind", "detail", "waiting_for")
+                for key in ("kind", "detail", "waiting_for", "revision", "tool_use_id")
             },
             since=float(since),
         )

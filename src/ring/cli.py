@@ -284,6 +284,11 @@ def render_json(sessions: list[Session]) -> str:
                 "last_active": s.last_active,
                 "last_action": s.last_action,
                 "waiting_detail": s.waiting_detail,
+                "waiting_requests": [
+                    {"id": request.request_id, "owner": request.owner, "kind": request.kind, "detail": request.detail}
+                    for request in s.waiting_requests
+                    if s.status is Status.WAITING
+                ],
                 "todo": {"done": s.todo[0], "total": s.todo[1]} if s.todo else None,
                 "source": s.source,
             }

@@ -38,6 +38,12 @@ ring --format json | jq '.counts.waiting'
 - **SwiftBar / xbar / waybar**：包一層腳本呼叫 `ring --format oneline` 或吃 JSON 自己排版。
 - JSON 的鍵名視為穩定介面（只加不改），放心接腳本。
 
+每個 session 的 `waiting_requests` 列出目前有效的等待，欄位為 `id`（不透明的請求識別）、
+`owner`（`foreground`、`agent:<id>` 或 `unknown`）、`kind` 與 `detail`；非等待狀態回傳空陣列。
+對照同一 session 前後快照新增的請求 ID，可辨識輪詢間已回應、又再次等待的情況；
+不要用 `last_active` 或 `heartbeat_at` 當作等待版本，背景活動也會更新它們。
+只移除請求不算新等待，計數仍以 session 為單位。
+
 ### Shell 補全（`ring completion`）
 
 ```sh
@@ -88,6 +94,31 @@ zero-config 下每個專案只開一個 session 時也對得上。Codex 沒裝 h
 跳不過去時，每次跳轉的經過都記在 `~/.config/ring/focus.jsonl`（一行一次，含每個 focuser 的回覆），
 事後可以直接分辨是哪一種失敗：`tty` 是空的（沒抓到 tty）、每個 focuser 都 `skip`（tty 已失效，
 分頁多半關掉了）、或 iTerm2 回 `unraised`（分頁找到了但視窗沒浮上來，通常是它在別的 Space）。
+
+### 從 Neovim 選取等待中的 session（RiNG.nvim）
+
+安裝並設定 [RiNG.nvim](https://github.com/Lee-W/ring.nvim) 後，`:RingJump` 會取得新快照，
+用 `vim.ui.select()` 列出所有等待中的 session，顯示專案／自訂名稱、工具、縮短 ID 與等待原因。
+已有輪詢進行中時會等它完成；選定後才以完整 session ID 執行 `ring focus`，取消不會跳轉。
+
+可自行加一個快捷鍵（plugin 不預設綁鍵）：
+
+```lua
+vim.keymap.set("n", "<leader>rj", "<cmd>RingJump<cr>", { desc = "Jump to waiting agent" })
+```
+
+RiNG TUI 正在跑時，跳回看板並選中該列；沒有 TUI 時，直接嘗試聚焦 session 的終端。
+這仍需要上節說明的終端設定與可辨識的 session 位置，不會替沒有終端的背景 agent 開啟新 session。
+查詢失敗或資料不完整時不拿舊名單猜目標，錯誤與逾時也不受自動通知的開關影響。
+
+若自訂 RiNG 執行檔或 wrapper，請同時設定 plugin 的 `command` 與 `focus_command`，
+讓查詢與跳轉指向同一環境；`focus_timeout` 可獨立調整跳轉的等待時間（預設 15 秒）。
+在 Neovim 用 `:checkhealth ring` 檢查兩個指令，完整設定見 `:help ring.nvim`。
+
+搭配支援 `waiting_requests` 的版本，RiNG.nvim 也會通知同一 session 的新一輪等待，
+並在已有前景等待時指出新加入的背景請求。開啟 Neovim 的第一份快照仍保持安靜。
+舊版 RiNG／自訂輸出缺少請求識別時，退回 session ID 去重；只有計數時則只通知數量增加。
+若上游沒有提供請求 ID、沒有任何進度事件，而且新舊提示完全相同，就無法可靠區分新一輪等待。
 
 ### 就地回覆權限請求（`p`）
 

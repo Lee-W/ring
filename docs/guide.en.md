@@ -38,6 +38,13 @@ ring --format json | jq '.counts.waiting'
 - **SwiftBar / xbar / waybar**: wrap `ring --format oneline` or consume the JSON.
 - JSON keys are a stable interface (additive only), safe to script against.
 
+Each session's `waiting_requests` lists its active waits with `id` (an opaque request identifier),
+`owner` (`foreground`, `agent:<id>`, or `unknown`), `kind`, and `detail`. Non-waiting sessions return
+an empty array. Compare newly added request IDs within the same session to detect a wait that was
+resolved and replaced between polls. Do not use `last_active` or `heartbeat_at` as a waiting
+revision: background activity updates them too. Removing requests is not a new wait, and counts
+still count sessions.
+
 ### Shell Completion (`ring completion`)
 
 ```sh
@@ -79,6 +86,37 @@ jump, with each focuser's answer), so you can tell the failure modes apart after
 `tty` (none was captured), every focuser reporting `skip` (the tty is stale — the tab is most
 likely gone), or iTerm2 reporting `unraised` (the tab was found but its window did not come
 forward, usually because it lives on another Space).
+
+### Jump From Neovim With RiNG.nvim
+
+After installing and configuring [RiNG.nvim](https://github.com/Lee-W/ring.nvim), run `:RingJump`
+to fetch a fresh snapshot and choose from all waiting sessions with `vim.ui.select()`. Each entry
+shows the project/label, provider, short ID, and waiting reason. An in-flight poll is reused;
+selection runs `ring focus` with the full session ID, while cancellation does nothing.
+
+An optional mapping (the plugin does not install key mappings):
+
+```lua
+vim.keymap.set("n", "<leader>rj", "<cmd>RingJump<cr>", { desc = "Jump to waiting agent" })
+```
+
+If RiNG's TUI is running, the request returns to the board and selects that row. Otherwise it
+attempts to focus the session's terminal. The terminal setup and session-location requirements
+above still apply; this does not open a new session for a background agent without a terminal.
+Failed or incomplete queries never use an old cached list. Errors and timeouts are reported even
+when automatic waiting notifications are disabled.
+
+With a custom executable or wrapper, configure both `command` and `focus_command` in the plugin
+so queries and focus target the same environment. `focus_timeout` separately controls the focus
+timeout (15 seconds by default). Use `:checkhealth ring` to check both executables and
+`:help ring.nvim` for the complete reference.
+
+With versions that support `waiting_requests`, RiNG.nvim also notifies on a new waiting round in
+the same session, naming a newly waiting background request even when a foreground wait remains.
+The initial Neovim snapshot stays silent. Older RiNG versions or custom output without request
+identities fall back to session-ID tracking; counts-only output notifies only on a rising count.
+If the provider supplies neither a request ID nor an intervening progress event and the prompts
+are identical, a new waiting round cannot be distinguished reliably.
 
 ### Reply To Permission Requests In Place (`p`)
 

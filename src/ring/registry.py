@@ -55,7 +55,7 @@ from ring.transcript import (
     _recent_actions,
     _tail_records,
 )
-from ring.waiting import WaitingRequest, read_waiting_requests
+from ring.waiting import FOREGROUND_OWNER, WaitingRequest, read_waiting_requests
 
 CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
 RING_REGISTRY = Path.home() / ".config" / "ring" / "sessions"
@@ -1154,6 +1154,15 @@ def _hook_sessions(
                     # 「下一個事件來時還新不新鮮」；這裡 hook 靜默 = 同一筆請求還掛著，
                     # 摘要必然還是它，直接沿用）。
                     row.waiting_detail = pending_detail
+                row.waiting_requests = (
+                    WaitingRequest(
+                        str(data.get("last_event_owner", FOREGROUND_OWNER)),
+                        "permission",
+                        row.waiting_detail,
+                        since=row.last_active,
+                        tool_use_id=str(data.get("last_tool_use_id", "")),
+                    ),
+                )
             if _is_bare_session_start_row(
                 row.tty or "",
                 str(data.get("last_event", "")),

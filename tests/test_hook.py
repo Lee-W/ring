@@ -122,6 +122,64 @@ def hook_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return path
 
 
+def test_wait_request_identity_survives_reminders_but_changes_after_progress(
+    monkeypatch: pytest.MonkeyPatch, hook_registry: Path
+) -> None:
+    from ring.waiting import read_waiting_requests
+
+    monkeypatch.setattr("ring.hook.time.time", lambda: 100.0)
+    base = {"session_id": "s1", "cwd": "/work/app"}
+    waiting = dict(base, hook_event_name="Notification", notification_type="permission_prompt", message="approve?")
+
+    def current_id() -> str:
+        row = json.loads((hook_registry / "s1.json").read_text())
+        return read_waiting_requests(row)["foreground"].request_id
+
+    hook._record_session_state(waiting, "claude-code")
+    first = current_id()
+    hook._record_session_state(dict(base, hook_event_name="PreToolUse", agent_id="background"), "claude-code")
+    hook._record_session_state(waiting, "claude-code")
+    assert current_id() == first
+    hook._record_session_state(dict(base, hook_event_name="PostToolUse"), "claude-code")
+    hook._record_session_state(waiting, "claude-code")
+    assert current_id() != first
+
+
+def test_ambiguous_notification_does_not_borrow_existing_wait_summary(hook_registry: Path) -> None:
+    base = {"session_id": "s1", "cwd": "/work/app", "hook_event_name": "PermissionRequest"}
+    notice = dict(base, hook_event_name="Notification", notification_type="permission_prompt", message="approve?")
+    hook._record_session_state(
+        dict(base, tool_use_id="fg", tool_name="Bash", tool_input={"command": "git push"}), "claude-code"
+    )
+    hook._record_session_state(notice, "claude-code")
+    hook._record_session_state(
+        dict(base, tool_use_id="bg", agent_id="worker", tool_name="Read", tool_input={"path": "README.md"}),
+        "claude-code",
+    )
+    hook._record_session_state(notice, "claude-code")
+    assert json.loads((hook_registry / "s1.json").read_text())["waiting_detail"] == "approve?"
+
+
+def test_wait_request_uses_tool_identity_and_retains_summary_after_pending_expiry(
+    monkeypatch: pytest.MonkeyPatch, hook_registry: Path
+) -> None:
+    base = {"session_id": "s1", "cwd": "/work/app"}
+    permission = dict(base, hook_event_name="PermissionRequest", tool_name="Bash", tool_input={"command": "git push"})
+    notice = dict(base, hook_event_name="Notification", notification_type="permission_prompt", message="approve?")
+    monkeypatch.setattr("ring.hook.time.time", lambda: 100.0)
+    hook._record_session_state(dict(permission, tool_use_id="tool-1"), "claude-code")
+    hook._record_session_state(notice, "claude-code")
+    path = hook_registry / "s1.json"
+    first = json.loads(path.read_text())["waiting_requests"]["foreground"]
+    monkeypatch.setattr("ring.hook.time.time", lambda: 300.0)
+    hook._record_session_state(notice, "claude-code")
+    assert json.loads(path.read_text())["waiting_requests"]["foreground"] == first
+    hook._record_session_state(dict(permission, tool_use_id="tool-2", requires_action=True), "claude-code")
+    second = json.loads(path.read_text())["waiting_requests"]["foreground"]
+    assert second["revision"] != first["revision"]
+    assert second["detail"] == first["detail"]
+
+
 @pytest.mark.parametrize("event_name", ["PreToolUse", "PostToolUse", "PermissionRequest"])
 def test_subagent_progress_preserves_foreground_wait(
     monkeypatch: pytest.MonkeyPatch, hook_registry: Path, event_name: str
