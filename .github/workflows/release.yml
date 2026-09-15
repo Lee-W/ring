@@ -37,7 +37,7 @@ jobs:
 
       - name: Set up uv
         if: steps.cz.outputs.version != steps.cz.outputs.previous_version
-        uses: astral-sh/setup-uv@v10.0.1
+        uses: astral-sh/setup-uv@v10.1.0
         with:
           python-version: "3.13"
 
