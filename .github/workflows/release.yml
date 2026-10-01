@@ -1,15 +1,17 @@
 name: Release
 
-# On push to main, commitizen bumps the version from conventional commits,
+# After CI succeeds on main, commitizen bumps the version from conventional commits,
 # writes the CHANGELOG, tags, then we build and publish to PyPI and cut a
 # GitHub Release. Everything runs in one job, so it does not rely on the tag
 # push triggering a second workflow and the default GITHUB_TOKEN is enough.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-main
   cancel-in-progress: false
 
 permissions:
@@ -18,20 +20,39 @@ permissions:
 
 jobs:
   release:
-    # Don't bump again on commitizen's own "bump:" commit. (Commits pushed with
-    # GITHUB_TOKEN don't re-trigger workflows anyway; this is belt-and-suspenders.)
-    if: "!startsWith(github.event.head_commit.message, 'bump:')"
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: main
+
+      - name: Verify main is the commit validated by CI
+        id: validated
+        env:
+          VALIDATED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [ "$(git rev-parse HEAD)" != "$VALIDATED_SHA" ]; then
+            echo "Skipping release: main has changed since this CI run."
+            exit 0
+          fi
+          case "$(git log -1 --format=%s)" in
+            bump:*) exit 0 ;;
+          esac
+          echo "ready=true" >> "$GITHUB_OUTPUT"
 
       - name: Bump version & changelog
         id: cz
+        if: steps.validated.outputs.ready == 'true'
         uses: commitizen-tools/commitizen-action@0.27.1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          # The action's default push runs git pull, which could introduce untested commits.
+          push: false
           # Only this bump's changelog section, used as the GitHub Release body.
           changelog_increment_filename: body.md
 
@@ -44,6 +65,17 @@ jobs:
       - name: Build distributions
         if: steps.cz.outputs.version != steps.cz.outputs.previous_version
         run: uv build
+
+      - name: Verify wheel installation
+        if: steps.cz.outputs.version != steps.cz.outputs.previous_version
+        run: |
+          uv venv /tmp/ring-release-smoke
+          uv pip install --python /tmp/ring-release-smoke/bin/python dist/*.whl
+          /tmp/ring-release-smoke/bin/ring --version
+
+      - name: Push version and tag only if main has not changed
+        if: steps.cz.outputs.version != steps.cz.outputs.previous_version
+        run: git push --atomic origin HEAD:main --tags
 
       - name: Publish to PyPI
         if: steps.cz.outputs.version != steps.cz.outputs.previous_version
