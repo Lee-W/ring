@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-08-16 15:25+0800\n"
+"POT-Creation-Date: 2026-10-01 18:02+0900\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -52,7 +52,7 @@ msgstr[1] ""
 msgid "🎤 RiNG — {sess} · {proc}"
 msgstr ""
 
-#: src/ring/cli.py:166 src/ring/cli.py:219 src/ring/tui.py:305
+#: src/ring/cli.py:166 src/ring/cli.py:219 src/ring/tui.py:310
 msgid "圖例"
 msgstr ""
 
@@ -60,104 +60,104 @@ msgstr ""
 msgid "（場館目前沒人上台）"
 msgstr ""
 
-#: src/ring/cli.py:187 src/ring/cli.py:341 src/ring/commands/doctor.py:29
+#: src/ring/cli.py:187 src/ring/cli.py:346 src/ring/commands/doctor.py:29
 #: src/ring/commands/doctor.py:36 src/ring/commands/doctor.py:42
 #: src/ring/commands/doctor.py:45 src/ring/commands/doctor.py:48
 #: src/ring/commands/doctor.py:50 src/ring/commands/doctor.py:70
 #: src/ring/commands/doctor.py:112 src/ring/commands/doctor.py:114
 #: src/ring/commands/doctor.py:116 src/ring/commands/doctor.py:196
-#: src/ring/tui.py:260
+#: src/ring/tui.py:266
 msgid "狀態"
 msgstr ""
 
-#: src/ring/cli.py:189 src/ring/cli.py:238 src/ring/tui.py:262
+#: src/ring/cli.py:189 src/ring/cli.py:238 src/ring/tui.py:268
 msgid "工具"
 msgstr ""
 
 #: src/ring/cli.py:190 src/ring/cli.py:238 src/ring/commands/stats.py:60
-#: src/ring/tui.py:263
+#: src/ring/tui.py:269
 msgid "專案"
 msgstr ""
 
-#: src/ring/cli.py:191 src/ring/cli.py:238 src/ring/tui.py:263
+#: src/ring/cli.py:191 src/ring/cli.py:238 src/ring/tui.py:269
 msgid "進度"
 msgstr ""
 
-#: src/ring/cli.py:192 src/ring/cli.py:238 src/ring/tui.py:263
+#: src/ring/cli.py:192 src/ring/cli.py:238 src/ring/tui.py:269
 msgid "閒置"
 msgstr ""
 
-#: src/ring/cli.py:193 src/ring/cli.py:238 src/ring/tui.py:263
+#: src/ring/cli.py:193 src/ring/cli.py:238 src/ring/tui.py:269
 msgid "去哪"
 msgstr ""
 
-#: src/ring/cli.py:195 src/ring/cli.py:238 src/ring/tui.py:263
+#: src/ring/cli.py:195 src/ring/cli.py:238 src/ring/tui.py:269
 msgid "動作"
 msgstr ""
 
-#: src/ring/cli.py:323
+#: src/ring/cli.py:328
 msgid "（內建預設）"
 msgstr ""
 
-#: src/ring/cli.py:339
+#: src/ring/cli.py:344
 msgid "RiNG 設定檔"
 msgstr ""
 
-#: src/ring/cli.py:340 src/ring/commands/doctor.py:195
+#: src/ring/cli.py:345 src/ring/commands/doctor.py:195
 msgid "路徑"
 msgstr ""
 
-#: src/ring/cli.py:341 src/ring/commands/doctor.py:196
+#: src/ring/cli.py:346 src/ring/commands/doctor.py:196
 msgid "已存在"
 msgstr ""
 
-#: src/ring/cli.py:341 src/ring/commands/doctor.py:196
+#: src/ring/cli.py:346 src/ring/commands/doctor.py:196
 msgid "不存在（全部用內建預設）"
 msgstr ""
 
-#: src/ring/cli.py:343
+#: src/ring/cli.py:348
 msgid "目前生效的設定（← = 你覆寫過的）"
 msgstr ""
 
-#: src/ring/cli.py:351
+#: src/ring/cli.py:356
 msgid ""
 "用 `ring config set KEY VALUE` 改，或直接編輯上面那個檔；完整選項見 src/ring/config.py 的 "
 "docstring。"
 msgstr ""
 
-#: src/ring/cli.py:362 src/ring/cli.py:365
+#: src/ring/cli.py:367 src/ring/cli.py:370
 #, python-brace-format
 msgid "未知的鍵：{key}"
 msgstr ""
 
-#: src/ring/cli.py:378
+#: src/ring/cli.py:383
 msgid "用法：ring config get KEY"
 msgstr ""
 
-#: src/ring/cli.py:389
+#: src/ring/cli.py:394
 msgid "用法：ring config set KEY VALUE"
 msgstr ""
 
-#: src/ring/cli.py:397
+#: src/ring/cli.py:402
 #, python-brace-format
 msgid "✅ 已設定 {key} = {value}（{path}）"
 msgstr ""
 
-#: src/ring/cli.py:398
+#: src/ring/cli.py:403
 msgid "註：set 會重寫整個設定檔，原有註解不會保留。"
 msgstr ""
 
-#: src/ring/cli.py:401
+#: src/ring/cli.py:406
 #, python-brace-format
 msgid "未知的 config 動作：{action}（用 get / set，或不帶參數看目前設定）"
 msgstr ""
 
-#: src/ring/cli.py:424
+#: src/ring/cli.py:429
 #, python-brace-format
 msgid "每 {interval}s 刷新 · Ctrl-C 離場"
 msgstr ""
 
-#: src/ring/cli.py:469
+#: src/ring/cli.py:474
 msgid ""
 "\n"
 "commands:\n"
@@ -181,28 +181,28 @@ msgid ""
 "  completion SHELL             印出 shell 補全腳本（zsh / bash）\n"
 msgstr ""
 
-#: src/ring/cli.py:495
+#: src/ring/cli.py:500
 msgid ""
 "usage: ring hook [PROVIDER] [--provider PROVIDER]\n"
 "\n"
 "從 stdin 讀 hook JSON，依 provider 正規化後寫入 RiNG registry。\n"
 msgstr ""
 
-#: src/ring/cli.py:501
+#: src/ring/cli.py:506
 msgid ""
 "usage: ring install-hooks [--dry-run]\n"
 "\n"
 "安裝 Claude Code / Codex hooks。\n"
 msgstr ""
 
-#: src/ring/cli.py:507
+#: src/ring/cli.py:512
 msgid ""
 "usage: ring remove-hooks [--dry-run]\n"
 "\n"
 "從 Claude Code / Codex hook 設定移除 RiNG 安裝的 hooks。\n"
 msgstr ""
 
-#: src/ring/cli.py:513
+#: src/ring/cli.py:518
 msgid ""
 "usage: ring config [get KEY | set KEY VALUE]\n"
 "\n"
@@ -211,7 +211,7 @@ msgid ""
 "  set KEY VALUE  寫入單一設定。注意：會重寫整個設定檔，原有註解不會保留。\n"
 msgstr ""
 
-#: src/ring/cli.py:521
+#: src/ring/cli.py:526
 msgid ""
 "usage: ring quiet [on | off | DURATION]\n"
 "\n"
@@ -223,14 +223,14 @@ msgid ""
 "  DURATION    開啟 quiet 一段時間（例如 30m、1h），到期自動解除。\n"
 msgstr ""
 
-#: src/ring/cli.py:532
+#: src/ring/cli.py:537
 msgid ""
 "usage: ring focus SESSION_ID\n"
 "\n"
 "聚焦指定 session；若 RiNG TUI 正在執行，會回到 TUI 並選中該列。\n"
 msgstr ""
 
-#: src/ring/cli.py:538
+#: src/ring/cli.py:543
 msgid ""
 "usage: ring gc [--dry-run] [--older-than DURATION] [--all-ended]\n"
 "\n"
@@ -242,7 +242,7 @@ msgid ""
 "  --all-ended            清理所有目前判定已離場的 registry\n"
 msgstr ""
 
-#: src/ring/cli.py:549
+#: src/ring/cli.py:554
 msgid ""
 "usage: ring doctor\n"
 "\n"
@@ -250,7 +250,7 @@ msgid ""
 "不寫任何檔案、不安裝、不發通知；固定回傳 0。\n"
 msgstr ""
 
-#: src/ring/cli.py:556
+#: src/ring/cli.py:561
 msgid ""
 "usage: ring digest [--since DURATION] [--format text|json]\n"
 "\n"
@@ -261,7 +261,7 @@ msgid ""
 "  --format text|json  輸出格式\n"
 msgstr ""
 
-#: src/ring/cli.py:566
+#: src/ring/cli.py:571
 msgid ""
 "usage: ring stats [--since DURATION]\n"
 "\n"
@@ -272,46 +272,46 @@ msgid ""
 "  --since DURATION  統計時間窗（例如 12h、7d、30d；預設 7d）\n"
 msgstr ""
 
-#: src/ring/cli.py:576
+#: src/ring/cli.py:581
 msgid ""
 "usage: ring completion zsh|bash\n"
 "\n"
 "印出 shell 補全腳本。zsh 放 ~/.zshrc：eval \"$(ring completion zsh)\"；bash 同理。\n"
 msgstr ""
 
-#: src/ring/cli.py:637
+#: src/ring/cli.py:642
 msgid "看所有 agent CLI session 上台。"
 msgstr ""
 
-#: src/ring/cli.py:642
+#: src/ring/cli.py:647
 msgid "持續刷新"
 msgstr ""
 
-#: src/ring/cli.py:643
+#: src/ring/cli.py:648
 msgid "watch 刷新秒數"
 msgstr ""
 
-#: src/ring/cli.py:644
+#: src/ring/cli.py:649
 msgid "watch 刷新幾格後自動結束（0=無限，預設）"
 msgstr ""
 
-#: src/ring/cli.py:645
+#: src/ring/cli.py:650
 msgid "連已離場的 session 也顯示"
 msgstr ""
 
-#: src/ring/cli.py:650
+#: src/ring/cli.py:655
 msgid "顯示顏色圖例（--no-legend 關閉）"
 msgstr ""
 
-#: src/ring/cli.py:652
+#: src/ring/cli.py:657
 msgid "語言（如 en / zh-Hant；也吃 config / RING_LANG / LANG）"
 msgstr ""
 
-#: src/ring/cli.py:657
+#: src/ring/cli.py:662
 msgid "輸出格式：table（預設）/ json（機器可讀）/ oneline（status bar 單行摘要）"
 msgstr ""
 
-#: src/ring/cli.py:663
+#: src/ring/cli.py:668
 #, python-brace-format
 msgid "--format {fmt} 只能用在快照模式，不能配 --watch。"
 msgstr ""
@@ -321,64 +321,64 @@ msgstr ""
 msgid "⚠️ {path} 有未知的設定鍵（可能打錯字，已忽略）：{keys}"
 msgstr ""
 
-#: src/ring/hook.py:85
+#: src/ring/hook.py:101
 msgid "重開 Claude Code session 後，🔴 等你狀態就會精準起來。"
 msgstr ""
 
-#: src/ring/hook.py:95
+#: src/ring/hook.py:111
 msgid "重開 Codex session、並在它詢問時「信任」這個 hook，🔴 等你狀態才會精準起來（Codex 不會執行未信任的 hook）。"
 msgstr ""
 
-#: src/ring/hook.py:531
+#: src/ring/hook.py:710
 #, python-brace-format
 msgid "⚠️ 偵測到其他工具也掛在 {events}：{cmds}"
 msgstr ""
 
-#: src/ring/hook.py:532
+#: src/ring/hook.py:711
 msgid "它們會跟 RiNG 的通知重複觸發；要完全改用 RiNG，建議移除它們。"
 msgstr ""
 
-#: src/ring/hook.py:580 src/ring/hook.py:656
+#: src/ring/hook.py:759 src/ring/hook.py:835
 #, python-brace-format
 msgid "⚠️ {path} 不是合法 JSON，先處理它再來。"
 msgstr ""
 
-#: src/ring/hook.py:618
+#: src/ring/hook.py:797
 #, python-brace-format
 msgid "✅ RiNG hooks 已經裝過了，沒有變更。（{path}）"
 msgstr ""
 
-#: src/ring/hook.py:631
+#: src/ring/hook.py:810
 #, python-brace-format
 msgid "✅ 已註冊 RiNG hooks（{events}）到 {path}"
 msgstr ""
 
-#: src/ring/hook.py:650
+#: src/ring/hook.py:829
 #, python-brace-format
 msgid "ℹ️ {path} 不存在，沒有可移除的 hook。"
 msgstr ""
 
-#: src/ring/hook.py:677
+#: src/ring/hook.py:856
 #, python-brace-format
 msgid "ℹ️ 沒有找到 RiNG hook 條目，無需移除。（{path}）"
 msgstr ""
 
-#: src/ring/hook.py:681
+#: src/ring/hook.py:860
 #, python-brace-format
 msgid "✅ 已移除 RiNG hooks（{events}）從 {path}"
 msgstr ""
 
-#: src/ring/notify_queue.py:246
+#: src/ring/notify_queue.py:260
 #, python-brace-format
 msgid "{s} 秒"
 msgstr ""
 
-#: src/ring/notify_queue.py:249
+#: src/ring/notify_queue.py:263
 #, python-brace-format
 msgid "{m} 分"
 msgstr ""
 
-#: src/ring/notify_queue.py:251
+#: src/ring/notify_queue.py:265
 #, python-brace-format
 msgid "{h} 小時"
 msgstr ""
@@ -388,196 +388,201 @@ msgstr ""
 msgid "⚠️ ring plugin '{name}' 載入失敗：{error}"
 msgstr ""
 
-#: src/ring/tui.py:55
+#: src/ring/tui.py:57
 #, python-brace-format
 msgid "背景 agent，沒有終端可跳；用 `claude --resume {session_id}` 接回"
 msgstr ""
 
-#: src/ring/tui.py:100
+#: src/ring/tui.py:102
 #, python-brace-format
 msgid "為 {project} 命名（Enter 存、Esc 取消、清空移除）"
 msgstr ""
 
-#: src/ring/tui.py:101
+#: src/ring/tui.py:103
 msgid "這個 session 在做什麼…"
 msgstr ""
 
-#: src/ring/tui.py:162
+#: src/ring/tui.py:164
 #, python-brace-format
 msgid "回覆 {project} 的權限請求"
 msgstr ""
 
-#: src/ring/tui.py:167
+#: src/ring/tui.py:169
 msgid "Enter 或數字鍵送出、Esc 取消"
 msgstr ""
 
-#: src/ring/tui.py:190
+#: src/ring/tui.py:192
 msgid "離場"
 msgstr ""
 
-#: src/ring/tui.py:191
+#: src/ring/tui.py:193
 msgid "刷新"
 msgstr ""
 
-#: src/ring/tui.py:192
+#: src/ring/tui.py:194
 msgid "含已離場"
 msgstr ""
 
-#: src/ring/tui.py:193
+#: src/ring/tui.py:195
 msgid "命名"
 msgstr ""
 
-#: src/ring/tui.py:194
+#: src/ring/tui.py:196
 msgid "隱藏"
 msgstr ""
 
-#: src/ring/tui.py:195
+#: src/ring/tui.py:197
 msgid "最久等待"
 msgstr ""
 
-#: src/ring/tui.py:196
+#: src/ring/tui.py:198
 msgid "回覆權限"
 msgstr ""
 
-#: src/ring/tui.py:197 src/ring/tui.py:198
+#: src/ring/tui.py:199 src/ring/tui.py:200
 msgid "跳過去"
 msgstr ""
 
-#: src/ring/tui.py:281
+#: src/ring/tui.py:284
 msgid "💡 同專案開了多個 session，裝 hook 跳轉才精準：ring install-hooks"
 msgstr ""
 
-#: src/ring/tui.py:283
+#: src/ring/tui.py:286
 msgid "↑/↓ 選一列，Enter 或 Space 跳到那個 session 的終端"
 msgstr ""
 
-#: src/ring/tui.py:350
+#: src/ring/tui.py:355
 #, python-brace-format
 msgid "🔔 {names} 在等你回話"
 msgstr ""
 
-#: src/ring/tui.py:389
+#: src/ring/tui.py:394
 #, python-brace-format
 msgid "→ 已跳到 {project}（來自通知）"
 msgstr ""
 
-#: src/ring/tui.py:394
+#: src/ring/tui.py:399
 msgid "那個 session 已不在場"
 msgstr ""
 
-#: src/ring/tui.py:405
+#: src/ring/tui.py:410
 msgid "🔇 QUIET"
 msgstr ""
 
-#: src/ring/tui.py:407
+#: src/ring/tui.py:412
 #, python-brace-format
 msgid "🔇 QUIET · 剩 {remaining}"
 msgstr ""
 
-#: src/ring/tui.py:410
+#: src/ring/tui.py:415
 #, python-brace-format
 msgid "queue: {n}"
 msgstr ""
 
-#: src/ring/tui.py:502
+#: src/ring/tui.py:459
+#, python-brace-format
+msgid "看板刷新失敗，保留上次資料：{error}"
+msgstr ""
+
+#: src/ring/tui.py:531
 msgid "  ⚠ hook 可能失效：來源檔有更新但沒有 heartbeat"
 msgstr ""
 
-#: src/ring/tui.py:531 src/ring/tui.py:555 src/ring/tui.py:595
-#: src/ring/tui.py:699
+#: src/ring/tui.py:560 src/ring/tui.py:584 src/ring/tui.py:627
+#: src/ring/tui.py:753
 msgid "（沒有選到 session）"
 msgstr ""
 
-#: src/ring/tui.py:562 src/ring/tui.py:570 src/ring/tui.py:601
+#: src/ring/tui.py:591 src/ring/tui.py:602 src/ring/tui.py:647
 #, python-brace-format
 msgid "{project}：{msg}"
 msgstr ""
 
-#: src/ring/tui.py:568
+#: src/ring/tui.py:600
 #, python-brace-format
 msgid "→ {project}（{where}）"
 msgstr ""
 
-#: src/ring/tui.py:578
+#: src/ring/tui.py:610
 msgid "（沒有正在等待的 session）"
 msgstr ""
 
-#: src/ring/tui.py:605
+#: src/ring/tui.py:651
 #, python-brace-format
 msgid "{project}：抓不到這個 session 的畫面（不在 tmux，也不是可控的 iTerm2／kitty 視窗），無法就地回覆"
 msgstr ""
 
-#: src/ring/tui.py:613
+#: src/ring/tui.py:658
 #, python-brace-format
 msgid "{project}：讀不到 {backend} 畫面"
 msgstr ""
 
-#: src/ring/tui.py:617
+#: src/ring/tui.py:662
 #, python-brace-format
 msgid "{project}：畫面上沒有可辨識的權限對話框，未送出任何按鍵"
 msgstr ""
 
-#: src/ring/tui.py:628
+#: src/ring/tui.py:673
 #, python-brace-format
 msgid "{project}：選項 {number} 是兩位數編號，RiNG 不代按（送出的第一個數字會先選中別的選項）；請按 Enter 跳過去自己回"
 msgstr ""
 
-#: src/ring/tui.py:638
+#: src/ring/tui.py:683
 #, python-brace-format
 msgid "… {project}：正在回覆權限"
 msgstr ""
 
-#: src/ring/tui.py:681
+#: src/ring/tui.py:735
 #, python-brace-format
 msgid "→ {project}：已回覆權限（{option}）"
 msgstr ""
 
-#: src/ring/tui.py:685
+#: src/ring/tui.py:739
 #, python-brace-format
 msgid "{project}：權限對話框已不在，未送出任何按鍵"
 msgstr ""
 
-#: src/ring/tui.py:686
+#: src/ring/tui.py:740
 #, python-brace-format
 msgid "{project}：對話框內容已變化，未送出；請再按一次 p"
 msgstr ""
 
-#: src/ring/tui.py:687
+#: src/ring/tui.py:741
 #, python-brace-format
 msgid "{project}：tmux send-keys 失敗，沒能回覆"
 msgstr ""
 
-#: src/ring/tui.py:688
+#: src/ring/tui.py:742
 #, python-brace-format
 msgid "{project}：已送出但對話框還在，請跳過去確認"
 msgstr ""
 
-#: src/ring/tui.py:690
+#: src/ring/tui.py:744
 #, python-brace-format
 msgid "{project}：對話框已不在，數字落進輸入框，已補 Backspace 清掉"
 msgstr ""
 
-#: src/ring/tui.py:692
+#: src/ring/tui.py:746
 #, python-brace-format
 msgid "{project}：已送出但拿不到畫面驗證，請跳過去確認"
 msgstr ""
 
-#: src/ring/tui.py:707
+#: src/ring/tui.py:761
 #, python-brace-format
 msgid "再按一次 d 隱藏 {project}（有新活動會自動重新出現）"
 msgstr ""
 
-#: src/ring/tui.py:712
+#: src/ring/tui.py:766
 #, python-brace-format
 msgid "{project} 是仍在執行的 process，無法隱藏；請跳過去結束它"
 msgstr ""
 
-#: src/ring/tui.py:720
+#: src/ring/tui.py:774
 #, python-brace-format
 msgid "已隱藏 {project}，並清掉 RiNG 狀態；有新活動會自動重新出現"
 msgstr ""
 
-#: src/ring/tui.py:722
+#: src/ring/tui.py:776
 #, python-brace-format
 msgid "已隱藏 {project}（沒有 RiNG registry 可清；有新活動會自動重新出現）"
 msgstr ""
@@ -1050,4 +1055,9 @@ msgstr ""
 #: src/ring/notify/base.py:55
 #, python-brace-format
 msgid "RiNG · {project} 在等你回話"
+msgstr ""
+
+#: src/ring/sources/__init__.py:48
+#, python-brace-format
+msgid "⚠️ session 來源 '{name}' 讀取失敗，保留上次資料：{error}"
 msgstr ""

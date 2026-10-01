@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import os
 import time
+from dataclasses import replace
 from typing import ClassVar
 
 from rich.text import Text
@@ -23,6 +24,7 @@ from textual.containers import Vertical
 from textual.coordinate import Coordinate
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Header, Input, OptionList, Static
+from textual.worker import Worker
 
 from ring import permission
 from ring.cli import (
@@ -223,6 +225,10 @@ class RingApp(App[None]):
         self._permission_acks: dict[str, float] = {}
         # send/capture 會碰 subprocess / AppleScript，放背景執行；同一個 session 同時只送一次。
         self._permission_replies_inflight: set[str] = set()
+        self._permission_reads_inflight: set[str] = set()
+        self._refresh_inflight = False
+        self._refresh_requested = False
+        self._closing = False
 
     @staticmethod
     def _detect_own_tty() -> str:
@@ -264,19 +270,16 @@ class RingApp(App[None]):
         for label in cols:
             table.add_column(label)
 
-    def on_mount(self) -> None:
-        # 寫入 presence，讓 `ring focus` 知道 TUI 在跑。
-        write_tui_presence()
-        # 啟動時依首批 session 決定要不要顯示工具欄。
-        self._sessions = board(self._show_all)
-        self._show_tool = show_tool_column(self._sessions)
+    async def on_mount(self) -> None:
         table = self.query_one(DataTable)
         self._setup_columns()
         table.cursor_type = "row"
         table.focus()  # 讓 ↑/↓ 與 Enter 直接作用在表格上
         self._render_legend()
-        self._reload()
-        self.set_interval(self._interval, self._reload)
+        worker = self._reload()
+        if worker is not None:
+            await worker.wait()
+        self.set_interval(self._interval, lambda: self._reload(retry=False))
         if not self._hooks_active() and self._has_cwd_collision():
             self._set_status(_("💡 同專案開了多個 session，裝 hook 跳轉才精準：ring install-hooks"))
         else:
@@ -284,6 +287,8 @@ class RingApp(App[None]):
 
     def on_unmount(self) -> None:
         # 清除 presence，TUI 離場後 `ring focus` 退回 headless 行為。
+        self._closing = True
+        self._refresh_requested = False
         clear_tui_presence()
 
     def _set_status(self, text: str) -> None:
@@ -311,7 +316,7 @@ class RingApp(App[None]):
         """訊息 / 提醒用顯示名：取過名用名字，否則用專案名（與看板專案欄一致）。"""
         return labeled_project(s.project, get_label(s.session_id))
 
-    def _ring_on_waiting_alerts(self, alerts: list[Session]) -> None:
+    async def _ring_on_waiting_alerts(self, alerts: list[Session]) -> None:
         """有 session 需要提醒 → RiNG 真的「ring」你（響鈴 + toast 通知）。
 
         系統通知原則上由 ``ring hook`` 在轉 🔴 的事件當下發（這裡不重複發，只響
@@ -340,7 +345,7 @@ class RingApp(App[None]):
             try:
                 from ring.notify import notify_waiting
 
-                notify_waiting(promoted)
+                await asyncio.to_thread(notify_waiting, promoted)
             except Exception:
                 pass
         if quiet_active(time.time()):
@@ -361,7 +366,7 @@ class RingApp(App[None]):
         with contextlib.suppress(Exception):
             focus_jump(Session("self", "/", Status.WORKING, 0.0, "", "ipc", tty=self._own_tty))
 
-    def _poll_focus_request(self) -> None:
+    async def _poll_focus_request(self) -> None:
         """讀一次 focus-request 檔，有效的話把游標跳過去、持續標記，並 activate 自己視窗。
 
         1. 讀 focus-request；無 / 過期 / 解析失敗 → 直接回傳（read_focus_request 已消費即焚）。
@@ -369,11 +374,11 @@ class RingApp(App[None]):
         3. 在 _sessions 找 session_id → 移游標 + 記住 _focused_sid（那列持續標記直到回應）。
         4. 找不到 → 走「已不在場」分支，清掉 _focused_sid。
         """
-        sid = read_focus_request()
+        sid = await asyncio.to_thread(read_focus_request)
         if sid is None:
             return
 
-        self._activate_own_window()
+        await asyncio.to_thread(self._activate_own_window)
 
         target_row: int | None = None
         for idx, s in enumerate(self._sessions):
@@ -422,16 +427,43 @@ class RingApp(App[None]):
             suffix += " ⚙"
         return Text(f"{marker}{s.status.marker} {status_label(s.status)}{suffix}", style=style)
 
-    def _reload(self) -> None:
-        # 每次刷新都續寫 presence，避免 TUI 開超過 TTL 後 `ring focus` 誤判 TUI 沒在跑、
-        # 退回去跳 session 自己的終端（scan 模式常沒 tty → 跳轉失敗）。
+    def _reload(self, *, retry: bool = True) -> Worker[None] | None:
+        """一次只跑一輪；timer 不累積工作，使用者的刷新／篩選則在完成後再讀一次。"""
+        if self._closing:
+            return None
+        # 在 UI 排程時續寫，避免已取消、仍排在 thread pool 的掃描於離場後復活 presence。
         write_tui_presence()
-        # TUI 輪詢是三個懶惰 flush 觸發源之一：開著看板時比 headless（靠下個 hook 事件）更快
-        # 補發合流的彙總通知。失敗安靜吞，不影響看板本身。
-        with contextlib.suppress(Exception):
-            flush_if_due()
-        self._sessions = board(self._show_all)
-        self._apply_permission_acks()
+        if self._refresh_inflight:
+            self._refresh_requested |= retry
+            return None
+        self._refresh_inflight = True
+        return self.run_worker(self._refresh(), group="refresh")
+
+    @staticmethod
+    def _collect_snapshot(show_all: bool) -> tuple[list[Session], int, dict[str, str]]:
+        return board(show_all), len(running_agent_pids()), load_labels()
+
+    async def _refresh(self) -> None:
+        try:
+            sessions, pids, labels = await asyncio.to_thread(self._collect_snapshot, self._show_all)
+            self._sessions = sessions
+            self._apply_permission_acks()
+            self._render_snapshot(pids, labels)
+            # 外部程序／HTTP 都在 thread 執行；Textual worker 讓按鍵 message 繼續被處理。
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(flush_if_due, current_sessions=[replace(s) for s in self._sessions])
+            await self._ring_on_waiting_alerts(self._alerts.feed(self._sessions))
+            self.sub_title = _header(len(self._sessions), pids) + self._quiet_badge()
+            await self._poll_focus_request()
+        except Exception as exc:
+            self._toast(_("看板刷新失敗，保留上次資料：{error}", error=str(exc)))
+        finally:
+            self._refresh_inflight = False
+            if self._refresh_requested and not self._closing:
+                self._refresh_requested = False
+                self.call_later(self._reload)
+
+    def _render_snapshot(self, pids: int, labels: dict[str, str]) -> None:
         table = self.query_one(DataTable)
         # cursor 快照要在「任何」clear 之前取：clear(columns=True) 會把 cursor_row reset 成 0。
         cursor = table.cursor_row
@@ -448,10 +480,7 @@ class RingApp(App[None]):
                 self._focused_sid = None
         # 系統通知（toast）改由 ``ring hook`` 在事件當下發出（見 hook._ring_waiting_now）；
         # 這裡只留 TUI 自己的 in-app 響鈴 / 訊息列與醒目標記，不重複發系統通知。
-        alerts = self._alerts.feed(self._sessions)
-        self._ring_on_waiting_alerts(alerts)
-        self.sub_title = _header(len(self._sessions), len(running_agent_pids())) + self._quiet_badge()
-        labels = load_labels()
+        self.sub_title = _header(len(self._sessions), pids) + self._quiet_badge()
         table.clear()
         for s in self._sessions:
             progress = f"{s.todo[0]}/{s.todo[1]}" if s.todo else "·"
@@ -465,7 +494,6 @@ class RingApp(App[None]):
         if self._sessions:
             table.move_cursor(row=min(cursor, len(self._sessions) - 1))
         self._update_detail()
-        self._poll_focus_request()
 
     def _apply_permission_acks(self) -> None:
         """以終端回覆結果蓋過同一 revision 的 stale WAITING，直到 provider 送來新事件。"""
@@ -564,7 +592,10 @@ class RingApp(App[None]):
             self._set_status(text)
             self.notify(text, severity="warning", timeout=10)
             return
-        ok, msg = focus_jump(s)
+        self.run_worker(self._finish_jump(s, name), group="focus")
+
+    async def _finish_jump(self, s: Session, name: str) -> None:
+        ok, msg = await asyncio.to_thread(focus_jump, s)
         if ok:
             text = _("→ {project}（{where}）", project=name, where=msg)
         else:
@@ -596,7 +627,21 @@ class RingApp(App[None]):
             self._set_status(_("（沒有選到 session）"))
             return
         name = self._display_name(s)
+        if self._permission_reads_inflight or isinstance(self.screen, _PermissionModal):
+            return
+        self._permission_reads_inflight.add(s.session_id)
+        self.run_worker(self._open_permission_dialog(s, name), group="permission-capture")
+
+    @staticmethod
+    def _capture_permission(s: Session) -> tuple[permission.PermissionBackend | None, str | None]:
         backend = permission.select_backend(s)
+        return backend, backend.capture() if backend is not None else None
+
+    async def _open_permission_dialog(self, s: Session, name: str) -> None:
+        try:
+            backend, screen = await asyncio.to_thread(self._capture_permission, s)
+        finally:
+            self._permission_reads_inflight.discard(s.session_id)
         if backend is None:
             if s.kind == "agent":
                 self._toast(_("{project}：{msg}", project=name, msg=_agent_resume_hint(s.session_id)))
@@ -609,7 +654,6 @@ class RingApp(App[None]):
                     )
                 )
             return
-        screen = backend.capture()
         if screen is None:
             self._toast(_("{project}：讀不到 {backend} 畫面", project=name, backend=backend.name))
             return

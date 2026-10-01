@@ -199,6 +199,10 @@ spam. Two independent, stackable mechanisms address this:
   as debounce, but the two mechanisms are independent — quiet is always available regardless of
   `notify_debounce_seconds`.
 
+Before flushing, RiNG checks that each queued request is still waiting. Answered, ended, or replaced
+requests are discarded, and the summary counts only sessions that still need a response. If a source
+temporarily fails, uncertain queue entries remain pending until fresh data is available.
+
 ```sh
 ring quiet            # show current status (on/off, remaining time)
 ring quiet on         # turn on; stays muted until manually cleared

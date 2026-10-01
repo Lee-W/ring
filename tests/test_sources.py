@@ -46,6 +46,47 @@ class _StaticSource:
         return self._sessions
 
 
+class _FlakySource(_StaticSource):
+    fail = False
+
+    def discover(self) -> list[Session]:
+        if self.fail:
+            raise RuntimeError("source unavailable")
+        return super().discover()
+
+
+def test_source_failure_keeps_snapshot_and_other_sources(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    broken = _FlakySource("flaky", [Session("waiting", "/x", Status.WAITING, 1.0, "", "custom")])
+    good = _StaticSource("good", [Session("working", "/y", Status.WORKING, 1.0, "", "custom")])
+    monkeypatch.setattr(sources, "_SOURCES", [broken, good])
+    monkeypatch.setattr("ring.tmux_scan._tmux_targets", lambda: {})
+    first = sources.discover_sessions()
+    first[0].status = Status.WORKING  # 消費者的本地修改不能污染快照。
+    broken.fail = True
+    result = sources.discover_sessions()
+    assert [(s.session_id, s.status) for s in result] == [("waiting", Status.WAITING), ("working", Status.WORKING)]
+    assert "source unavailable" in capsys.readouterr().err
+    assert sources.stale_session_ids() == {"waiting"}
+    sources.discover_sessions()
+    assert capsys.readouterr().err == ""  # 同一錯誤不每輪刷警告。
+    broken.fail = False
+    broken._sessions = []
+    assert [s.session_id for s in sources.discover_sessions()] == ["working"]
+    assert sources.source_errors() == {}
+    assert sources.stale_session_ids() == set()
+
+
+def test_first_source_failure_does_not_hide_healthy_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    broken = _FlakySource("flaky", [])
+    broken.fail = True
+    good = _StaticSource("good", [Session("working", "/y", Status.WORKING, 1.0, "", "custom")])
+    monkeypatch.setattr(sources, "_SOURCES", [broken, good])
+    monkeypatch.setattr("ring.tmux_scan._tmux_targets", lambda: {})
+    assert [s.session_id for s in sources.discover_sessions()] == ["working"]
+
+
 def test_hidden_sessions_are_filtered_out(monkeypatch: pytest.MonkeyPatch) -> None:
     """隱藏之後沒有新活動（last_active <= hidden_at）→ 仍不收進看板。"""
     monkeypatch.setattr(

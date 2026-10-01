@@ -96,6 +96,7 @@ async def test_quiet_active_suppresses_bell(monkeypatch: pytest.MonkeyPatch) -> 
         monkeypatch.setattr(app, "bell", lambda: bells.append(1))
         state["sessions"] = [Session("a", "/x/p", Status.WAITING, 0.0, "-", "scan")]  # WORKING → WAITING
         app._reload()
+        await app.workers.wait_for_complete()
         assert bells == []
 
 
@@ -134,6 +135,7 @@ async def test_quiet_active_enqueues_codex_promoted_alert_instead_of_dropping(
             )
         ]
         app._reload()
+        await app.workers.wait_for_complete()
 
         assert notify_queue.peek_count() == 1  # 入隊了，不是被丟掉
 
@@ -142,6 +144,7 @@ async def test_quiet_active_enqueues_codex_promoted_alert_instead_of_dropping(
         monkeypatch.setattr("ring.notify.notify_summary", lambda count, sample: summary_calls.append(count))
         notify_queue.clear_quiet()
         app._reload()
+        await app.workers.wait_for_complete()
         assert summary_calls == [1]
         assert notify_queue.peek_count() == 0
 
@@ -165,11 +168,13 @@ async def test_header_badge_shows_quiet_and_queue_count(monkeypatch: pytest.Monk
         notify_queue.set_quiet(None)
         notify_queue.enqueue([Session("b", "/y/p", Status.WAITING, 0.0, "-", "hook")])
         app._reload()
+        await app.workers.wait_for_complete()
         assert "QUIET" in app.sub_title
         assert "queue: 1" in app.sub_title
 
         notify_queue.clear_quiet()
         app._reload()
+        await app.workers.wait_for_complete()
         assert "QUIET" not in app.sub_title
 
 
@@ -185,6 +190,7 @@ async def test_new_waiting_rings_bell(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(app, "bell", lambda: bells.append(1))
         state["sessions"] = [Session("a", "/x/p", Status.WAITING, 0.0, "-", "scan")]  # WORKING → WAITING
         app._reload()
+        await app.workers.wait_for_complete()
         assert bells == [1]
 
 
@@ -205,10 +211,9 @@ async def test_tui_writes_presence_on_mount(monkeypatch: pytest.MonkeyPatch, tmp
     with patch("ring.tui.write_tui_presence", lambda **kw: pres_path.touch()):
         app = tui.RingApp(lang="en")
         async with app.run_test():
-            pass  # on_mount 已呼叫 write_tui_presence
+            assert pres_path.exists()
 
-    # write_tui_presence 被呼叫（用 touch 模擬）
-    assert pres_path.exists()
+    assert not pres_path.exists()  # 離場後不得保留 presence。
 
 
 @pytest.mark.asyncio
@@ -410,6 +415,7 @@ async def test_tool_column_disappears_after_reload_to_uniform(monkeypatch: pytes
             Session("b", "/y/ring", Status.WORKING, 0.0, "-", "hook", provider="claude-code"),
         ]
         app._reload()
+        await app.workers.wait_for_complete()
         assert len(table.columns) == 6  # 工具欄消失
 
 
@@ -436,6 +442,7 @@ async def test_tool_column_appears_after_reload_to_mixed(monkeypatch: pytest.Mon
             Session("b", "/y/ring", Status.WORKING, 0.0, "-", "codex", provider="codex"),
         ]
         app._reload()
+        await app.workers.wait_for_complete()
         assert len(table.columns) == 7  # 工具欄出現
 
 
@@ -464,6 +471,7 @@ async def test_cursor_preserved_across_column_switch(monkeypatch: pytest.MonkeyP
             Session("c", "/z/app", Status.IDLE, 0.0, "-", "hook", provider="claude-code"),
         ]
         app._reload()
+        await app.workers.wait_for_complete()
         assert table.cursor_row == 2  # 游標還在第 3 列，沒被 reset
 
 
@@ -634,6 +642,7 @@ async def test_focused_highlight_clears_when_no_longer_waiting(monkeypatch: pyte
             # session 回應 → 不再 WAITING
             state["sessions"] = [Session("sid-1", "/x/proj", Status.WORKING, 0.0, "hi", "hook")]
             app._reload()
+            await app.workers.wait_for_complete()
             assert app._focused_sid is None  # 標記自動解除
 
 
@@ -1113,6 +1122,7 @@ async def test_permission_reply_ack_suppresses_stale_waiting_until_new_hook(
 
         revision["value"] = 101.0
         app._reload()
+        await app.workers.wait_for_complete()
         assert app._sessions[0].status.value == "waiting"
         assert "a" not in app._permission_acks
 
@@ -1151,6 +1161,7 @@ async def test_permission_reply_does_not_ack_other_waiters(monkeypatch: pytest.M
         # Even an older single-wait acknowledgment cannot suppress a multi-wait snapshot.
         app._permission_acks["a"] = 100.0
         app._reload()
+        await app.workers.wait_for_complete()
         assert app._sessions[0].status is Status.WAITING
         assert "a" not in app._permission_acks
 
@@ -1188,6 +1199,136 @@ async def test_permission_reply_does_not_block_tui(monkeypatch: pytest.MonkeyPat
         release.set()
         await app.workers.wait_for_complete()
         assert app._sessions[0].status is Status.WORKING
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["scan", "notification"])
+async def test_refresh_keeps_keyboard_responsive_and_serializes_scans(
+    monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    started, release = threading.Event(), threading.Event()
+    finished = threading.Event()
+    calls: list[bool] = []
+    sessions = [Session(str(i), f"/x/{i}", Status.WORKING, 0.0, "", "scan") for i in range(2)]
+
+    def scan(show_all: bool) -> list[Session]:
+        calls.append(show_all)
+        if operation == "scan" and len(calls) == 2:
+            started.set()
+            release.wait(5)
+            finished.set()
+        return sessions
+
+    def flush(*, current_sessions: list[Session]) -> None:
+        if operation == "notification" and len(calls) == 2:
+            started.set()
+            release.wait(5)
+            finished.set()
+
+    monkeypatch.setattr(tui, "board", scan)
+    monkeypatch.setattr(tui, "flush_if_due", flush)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [])
+    app = tui.RingApp(interval=60)
+    async with app.run_test() as pilot:
+        try:
+            app._reload()
+            assert await asyncio.to_thread(started.wait, 1)
+            await asyncio.wait_for(pilot.press("j"), timeout=1)
+            assert not finished.is_set()  # 工作還沒完成時就已處理按鍵。
+            assert app.query_one(DataTable).cursor_row == 1
+            app._reload(retry=False)  # timer tick 不重疊掃描，也不累積重跑。
+            assert len(calls) == 2
+            await asyncio.wait_for(pilot.press("a"), timeout=1)
+            assert app._show_all
+        finally:
+            release.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        assert calls == [False, False, True]  # 切換篩選不能被進行中的舊掃描吃掉。
+
+
+@pytest.mark.asyncio
+async def test_permission_capture_does_not_block_keyboard(monkeypatch: pytest.MonkeyPatch) -> None:
+    sessions = [Session(str(i), f"/x/{i}", Status.WAITING, 0.0, "", "hook", tmux_target="main:1.0") for i in range(2)]
+    started, release = threading.Event(), threading.Event()
+    captures: list[str] = []
+
+    def capture(target: str) -> str:
+        captures.append(target)
+        started.set()
+        assert release.wait(5)
+        return _perm_screen("dialog-bash.txt")
+
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [])
+    monkeypatch.setattr(permission, "capture_pane", capture)
+    app = tui.RingApp(interval=60)
+    async with app.run_test() as pilot:
+        try:
+            await asyncio.wait_for(pilot.press("p"), timeout=1)
+            assert await asyncio.to_thread(started.wait, 1)
+            await asyncio.wait_for(pilot.press("j"), timeout=1)
+            assert app.query_one(DataTable).cursor_row == 1
+            await pilot.press("p")
+            assert len(captures) == 1  # 第二列的 p 不能另外開一個競爭中的權限浮層。
+        finally:
+            release.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.screen, tui._PermissionModal)
+        await pilot.press("escape")
+
+
+@pytest.mark.asyncio
+async def test_focus_jump_does_not_block_keyboard(monkeypatch: pytest.MonkeyPatch) -> None:
+    sessions = [Session(str(i), f"/x/{i}", Status.WORKING, 0.0, "", "hook", tmux_target="main:1.0") for i in range(2)]
+    started, release = threading.Event(), threading.Event()
+
+    def focus(session: Session) -> tuple[bool, str]:
+        started.set()
+        assert release.wait(5)
+        return True, "focused"
+
+    monkeypatch.setattr(tui, "board", lambda show_all: sessions)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [])
+    monkeypatch.setattr(tui, "focus_jump", focus)
+    app = tui.RingApp(interval=60)
+    async with app.run_test() as pilot:
+        try:
+            await asyncio.wait_for(pilot.press("enter"), timeout=1)
+            assert await asyncio.to_thread(started.wait, 1)
+            await asyncio.wait_for(pilot.press("j"), timeout=1)
+            assert app.query_one(DataTable).cursor_row == 1
+        finally:
+            release.set()
+        await app.workers.wait_for_complete()
+
+
+@pytest.mark.asyncio
+async def test_refresh_failure_keeps_previous_rows_and_recovers(monkeypatch: pytest.MonkeyPatch) -> None:
+    failed = False
+    sessions = [Session("a", "/x", Status.WORKING, 0.0, "", "scan")]
+
+    def scan(show_all: bool) -> list[Session]:
+        if failed:
+            raise OSError("scan unavailable")
+        return sessions
+
+    monkeypatch.setattr(tui, "board", scan)
+    monkeypatch.setattr(tui, "running_agent_pids", lambda: [])
+    app = tui.RingApp(interval=60, lang="en")
+    async with app.run_test() as pilot:
+        failed = True
+        app._reload()
+        await app.workers.wait_for_complete()
+        assert app.query_one(DataTable).row_count == 1
+        assert app._sessions[0].session_id == "a"
+        failed = False
+        sessions.clear()
+        await pilot.press("r")
+        await app.workers.wait_for_complete()
+        assert app.query_one(DataTable).row_count == 0
 
 
 @pytest.mark.asyncio
@@ -1231,5 +1372,6 @@ async def test_codex_promoted_waiting_sends_system_notification(monkeypatch: pyt
             ),
         ]
         app._reload()
+        await app.workers.wait_for_complete()
         assert len(sent) == 1, "只有 codex 的逾時升紅要代發系統通知"
         assert [s.session_id for s in sent[0]] == ["codex:t1"]

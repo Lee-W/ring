@@ -189,6 +189,53 @@ def test_gc_skips_source_scan_when_nothing_hidden(
     assert result.hidden_remaining == 0
 
 
+def test_gc_keeps_recent_hidden_sessions_when_source_is_unknown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    hidden_path = tmp_path / "hidden.json"
+    hidden_path.write_text(json.dumps({"recent": time.time(), "old": time.time() - 1000}))
+    monkeypatch.setattr(registry, "DELETED_SESSIONS", hidden_path)
+    monkeypatch.setattr(gc, "RING_REGISTRY", tmp_path / "missing")
+    monkeypatch.setattr(registry, "RING_REGISTRY", tmp_path / "missing")
+    monkeypatch.setattr(gc, "_known_session_ids", lambda: None)
+    result = gc.run_gc(older_than=100)
+    assert result.hidden_stale == ["old"]
+    assert registry.hidden_session_ids() == {"recent"}
+
+
+def test_gc_does_not_delete_focus_request_replaced_after_collection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from ring.ipc import read_focus_request, write_focus_request
+
+    path = tmp_path / "focus-request"
+    path.write_text(json.dumps({"session_id": "old", "ts": time.time() - 100}))
+    candidate = gc.GcCandidate(path, "focus-request 已過期")
+    monkeypatch.setattr(gc, "collect_candidates", lambda **kwargs: [candidate])
+
+    def hidden() -> dict[str, float]:
+        write_focus_request("new", request_path=path)
+        return {}
+
+    monkeypatch.setattr(gc, "hidden_sessions", hidden)
+    result = gc.run_gc()
+    assert result.deleted == []
+    assert read_focus_request(request_path=path) == "new"
+
+
+def test_known_ids_are_unknown_when_a_source_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ring.sources as sources
+
+    class FailingSource:
+        name = "unavailable"
+
+        def discover(self) -> list[registry.Session]:
+            raise OSError("source unavailable")
+
+    monkeypatch.setattr(sources, "_SOURCES", [FailingSource()])
+    assert gc._known_session_ids() is None
+
+
 def test_gc_collects_stale_ipc_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     now = time.time()
     focus = tmp_path / "focus-request"

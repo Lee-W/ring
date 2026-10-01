@@ -845,3 +845,9 @@ msgstr "to keep only RiNG"
 
 msgid "把 preferredNotifChannel 設成 notifications_disabled"
 msgstr "set preferredNotifChannel to notifications_disabled"
+
+msgid "⚠️ session 來源 '{name}' 讀取失敗，保留上次資料：{error}"
+msgstr "⚠️ session source '{name}' failed; keeping the last snapshot: {error}"
+
+msgid "看板刷新失敗，保留上次資料：{error}"
+msgstr "Dashboard refresh failed; keeping the last snapshot: {error}"

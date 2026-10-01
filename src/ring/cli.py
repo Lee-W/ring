@@ -407,7 +407,7 @@ def run_config(args: list[str]) -> int:
     return 2
 
 
-def _watch_flush_if_due() -> None:
+def _watch_flush_if_due(sessions: list[Session]) -> None:
     """headless watch 輪詢時的懶惰 flush 觸發點（同 hook.py / tui.py 既有呼叫慣例）。
 
     quiet active 或仍在 debounce 視窗內時，``flush_if_due`` 內部本來就會 skip（跟
@@ -415,7 +415,7 @@ def _watch_flush_if_due() -> None:
     失敗安靜吞掉，不影響看板本身。
     """
     with contextlib.suppress(Exception):
-        flush_if_due()
+        flush_if_due(current_sessions=sessions)
 
 
 def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int:
@@ -430,9 +430,9 @@ def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int
     if not HAVE_RICH:
         try:
             while True:
-                _watch_flush_if_due()
                 sys.stdout.write("\033[2J\033[H")
                 sessions = board(show_all)
+                _watch_flush_if_due(sessions)
                 print(_render_plain(sessions, show_legend, show_tool_column(sessions)))
                 print(f"\n{footer_text}")
                 sys.stdout.flush()
@@ -447,8 +447,8 @@ def watch(interval: float, count: int, show_all: bool, show_legend: bool) -> int
     try:
         with Live(console=console, screen=True, auto_refresh=False) as live:
             while True:
-                _watch_flush_if_due()
                 sessions = board(show_all)
+                _watch_flush_if_due(sessions)
                 body = _rich_renderable(sessions, show_legend, show_tool_column(sessions))
                 live.update(Group(body, Text(f"\n{footer_text}", style=_MUTED)), refresh=True)
                 frames += 1

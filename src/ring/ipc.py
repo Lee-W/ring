@@ -16,10 +16,12 @@
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import json
 import os
 import sys
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TypedDict
 
@@ -53,6 +55,18 @@ class _TuiPresence(TypedDict):
 # --------------------------------------------------------------------------- focus-request 相關
 
 
+@contextlib.contextmanager
+def _focus_request_lock(path: Path) -> Iterator[None]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # 鎖檔獨立於會被消費／替換的 request inode，reader 與 writer 才會鎖到同一把鎖。
+    with path.with_name(path.name + ".lock").open("a", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 def write_focus_request(session_id: str, *, request_path: Path | None = None) -> None:
     """把 focus-request 寫入磁碟，供 TUI poll 讀取。
 
@@ -62,8 +76,10 @@ def write_focus_request(session_id: str, *, request_path: Path | None = None) ->
     path = request_path or _FOCUS_REQUEST_PATH
     payload: _FocusRequest = {"session_id": session_id, "ts": time.time()}
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload), encoding="utf-8")
+        with _focus_request_lock(path):
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps(payload), encoding="utf-8")
+            tmp.replace(path)
     except Exception:
         pass
 
@@ -86,29 +102,16 @@ def read_focus_request(
     """
     path = request_path or _FOCUS_REQUEST_PATH
     try:
-        raw = path.read_text(encoding="utf-8")
-    except Exception:
-        return None
-
-    try:
-        data: _FocusRequest = json.loads(raw)
-        session_id = str(data["session_id"])
-        ts = float(data["ts"])
-    except Exception:
-        # 解析失敗：刪掉爛檔
-        with contextlib.suppress(Exception):
+        with _focus_request_lock(path):
+            raw = path.read_text(encoding="utf-8")
+            # 讀取與消費在同一臨界區，後來的 writer 不會被這次 unlink 刪掉。
             path.unlink()
+            data: _FocusRequest = json.loads(raw)
+            session_id = str(data["session_id"])
+            ts = float(data["ts"])
+    except Exception:
         return None
-
-    age = time.time() - ts
-    # 不論有效或過期，都刪掉（消費即焚；過期的也不留）
-    with contextlib.suppress(Exception):
-        path.unlink()
-
-    if age > ttl:
-        return None
-
-    return session_id
+    return session_id if time.time() - ts <= ttl else None
 
 
 # --------------------------------------------------------------------------- tui-presence 相關

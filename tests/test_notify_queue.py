@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from ring.config import Config
 from ring.notify_queue import (
@@ -22,6 +25,7 @@ from ring.notify_queue import (
     try_claim_leading_edge,
 )
 from ring.registry import Session, Status
+from ring.waiting import WaitingRequest
 
 
 def _s(sid: str, project: str = "proj") -> Session:
@@ -223,6 +227,12 @@ class TestFormatRemaining:
 
 
 class TestFlushIfDue:
+    @pytest.fixture(autouse=True)
+    def _current_sessions(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "ring.sources.discover_sessions", lambda: [_s(sid) for sid in ("a", "b", *[f"s{i}" for i in range(5)])]
+        )
+
     def _cfg(self, debounce: int) -> Config:
         return Config(notify_debounce_seconds=debounce)
 
@@ -263,6 +273,102 @@ class TestFlushIfDue:
         mock_summary.assert_called_once()
         assert mock_summary.call_args[0][0] == 2
         assert peek_count(queue_path=q) == 0
+
+    @pytest.mark.parametrize("status", [Status.WORKING, Status.IDLE, Status.ENDED, None])
+    def test_resolved_or_gone_wait_is_discarded(self, tmp_path: Path, status: Status | None) -> None:
+        q = tmp_path / "queue.json"
+        enqueue([_s("a")], queue_path=q)
+        current = [] if status is None else [replace(_s("a"), status=status)]
+        with patch("ring.notify.notify_summary") as summary:
+            flush_if_due(force=True, queue_path=q, quiet_path=tmp_path / "quiet", current_sessions=current)
+        summary.assert_not_called()
+        assert peek_count(queue_path=q) == 0
+
+    def test_request_revision_survives_round_trip(self, tmp_path: Path) -> None:
+        request = WaitingRequest("foreground", "permission", "Edit", revision="request-1")
+        session = replace(_s("a"), waiting_requests=(request,))
+        q = tmp_path / "queue.json"
+        enqueue([session], queue_path=q)
+        assert pop_all(queue_path=q)[0].waiting_requests == (request,)
+
+    def test_invalid_wait_owner_is_ignored(self, tmp_path: Path) -> None:
+        q = tmp_path / "queue.json"
+        enqueue([_s("a")], queue_path=q)
+        raw = json.loads(q.read_text())
+        raw["sessions"]["a"]["waiting_requests"] = [{"owner": []}, {"owner": "foreground", "revision": "valid"}]
+        q.write_text(json.dumps(raw))
+        assert pop_all(queue_path=q)[0].waiting_requests == (WaitingRequest("foreground", revision="valid"),)
+
+    def test_replaced_request_is_not_notified_by_old_queue(self, tmp_path: Path) -> None:
+        request = WaitingRequest("foreground", "permission", "Edit", revision="old")
+        queued = replace(_s("a"), waiting_requests=(request,))
+        current = replace(queued, waiting_requests=(replace(request, revision="new"),))
+        q = tmp_path / "queue.json"
+        enqueue([queued], queue_path=q)
+        with patch("ring.notify.notify_summary") as summary:
+            flush_if_due(force=True, queue_path=q, current_sessions=[current])
+        summary.assert_not_called()
+        assert peek_count(queue_path=q) == 0
+
+    def test_same_request_uses_latest_location_and_detail(self, tmp_path: Path) -> None:
+        request = WaitingRequest("foreground", "permission", "Edit", revision="same")
+        queued = replace(_s("a"), waiting_requests=(request,))
+        latest = replace(queued, last_active=100.0, tty="/dev/ttys002", waiting_detail="new detail")
+        q = tmp_path / "queue.json"
+        enqueue([queued], queue_path=q)
+        with patch("ring.notify.notify_summary") as summary:
+            flush_if_due(force=True, queue_path=q, current_sessions=[latest])
+        summary.assert_called_once_with(1, latest)
+
+    def test_another_agent_wait_does_not_keep_resolved_request(self, tmp_path: Path) -> None:
+        host = WaitingRequest("foreground", revision="host")
+        agent = WaitingRequest("agent:a", revision="agent")
+        queued = replace(_s("a"), waiting_requests=(host,))
+        q = tmp_path / "queue.json"
+        enqueue([queued], queue_path=q)
+        with patch("ring.notify.notify_summary") as summary:
+            flush_if_due(force=True, queue_path=q, current_sessions=[replace(queued, waiting_requests=(agent,))])
+        summary.assert_not_called()
+
+    def test_discovery_failure_retains_queue(self, tmp_path: Path) -> None:
+        q = tmp_path / "queue.json"
+        enqueue([_s("a")], queue_path=q)
+        with patch("ring.sources.discover_sessions", side_effect=RuntimeError("unavailable")):
+            flush_if_due(force=True, queue_path=q)
+        assert peek_count(queue_path=q) == 1
+
+    def test_failed_source_keeps_only_uncertain_items(self, tmp_path: Path) -> None:
+        q = tmp_path / "queue.json"
+        enqueue([_s("a"), _s("b"), _s("missing")], queue_path=q)
+        with (
+            patch("ring.sources.source_errors", return_value={"flaky": "unavailable"}),
+            patch("ring.sources.stale_session_ids", return_value={"a"}),
+            patch("ring.notify.notify_summary") as summary,
+        ):
+            flush_if_due(force=True, queue_path=q, current_sessions=[_s("a"), _s("b")])
+        summary.assert_called_once_with(1, _s("b"))
+        assert {s.session_id for s in pop_all(queue_path=q)} == {"a", "missing"}
+
+    def test_enqueue_during_discovery_is_left_for_next_flush(self, tmp_path: Path) -> None:
+        q = tmp_path / "queue.json"
+        old = _s("a")
+        new = replace(old, last_active=100.0)
+        enqueue([old], queue_path=q)
+
+        def discover() -> list[Session]:
+            enqueue([new], queue_path=q)
+            return [new]
+
+        with (
+            patch("ring.sources.discover_sessions", side_effect=discover),
+            patch("ring.notify.notify_summary") as summary,
+        ):
+            flush_if_due(force=True, queue_path=q)
+        summary.assert_not_called()
+        assert peek_count(queue_path=q) == 1
+        with patch("ring.notify.notify_summary") as summary:
+            flush_if_due(force=True, queue_path=q, current_sessions=[new])
+        summary.assert_called_once_with(1, new)
 
     def test_flushes_with_debounce_disabled_no_window_ever_opened(self, tmp_path: Path) -> None:
         """debounce=0（純 quiet 累積的殘留）——沒開過視窗也要能被懶惰 flush。"""

@@ -7,10 +7,13 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import replace
+from threading import RLock
 
 import ring.registry as registry
 import ring.tmux_scan as tmux_scan
+from ring.i18n import gettext as _
 from ring.registry import Session, Status
 from ring.sources.base import SessionSource
 from ring.sources.claude_code import source as _claude_code
@@ -22,6 +25,52 @@ from ring.waiting import FOREGROUND_OWNER, primary_wait
 
 # 註冊表（順序＝彙整順序）。hook registry 先於 zero-config source，精準事件優先。
 _SOURCES: list[SessionSource] = [_hook_registry, _claude_code, _codex, _ollama, _llama_cpp]
+_SOURCE_SNAPSHOTS: dict[int, tuple[SessionSource, list[Session]]] = {}
+_SOURCE_ERRORS: dict[int, str] = {}
+_SOURCE_LOCK = RLock()
+
+
+def discover_source_sessions(source: SessionSource) -> list[Session]:
+    """逐來源隔離失敗；快照獨立複製，避免看板修改污染下一輪的 fallback。"""
+    key = id(source)
+    with _SOURCE_LOCK:
+        active = {id(item) for item in _SOURCES} | {key}
+        for stale in set(_SOURCE_SNAPSHOTS) - active:
+            _SOURCE_SNAPSHOTS.pop(stale, None)
+        for stale in set(_SOURCE_ERRORS) - active:
+            _SOURCE_ERRORS.pop(stale, None)
+        try:
+            snapshot = [replace(s, recent_actions=list(s.recent_actions)) for s in source.discover()]
+        except Exception as exc:
+            error = str(exc)
+            if _SOURCE_ERRORS.get(key) != error:
+                print(
+                    _("⚠️ session 來源 '{name}' 讀取失敗，保留上次資料：{error}", name=source.name, error=error),
+                    file=sys.stderr,
+                )
+            _SOURCE_ERRORS[key] = error
+            snapshot = _SOURCE_SNAPSHOTS.get(key, (source, []))[1]
+        else:
+            _SOURCE_SNAPSHOTS[key] = (source, snapshot)
+            _SOURCE_ERRORS.pop(key, None)
+        return [replace(s, recent_actions=list(s.recent_actions)) for s in snapshot]
+
+
+def source_errors() -> dict[str, str]:
+    """目前來源讀取錯誤；未知資料不能作為 GC／通知過期的證據。"""
+    with _SOURCE_LOCK:
+        return {source.name: _SOURCE_ERRORS[id(source)] for source in _SOURCES if id(source) in _SOURCE_ERRORS}
+
+
+def stale_session_ids() -> set[str]:
+    """失敗來源暫留的 ID；保留看板狀態，但不能用舊快照補發通知。"""
+    with _SOURCE_LOCK:
+        return {
+            s.session_id
+            for source in _SOURCES
+            if id(source) in _SOURCE_ERRORS
+            for s in _SOURCE_SNAPSHOTS.get(id(source), (source, []))[1]
+        }
 
 
 def register_source(source: SessionSource, *, first: bool = False) -> None:
@@ -46,7 +95,7 @@ def discover_sessions() -> list[Session]:
     """
     merged: dict[str, Session] = {}
     for source in _SOURCES:
-        for s in source.discover():
+        for s in discover_source_sessions(source):
             current = merged.get(s.session_id)
             merged[s.session_id] = s if current is None else _merge_duplicate_session(current, s)
 

@@ -168,17 +168,10 @@ def run_hook(provider: str = "claude-code") -> int:
     收按鈕、把決策寫到 stdout 回給 Claude（這條路下 ``_ring_waiting_now`` 自動短路、不重複發）。
     其餘情況 RiNG 記狀態 + 發通知後 exit 0（你在終端自己回答）。
 
-    每次執行開頭先嘗試懶惰 flush 合流 queue（見 ``notify_queue.flush_if_due``）——沒有常駐
+    更新 registry 後嘗試懶惰 flush 合流 queue（見 ``notify_queue.flush_if_due``）——沒有常駐
     daemon，任何 hook 事件（不限於這次自己是不是 waiting 事件）都是「debounce 視窗過期」的
     天然觸發點，讓 headless（沒開 TUI）也能補發彙總通知。失敗安靜吞掉，不影響本次事件記錄。
     """
-    try:
-        from ring.notify_queue import flush_if_due
-
-        flush_if_due()
-    except Exception:
-        pass
-
     try:
         raw = sys.stdin.read()
     except OSError:
@@ -227,6 +220,12 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
             notification = _update_session_state(path, event, data, adapter.process_names)
     except OSError:
         return
+    try:
+        from ring.notify_queue import flush_if_due
+
+        flush_if_due()
+    except Exception:
+        pass
     # 系統通知可能等待外部程序，不可持鎖阻擋後續解除等待的 hook。
     if notification is not None:
         _ring_waiting_now(*notification)
@@ -559,6 +558,11 @@ def _ring_waiting_now(event: Any, payload: dict[str, Any], last_action: str) -> 
                     provider=event.provider,
                     waiting_kind=str(payload.get("waiting_kind", "")),
                     waiting_detail=str(payload.get("waiting_detail", "")),
+                    waiting_requests=tuple(
+                        request
+                        for owner, request in read_waiting_requests(payload).items()
+                        if owner == payload.get("last_event_owner", FOREGROUND_OWNER)
+                    ),
                     origin_cwd=event.cwd,
                 )
             ]

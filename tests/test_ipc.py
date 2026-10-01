@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from ring.ipc import (
     clear_tui_presence,
@@ -18,6 +22,52 @@ from ring.ipc import (
 
 
 class TestFocusRequest:
+    def test_writer_after_read_is_not_deleted(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        req_path = tmp_path / "focus-request"
+        write_focus_request("old", request_path=req_path)
+        started, finished = threading.Event(), threading.Event()
+        original_read = Path.read_text
+
+        def writer() -> None:
+            started.set()
+            write_focus_request("new", request_path=req_path)
+            finished.set()
+
+        thread = threading.Thread(target=writer)
+
+        def intercepted_read(path: Path, *args: Any, **kwargs: Any) -> str:
+            raw = original_read(path, *args, **kwargs)
+            if path == req_path:
+                thread.start()
+                assert started.wait(1)
+                assert not finished.wait(0.05)
+            return raw
+
+        with monkeypatch.context() as scoped:
+            scoped.setattr(Path, "read_text", intercepted_read)
+            assert read_focus_request(request_path=req_path) == "old"
+        thread.join(timeout=2)
+        assert finished.is_set()
+        assert read_focus_request(request_path=req_path) == "new"
+
+    def test_concurrent_readers_consume_once(self, tmp_path: Path) -> None:
+        req_path = tmp_path / "focus-request"
+        write_focus_request("once", request_path=req_path)
+        barrier = threading.Barrier(8)
+        results: list[str | None] = []
+
+        def reader() -> None:
+            barrier.wait()
+            results.append(read_focus_request(request_path=req_path))
+
+        threads = [threading.Thread(target=reader) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=2)
+        assert results.count("once") == 1
+        assert results.count(None) == 7
+
     def test_write_and_read_round_trip(self, tmp_path: Path) -> None:
         """write → read 拿回 session_id。"""
         req_path = tmp_path / "focus-request"
