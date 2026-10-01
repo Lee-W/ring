@@ -1,3 +1,9 @@
+## 0.17.5 (2026-10-01)
+
+### Fix
+
+- keep session monitoring responsive and notifications current
+
 ## 0.17.4 (2026-09-08)
 
 ### Fix
