@@ -189,6 +189,9 @@ notify_also = ["ntfy"]                             # 桌面通知照發，再「
   補發彙總；跟 debounce 共用同一個 queue，但兩者互相獨立——quiet 不受
   `notify_debounce_seconds` 影響，永遠可用。
 
+補發前會重新確認等待請求：已回覆、已離場或被下一個請求取代的項目會移除，彙總只計算仍在等待的
+session。來源暫時讀取失敗時會保留排隊項目，等資料恢復後再確認。
+
 ```sh
 ring quiet            # 顯示目前現況（開/關、剩餘時間）
 ring quiet on         # 開啟，手動解除前一直靜音

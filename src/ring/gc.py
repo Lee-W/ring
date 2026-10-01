@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ring.ipc import _FOCUS_REQUEST_PATH, _PRESENCE_PATH, _PRESENCE_TTL, _REQUEST_TTL
+from ring.ipc import _FOCUS_REQUEST_PATH, _PRESENCE_PATH, _PRESENCE_TTL, _REQUEST_TTL, _focus_request_lock
 from ring.registry import (
     _SESSION_START_SOURCES,
     RING_REGISTRY,
@@ -81,7 +81,9 @@ def run_gc(
     # 隱藏清單本來就空時，不必為了「找不到就清」去掃全部 source（省掉一輪 process/檔案掃描）。
     known_ids = _known_session_ids() if hidden_now else set()
     hidden_stale_preview = {
-        sid: hidden_at for sid, hidden_at in hidden_now.items() if sid not in known_ids or now - hidden_at >= older_than
+        sid: hidden_at
+        for sid, hidden_at in hidden_now.items()
+        if (known_ids is not None and sid not in known_ids) or now - hidden_at >= older_than
     }
 
     if dry_run:
@@ -98,8 +100,8 @@ def run_gc(
     errors: list[tuple[GcCandidate, str]] = []
     for candidate in candidates:
         try:
-            candidate.path.unlink(missing_ok=True)
-            deleted.append(candidate)
+            if _delete_candidate(candidate, now=now):
+                deleted.append(candidate)
         except OSError as e:
             errors.append((candidate, str(e)))
 
@@ -114,19 +116,32 @@ def run_gc(
     )
 
 
-def _known_session_ids() -> set[str]:
+def _delete_candidate(candidate: GcCandidate, *, now: float) -> bool:
+    if candidate.path == _FOCUS_REQUEST_PATH:
+        # GC 也會刪 request：不能在盤點過期檔後，把 writer 剛送來的新 request 一起刪掉。
+        with _focus_request_lock(candidate.path):
+            if not _stale_json_file(candidate.path, ttl=_REQUEST_TTL, now=now, label="focus-request"):
+                return False
+            candidate.path.unlink(missing_ok=True)
+        return True
+    candidate.path.unlink(missing_ok=True)
+    return True
+
+
+def _known_session_ids() -> set[str] | None:
     """目前任何已註冊來源（不管有沒有被手動隱藏）找得到的 session id。
 
     只用來判斷隱藏清單裡的條目是不是「哪裡都找不到了」；不碰、不引用
     ``discover_sessions()`` 的 merge / tmux 配對邏輯。
     """
+    from ring.sources import discover_source_sessions, source_errors
     from ring.sources import sources as _registered_sources
 
     ids: set[str] = set()
     for source in _registered_sources():
-        for s in source.discover():
+        for s in discover_source_sessions(source):
             ids.add(s.session_id)
-    return ids
+    return None if source_errors() else ids
 
 
 def _registry_candidates(*, older_than: float, all_ended: bool, now: float) -> list[GcCandidate]:

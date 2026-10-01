@@ -5,9 +5,23 @@ from types import SimpleNamespace
 import pytest
 
 import ring.focus.trace as focus_trace
+import ring.ipc as ipc
 import ring.registry as registry
+import ring.sources as sources
 import ring.sources.local_llm as local_llm
 from ring.i18n import set_lang
+
+
+@pytest.fixture(autouse=True)
+def _isolate_source_snapshots(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sources, "_SOURCE_SNAPSHOTS", {})
+    monkeypatch.setattr(sources, "_SOURCE_ERRORS", {})
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ipc_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(ipc, "_PRESENCE_PATH", tmp_path / "tui-presence")
+    monkeypatch.setattr(ipc, "_FOCUS_REQUEST_PATH", tmp_path / "focus-request")
 
 
 @pytest.fixture(autouse=True)

@@ -1013,11 +1013,13 @@ def test_quiet_on_activates_and_status_reflects_it(capsys: pytest.CaptureFixture
     assert "on" in capsys.readouterr().out.lower()
 
 
-def test_quiet_off_clears_and_flushes(capsys: pytest.CaptureFixture[str]) -> None:
+def test_quiet_off_clears_and_flushes(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     from ring import notify_queue
 
     notify_queue.set_quiet(None)
-    notify_queue.enqueue([Session("a", "/x/p", Status.WAITING, 0.0, "-", "hook")])
+    waiting = Session("a", "/x/p", Status.WAITING, 0.0, "-", "hook")
+    notify_queue.enqueue([waiting])
+    monkeypatch.setattr("ring.sources.discover_sessions", lambda: [waiting])
     with patch("ring.notify.notify_summary") as mock_summary:
         rc = cli.main(["quiet", "off", "--lang", "en"])
     assert rc == 0
@@ -1146,9 +1148,11 @@ def test_watch_headless_flushes_due_queue(monkeypatch: pytest.MonkeyPatch, capsy
     import ring.notify_queue as notify_queue
 
     monkeypatch.setattr(cli, "HAVE_RICH", False)
-    monkeypatch.setattr(cli, "board", lambda show_all: _sessions())
+    sessions = _sessions()
+    sessions[0].status = Status.WAITING
+    monkeypatch.setattr(cli, "board", lambda show_all: sessions)
     monkeypatch.setattr(cli, "running_agent_pids", lambda: [1])
-    notify_queue.enqueue([Session("waiting-1", "/x", Status.WAITING, 0.0, "→ Edit", "hook")])
+    notify_queue.enqueue([s for s in sessions if s.status is Status.WAITING])
     summary_calls: list[int] = []
     monkeypatch.setattr("ring.notify.notify_summary", lambda count, sample: summary_calls.append(count))
 
@@ -1158,6 +1162,20 @@ def test_watch_headless_flushes_due_queue(monkeypatch: pytest.MonkeyPatch, capsy
     assert rc == 0
     assert summary_calls == [1]
     assert notify_queue.peek_count() == 0
+
+
+def test_watch_headless_discards_resolved_queue(monkeypatch: pytest.MonkeyPatch) -> None:
+    import ring.notify_queue as queue
+
+    sessions = _sessions()
+    monkeypatch.setattr(cli, "HAVE_RICH", False)
+    monkeypatch.setattr(cli, "board", lambda show_all: sessions)
+    monkeypatch.setattr(cli, "running_agent_pids", lambda: [])
+    queue.enqueue([Session("a", "/x/maigo", Status.WAITING, 0.0, "", "scan")])
+    with patch("ring.notify.notify_summary") as summary:
+        assert cli.watch(interval=0, count=1, show_all=False, show_legend=False) == 0
+    summary.assert_not_called()
+    assert queue.peek_count() == 0
 
 
 def test_watch_headless_does_not_flush_while_quiet_active(

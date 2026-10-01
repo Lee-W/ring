@@ -1810,6 +1810,7 @@ def test_codex_permission_wait_end_to_end_from_real_hook_write(monkeypatch: pyte
     from ring.config import Config
 
     monkeypatch.setattr(hook_mod, "RING_REGISTRY", tmp_path)
+    monkeypatch.setattr(hook_mod, "_session_pid", lambda _process_names: None)
     monkeypatch.setattr("ring.registry.RING_REGISTRY", tmp_path)
     monkeypatch.setattr("ring.hook.get_config", lambda: Config())
     monkeypatch.setattr("ring.notify._NOTIFIERS", [])

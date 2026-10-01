@@ -6,6 +6,7 @@ import subprocess
 from multiprocessing.synchronize import Event as ProcessEvent
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -27,7 +28,7 @@ def _hermetic_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     同時清空 notifier registry：hook 現在會在 WAITING 事件就地發系統通知，darwin 上
     osascript 永遠可用，不擋會在跑測試時噴真實通知。空 registry → _select_notifier 回
     None → notify_waiting no-op。要驗證「有發」的測試自己注入 spy notifier。
-    stats 的狀態轉換 log 也導去 tmp，避免測試寫進使用者的 events.jsonl。run_hook 開頭的
+    stats 的狀態轉換 log 也導去 tmp，避免測試寫進使用者的 events.jsonl。registry 更新後的
     flush_if_due 也要導去 tmp，避免測試碰到機器上真實的 debounce queue / quiet 狀態檔。"""
     monkeypatch.setattr("ring.hook.get_config", lambda: Config())
     monkeypatch.setattr("ring.notify._NOTIFIERS", [])
@@ -1069,11 +1070,13 @@ def test_non_waiting_event_does_not_notify_in_hook(monkeypatch: pytest.MonkeyPat
 
 
 def test_run_hook_flushes_due_queue_headless(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """headless（沒開 TUI）：queue 有累積時，任何 hook 事件開頭都要懶惰 flush 一次彙總。"""
+    """headless（沒開 TUI）：queue 有仍在等的項目時，hook 更新後懶惰 flush 一次彙總。"""
     import ring.notify_queue as notify_queue
 
     monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
-    notify_queue.enqueue([Session("waiting-1", "/x", Status.WAITING, 0.0, "→ Edit", "hook")])
+    waiting = Session("waiting-1", "/x", Status.WAITING, 0.0, "→ Edit", "hook")
+    notify_queue.enqueue([waiting])
+    monkeypatch.setattr("ring.sources.discover_sessions", lambda: [waiting])
     summary_calls: list[int] = []
     monkeypatch.setattr("ring.notify.notify_summary", lambda count, sample: summary_calls.append(count))
     _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "Stop", "cwd": "/proj"})
@@ -1099,6 +1102,40 @@ def test_run_hook_does_not_flush_while_quiet_active(monkeypatch: pytest.MonkeyPa
 
     assert summary_calls == []
     assert notify_queue.peek_count() == 1
+
+
+def test_answering_hook_discards_queued_wait_before_flush(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import ring.notify_queue as queue
+
+    registry_dir = tmp_path / "sessions"
+    monkeypatch.setattr(hook, "RING_REGISTRY", registry_dir)
+    queue.set_quiet(None)
+    _feed(
+        monkeypatch,
+        {
+            "session_id": "s1",
+            "hook_event_name": "Notification",
+            "notification_type": "permission_prompt",
+            "cwd": "/proj",
+        },
+    )
+    assert hook.run_hook() == 0
+    assert queue.peek_count() == 1
+    queued = queue.pop_all()[0]
+    assert queued.waiting_requests  # 真正的 hook 通知也要帶著 request revision。
+    queue.enqueue([queued])
+    queue.clear_quiet()
+
+    def latest_sessions() -> list[Session]:
+        row = json.loads((registry_dir / "s1.json").read_text())
+        return [Session("s1", "/proj", Status(row["status"]), row["last_active"], "", "hook", provider="claude-code")]
+
+    monkeypatch.setattr("ring.sources.discover_sessions", latest_sessions)
+    with patch("ring.notify.notify_summary") as summary:
+        _feed(monkeypatch, {"session_id": "s1", "hook_event_name": "UserPromptSubmit", "cwd": "/proj"})
+        assert hook.run_hook() == 0
+    summary.assert_not_called()
+    assert queue.peek_count() == 0
 
 
 def test_waiting_flap_within_cooldown_suppresses_second_hook_notification(

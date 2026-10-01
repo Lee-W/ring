@@ -34,6 +34,7 @@ from typing import Any
 from ring.config import get_config
 from ring.i18n import gettext as _
 from ring.registry import Session, Status
+from ring.waiting import read_waiting_requests
 
 _CONFIG_DIR: Path = Path.home() / ".config" / "ring"
 _QUEUE_PATH: Path = _CONFIG_DIR / "notify-queue.json"
@@ -97,6 +98,19 @@ def _session_from_dict(d: dict[str, Any]) -> Session | None:
     todo = data.get("todo")
     if isinstance(todo, list) and len(todo) == 2:
         data["todo"] = (todo[0], todo[1])
+    raw_requests = data.get("waiting_requests")
+    if isinstance(raw_requests, list):
+        data["waiting_requests"] = tuple(
+            read_waiting_requests(
+                {
+                    "waiting_requests": {
+                        r["owner"]: r for r in raw_requests if isinstance(r, dict) and isinstance(r.get("owner"), str)
+                    }
+                }
+            ).values()
+        )
+    else:
+        data["waiting_requests"] = ()
     # 未知欄位（例如舊版留下的）會讓 Session(**data) 直接炸；只保留 Session 認得的欄位。
     known = set(Session.__dataclass_fields__)
     data = {k: v for k, v in data.items() if k in known}
@@ -254,7 +268,38 @@ def format_remaining(seconds: float) -> str:
 # --------------------------------------------------------------------------- flush
 
 
-def _try_pop_for_flush_locked(now: float, *, force: bool, queue_path: Path) -> list[Session] | None:
+def _flush_ready(state: dict[str, Any], now: float, *, force: bool) -> bool:
+    if force:
+        return True
+    debounce = get_config().notify_debounce_seconds
+    opened_at = state.get("window_opened_at")
+    return not (debounce > 0 and isinstance(opened_at, (int, float)) and now - opened_at < debounce)
+
+
+def _matches_wait(queued: Session, current: Session) -> bool:
+    if current.status is not Status.WAITING or current.provider != queued.provider:
+        return False
+    if queued.waiting_requests:
+        active = {request.request_id for request in current.waiting_requests}
+        return any(request.request_id in active for request in queued.waiting_requests)
+    # 舊版 queue 沒有 request ID，只接受同一份快照，不能把新一輪等待當成舊通知。
+    return (queued.last_active, queued.waiting_kind, queued.waiting_detail) == (
+        current.last_active,
+        current.waiting_kind,
+        current.waiting_detail,
+    )
+
+
+def _try_pop_for_flush_locked(
+    now: float,
+    *,
+    force: bool,
+    queue_path: Path,
+    pending: dict[str, Any],
+    current: dict[str, Session],
+    uncertain: set[str],
+    retain_missing: bool,
+) -> list[Session] | None:
     """單一鎖區塊內原子完成「該不該 flush」的判斷 ＋ pop ＋ 清視窗。
 
     拆成「先 window_open() 判斷、再各自 pop_all()／clear_window()」的多段式會有縫隙：
@@ -268,26 +313,29 @@ def _try_pop_for_flush_locked(now: float, *, force: bool, queue_path: Path) -> l
     """
     with _locked(queue_path):
         state = _read_json_locked(queue_path)
-        if not force:
-            debounce = get_config().notify_debounce_seconds
-            opened_at = state.get("window_opened_at")
-            still_open = debounce > 0 and isinstance(opened_at, (int, float)) and (now - float(opened_at)) < debounce
-            if still_open:
-                return None
+        if not _flush_ready(state, now, force=force):
+            return None
 
         bucket = state.get("sessions")
         sessions: list[Session] = []
         if isinstance(bucket, dict):
-            for raw in bucket.values():
-                if isinstance(raw, dict):
-                    s = _session_from_dict(raw)
-                    if s is not None:
-                        sessions.append(s)
-        if not sessions:
+            for sid, raw in list(bucket.items()):
+                # 查詢最新狀態期間 enqueue 的新資料留給下一輪，不拿舊 snapshot 刪掉它。
+                if sid not in pending or raw != pending[sid]:
+                    continue
+                latest = current.get(sid)
+                if sid in uncertain or (latest is None and retain_missing):
+                    continue
+                del bucket[sid]
+                queued = _session_from_dict(raw) if isinstance(raw, dict) else None
+                if queued is not None and latest is not None and _matches_wait(queued, latest):
+                    sessions.append(latest)
+        else:
             return None
 
-        state["sessions"] = {}
-        state["window_opened_at"] = None
+        state["sessions"] = bucket
+        if not bucket:
+            state["window_opened_at"] = None
         _write_json_locked(state, path=queue_path)
         return sessions
 
@@ -298,8 +346,9 @@ def flush_if_due(
     force: bool = False,
     queue_path: Path | None = None,
     quiet_path: Path | None = None,
+    current_sessions: list[Session] | None = None,
 ) -> None:
-    """三個懶惰觸發源共用的 flush 入口：hook 主流程開頭、TUI 輪詢、``ring quiet off``。
+    """hook 更新後、TUI／headless 輪詢與 ``ring quiet off`` 共用的 flush 入口。
 
     - quiet active 時一律不 flush（``force=True`` 除外）——quiet 期間累積，等使用者主動
       解除才處理。
@@ -317,7 +366,29 @@ def flush_if_due(
         return
 
     path = queue_path or _QUEUE_PATH
-    sessions = _try_pop_for_flush_locked(current, force=force, queue_path=path)
+    with _locked(path):
+        state = _read_json_locked(path)
+        bucket = state.get("sessions")
+        if not isinstance(bucket, dict) or not bucket or not _flush_ready(state, current, force=force):
+            return
+        pending = dict(bucket)
+
+    # 慢速 discovery 不持 queue 鎖；查詢失敗時保留原資料，下次再試。
+    from ring.sources import discover_sessions, source_errors, stale_session_ids
+
+    try:
+        latest = discover_sessions() if current_sessions is None else current_sessions
+    except Exception:
+        return
+    sessions = _try_pop_for_flush_locked(
+        current,
+        force=force,
+        queue_path=path,
+        pending=pending,
+        current={s.session_id: s for s in latest},
+        uncertain=stale_session_ids(),
+        retain_missing=bool(source_errors()),
+    )
     if not sessions:
         return
     try:
