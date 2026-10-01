@@ -114,6 +114,10 @@ test: cover tmux permission parsing
 
 版本與 changelog 由 Commitizen 管理。一般 PR 不需要手動改 `CHANGELOG.md`，除非正在做 release / bump。
 
+main 的 CI 全部成功後才會觸發發佈。Release 會確認 main 仍指向通過 CI 的 commit，建置並驗證
+wheel 可安裝，再原子推送版本與 tag；期間若 main 已更新，這次推送會失敗，由新 commit 的 CI
+重新觸發發佈。
+
 ## PR Checklist
 
 送 PR 前請確認：
