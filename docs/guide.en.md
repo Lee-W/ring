@@ -325,6 +325,12 @@ ring install-hooks
 ring install-hooks --dry-run
 ```
 
+`ring install-hooks` is safe to run repeatedly: when RiNG's hooks are already registered it reports
+"no change" and adds no duplicates, and it only touches RiNG's own entries without overwriting your
+existing hooks. The hook command is `ring hook` (resolved via PATH), so most upgrades do not require
+re-running it; if a new version changes the hooks (new events or timeout), or you install Codex later,
+just run it once more.
+
 Claude Code hooks are written to `~/.claude/settings.json`. If `~/.codex` exists, Codex hooks are also written to
 `~/.codex/hooks.json`; Codex will ask you to trust the hook before it runs it.
 
@@ -405,7 +411,7 @@ waiting; an actionable `Notification` or a `PermissionRequest` with explicit int
 waiting; a bare `PermissionRequest` → 🟢 permission evaluation; `SessionEnd` removes the row.
 Non-Claude session ids receive a provider prefix such as `codex:thread-123` to prevent collisions.
 
-### agent-hooks
+### System Notifications (🔔 Notify When Waiting + Click To Focus)
 
 Notification details: system notifications are sent by `ring hook` at the event (both `--watch` and
 the TUI only render the board; they no longer send system notifications). The default backend is `auto`:
@@ -446,6 +452,28 @@ ring remove-hooks --dry-run
 
 This removes RiNG-installed hook entries from Claude Code / Codex settings. It does not delete
 `~/.config/ring/` session records and does not touch other hooks.
+
+## Troubleshooting And Uninstall
+
+### Hooks Not Taking Effect
+
+1. **Restart the session**: hooks only apply to agent sessions started after installation.
+2. **Check that data is arriving**: `ls ~/.config/ring/sessions/` should show `<session_id>.json` files once hooks are writing.
+3. **Run `ring doctor`**: a read-only diagnosis of hook installation, notification backends, focusers, and the config file location.
+4. **Make sure `ring` is on PATH**: hooks run `ring hook`; if `ring` cannot be found nothing is written (`which ring` after `uv tool install`).
+5. **Codex**: hooks are only installed when `~/.codex` exists, and Codex asks you to trust the new hook; if you installed Codex later, run `ring install-hooks` again.
+6. **Re-register**: preview with `ring install-hooks --dry-run`, then run `ring install-hooks` (safe to repeat).
+
+### Uninstall
+
+```sh
+ring remove-hooks            # first remove RiNG's hook entries from Claude Code / Codex
+uv tool uninstall ring-cli   # then uninstall ring itself
+```
+
+RiNG keeps its own state and configuration under `~/.config/ring/`. `ring gc` only removes stale state
+files of ended sessions; to wipe everything (including `config.toml`), delete the whole
+`~/.config/ring/` directory by hand after uninstalling.
 
 ## Configuration
 

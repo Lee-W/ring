@@ -1,7 +1,7 @@
 """i18n 衛生守衛：
 
 1. committed 的 .mo 必須跟 .po 同步（防「改了 .po 忘了 poe i18n-compile」）。
-2. 原始碼與 README 必須是台灣漢語（擋常見中國用語）。
+2. 原始碼與 README 必須是台灣華語（擋常見中國用語）。
 """
 
 from pathlib import Path
@@ -12,7 +12,7 @@ import ring.i18n as i18n
 from ring.i18n import gettext as _
 from ring.i18n import ngettext, set_lang
 
-# 常見中國用語 → 台灣漢語。只放「不會誤判」的詞
+# 常見中國用語 → 台灣華語。只放「不會誤判」的詞
 # （刻意避開 文件/程序/質量/用戶/設置/刷新/創建 這類兩岸都通用、會誤判的）。
 _CHINA_ISMS = {
     "優化": "最佳化",

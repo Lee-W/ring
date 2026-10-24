@@ -169,6 +169,10 @@ msgstr "no focuser handled it (run `ring doctor` to see which focusers are avail
 msgid "背景 agent，沒有終端可跳；用 `claude --resume {session_id}` 接回"
 msgstr "background agent, no terminal to jump to; reconnect with `claude --resume {session_id}`"
 
+# ── TUI：就地回覆權限 ──
+msgid "… {project}：正在回覆權限"
+msgstr "… {project}: replying to permission request"
+
 # ── install-hooks ──
 msgid "⚠️ {path} 不是合法 JSON，先處理它再來。"
 msgstr "⚠️ {path} is not valid JSON; fix it first."
@@ -321,10 +325,19 @@ msgid ""
 "usage: ring install-hooks [--dry-run]\n"
 "\n"
 "安裝 Claude Code / Codex hooks。\n"
+"\n"
+"可重複執行：已裝過會回報沒有變更；只動 RiNG 的條目，不覆蓋既有 hooks。\n"
+"指令走 PATH 解析，多數升級不必重跑；新版本改了 hook（新事件或 timeout）時重跑一次即可。\n"
+"Codex 只在 ~/.codex 存在時才會安裝。\n"
 msgstr ""
 "usage: ring install-hooks [--dry-run]\n"
 "\n"
 "Install Claude Code / Codex hooks.\n"
+"\n"
+"Safe to run repeatedly: reports no change when already installed; only touches RiNG's entries and\n"
+"never overwrites existing hooks. The command resolves via PATH, so most upgrades need no re-run;\n"
+"re-run once if a new version changes the hooks (new events or timeout). Codex hooks are only\n"
+"installed when ~/.codex exists.\n"
 
 msgid ""
 "usage: ring remove-hooks [--dry-run]\n"

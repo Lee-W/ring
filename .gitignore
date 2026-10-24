@@ -13,3 +13,12 @@ site/
 # poe cover 的產物
 junit.xml
 coverage.xml
+
+# 本機／工具快取（不要靠使用者的全域 gitignore）
+.DS_Store
+.coverage
+.coverage.*
+.mypy_cache/
+.ruff_cache/
+.rumdl_cache/
+.cache/

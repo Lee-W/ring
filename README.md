@@ -58,6 +58,12 @@ ring install-hooks
 
 不裝 hooks 也能用零設定模式查看 session；但 🔴 等你、等待內容與即時通知需要 hooks。安裝或更新 hooks 後，記得重開 Claude Code / Codex session。
 
+## 疑難排解與解除安裝
+
+- hook 沒生效：先重開 agent session，再跑 `ring doctor`；`ls ~/.config/ring/sessions/` 有 `<session_id>.json` 才代表 hook 在寫入。
+- 解除安裝：`ring remove-hooks`，然後 `uv tool uninstall ring-cli`；狀態與設定在 `~/.config/ring/`，想完全清掉請手動刪除該目錄（`ring gc` 只清已離場的 stale 狀態檔）。
+- 更多細節見[完整使用手冊](https://lee-w.github.io/ring/guide/)的「疑難排解與解除安裝」。
+
 ## 接著看
 
 - [完整使用手冊](https://lee-w.github.io/ring/guide/)：所有指令、TUI 操作、hooks、通知、設定、擴充與隱私說明

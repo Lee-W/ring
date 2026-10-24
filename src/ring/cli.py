@@ -506,6 +506,10 @@ def _subcommand_help(name: str) -> str:
             """usage: ring install-hooks [--dry-run]
 
 安裝 Claude Code / Codex hooks。
+
+可重複執行：已裝過會回報沒有變更；只動 RiNG 的條目，不覆蓋既有 hooks。
+指令走 PATH 解析，多數升級不必重跑；新版本改了 hook（新事件或 timeout）時重跑一次即可。
+Codex 只在 ~/.codex 存在時才會安裝。
 """
         ),
         "remove-hooks": _(
