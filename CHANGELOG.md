@@ -1,3 +1,14 @@
+## 0.17.6 (2026-10-24)
+
+### Fix
+
+- Codex sqlite 讀取失敗不再當成無 session，unhide_session 無隱藏項時不搶鎖
+- 抽出 fsutil 統一鎖與原子寫入，修補 settings.json 與 hidden-sessions 的資料安全問題
+
+### Perf
+
+- 輪詢加 transcript 解析快取，hook 熱路徑改用單次 ps
+
 ## 0.17.5 (2026-10-01)
 
 ### Fix
