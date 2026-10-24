@@ -53,13 +53,94 @@ def _settings_with_ring_hook(settings: Path, cmd: str = "ring hook", timeout: in
 
 def test_session_pid_walks_to_provider_process(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("ring.hook.os.getppid", lambda: 300)
-    parents = {
+    table = {
         300: (200, "/bin/zsh"),
         200: (100, "/Users/test/.local/bin/claude"),
     }
-    monkeypatch.setattr(hook, "_ps_row", parents.get)
+    monkeypatch.setattr(hook, "_ps_table", lambda: table)
 
     assert real_session_pid(("claude",)) == 200
+
+
+class _PsSpy:
+    """攔截 subprocess.run，記錄 ps 呼叫並依參數回假輸出。"""
+
+    def __init__(self, table_out: str, comm_out: str) -> None:
+        self.calls: list[list[str]] = []
+        self._table_out, self._comm_out = table_out, comm_out
+
+    def __call__(self, cmd: list[str], **_kw: Any) -> Any:
+        self.calls.append(cmd)
+        out = self._table_out if "-Ao" in cmd else self._comm_out
+        return type("R", (), {"stdout": out})()
+
+
+def test_session_pid_spawns_single_ps_for_whole_ancestor_chain(monkeypatch: pytest.MonkeyPatch) -> None:
+    """沒有已知 pid 時：不管祖先鏈多深都只 spawn 一次 ps（舊版逐層一次，最多 12 次）。"""
+    spy = _PsSpy("300 250 /bin/zsh\n250 200 /usr/bin/env\n200 1 /Users/t/.local/bin/claude\n", "")
+    monkeypatch.setattr("ring.hook.subprocess.run", spy)
+    monkeypatch.setattr("ring.hook.os.getppid", lambda: 300)
+
+    assert real_session_pid(("claude",)) == 200
+    assert len(spy.calls) == 1
+
+
+def _run_pre_tool_use(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, spy: _PsSpy, *, event: str = "PreToolUse"
+) -> dict[str, Any]:
+    monkeypatch.setattr(hook, "RING_REGISTRY", tmp_path)
+    monkeypatch.setattr(hook, "_session_pid", real_session_pid)
+    monkeypatch.setattr(hook, "_pid_tty", lambda _pid: "")  # tty 查詢是另一條 ps，不在這裡計數
+    monkeypatch.setattr("ring.hook.subprocess.run", spy)
+    monkeypatch.setattr("ring.hook.os.getppid", lambda: 300)
+    _feed(monkeypatch, {"session_id": "s1", "hook_event_name": event, "cwd": "/x", "tool_name": "Bash"})
+    assert hook.run_hook() == 0
+    return json.loads((tmp_path / "s1.json").read_text())  # type: ignore[no-any-return]
+
+
+def test_hook_with_known_agent_pid_uses_single_ps_comm_check(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """registry 已有 agent_pid 且仍活著、comm 吻合 → 只 1 次 ps，沿用該 pid，不爬祖先、不拿全表。"""
+    (tmp_path / "s1.json").write_text(json.dumps({"session_id": "s1", "status": "working", "agent_pid": 200}))
+    spy = _PsSpy("", "/Users/t/.local/bin/claude\n")
+
+    data = _run_pre_tool_use(monkeypatch, tmp_path, spy)
+
+    assert data["agent_pid"] == 200
+    assert len(spy.calls) == 1
+    assert "-Ao" not in spy.calls[0]
+
+
+def test_hook_with_dead_agent_pid_falls_back_to_one_table_ps(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """舊 pid 已不存在 → 1 次確認 ＋ 1 次全表（共 2 次，不隨祖先深度成長），綁到新 pid。"""
+    (tmp_path / "s1.json").write_text(json.dumps({"session_id": "s1", "status": "working", "agent_pid": 999}))
+    spy = _PsSpy("300 250 /bin/zsh\n250 1 /Users/t/.local/bin/claude\n", "")
+
+    data = _run_pre_tool_use(monkeypatch, tmp_path, spy)
+
+    assert data["agent_pid"] == 250
+    assert len(spy.calls) == 2
+
+
+def test_hook_without_previous_row_uses_single_table_ps(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    spy = _PsSpy("300 250 /bin/zsh\n250 1 /Users/t/.local/bin/claude\n", "")
+
+    data = _run_pre_tool_use(monkeypatch, tmp_path, spy)
+
+    assert data["agent_pid"] == 250
+    assert len(spy.calls) == 1
+
+
+def test_hook_session_start_rebinds_instead_of_trusting_previous_pid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """SessionStart 是重新綁定的時機：就算舊 pid 還活著也走完整查詢（不走快路徑）。"""
+    (tmp_path / "s1.json").write_text(json.dumps({"session_id": "s1", "status": "working", "agent_pid": 200}))
+    spy = _PsSpy("300 250 /bin/zsh\n250 1 /Users/t/.local/bin/claude\n", "/Users/t/.local/bin/claude\n")
+
+    data = _run_pre_tool_use(monkeypatch, tmp_path, spy, event="SessionStart")
+
+    assert data["agent_pid"] == 250
+    assert [("-Ao" in c) for c in spy.calls] == [True]
 
 
 def test_stop_writes_idle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

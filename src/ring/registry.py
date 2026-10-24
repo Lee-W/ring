@@ -50,12 +50,11 @@ from ring.ps_parse import (
 from ring.subproc import CACHE_TTL as _SUBPROCESS_CACHE_TTL
 from ring.tmux_scan import _tmux_process_tree_targets
 from ring.transcript import (
-    _conversation_tail_kind,
-    _extract_todo,
-    _head_cwd,
-    _latest_action,
-    _recent_actions,
+    CLAUDE_TAIL_CACHE,
+    ParseCache,
     _tail_records,
+    head_cwd_cached,
+    prune_head_cwd_cache,
 )
 from ring.waiting import FOREGROUND_OWNER, WaitingRequest, read_waiting_requests
 
@@ -884,6 +883,11 @@ def _codex_tail_kind(records: list[dict[str, Any]]) -> str:
 
 def _codex_latest_action(records: list[dict[str, Any]], fallback: str) -> str:
     """從 Codex rollout 尾端取簡短動作摘要。"""
+    return _codex_action_or_empty(records) or fallback or "—"
+
+
+def _codex_action_or_empty(records: list[dict[str, Any]]) -> str:
+    """尾端找得到動作摘要就回傳，找不到回 ``""``（讓呼叫端決定 fallback）。"""
     for record in reversed(records):
         payload = record.get("payload")
         if not isinstance(payload, dict):
@@ -896,7 +900,16 @@ def _codex_latest_action(records: list[dict[str, Any]], fallback: str) -> str:
             msg = str(payload.get("message") or "").strip()
             if msg:
                 return msg.splitlines()[0][:80]
-    return fallback or "—"
+    return ""
+
+
+def _parse_codex_rollout(path: Path) -> tuple[str, str]:
+    """rollout 尾端 → ``(tail_kind, action)``；action 為 ``""`` 代表沒摘要可用。"""
+    records = _tail_records(path)
+    return _codex_tail_kind(records), _codex_action_or_empty(records)
+
+
+CODEX_ROLLOUT_CACHE: ParseCache[tuple[str, str]] = ParseCache(_parse_codex_rollout)
 
 
 def _codex_threads(procs: list[tuple[str, str]]) -> list[Session]:
@@ -930,31 +943,35 @@ def _codex_threads(procs: list[tuple[str, str]]) -> list[Session]:
         cwd_ttys.setdefault(key, []).append(tty)
 
     raw: list[Session] = []
-    for row in rows:
-        cwd = str(row["cwd"] or "")
-        if not cwd:
-            continue
-        updated_ms = int(row["updated_at_ms"] or 0)
-        last_active = updated_ms / 1000 if updated_ms else float(row["updated_at"] or 0)
-        if now - last_active > ACTIVE_WINDOW_SECONDS and counts.get(_real(cwd), 0) == 0:
-            continue
-        rollout_path = Path(str(row["rollout_path"] or ""))
-        records = _tail_records(rollout_path) if rollout_path else []
-        title = str(row["title"] or row["preview"] or "")
-        tail_kind = _codex_tail_kind(records)
-        raw.append(
-            Session(
-                session_id=f"codex:{row['id']}",
-                cwd=cwd,
-                status=Status.ENDED,
-                last_active=last_active,
-                last_action=_codex_latest_action(records, title),
-                source="codex",
-                provider="codex",
-                _tail_kind=tail_kind,
-                origin_cwd=cwd,
+    CODEX_ROLLOUT_CACHE.begin_scan()
+    try:
+        for row in rows:
+            cwd = str(row["cwd"] or "")
+            if not cwd:
+                continue
+            updated_ms = int(row["updated_at_ms"] or 0)
+            last_active = updated_ms / 1000 if updated_ms else float(row["updated_at"] or 0)
+            if now - last_active > ACTIVE_WINDOW_SECONDS and counts.get(_real(cwd), 0) == 0:
+                continue
+            rollout_raw = str(row["rollout_path"] or "")
+            rollout_path = Path(rollout_raw)
+            title = str(row["title"] or row["preview"] or "")
+            tail_kind, action = CODEX_ROLLOUT_CACHE.get(rollout_path) if rollout_raw else ("none", "")
+            raw.append(
+                Session(
+                    session_id=f"codex:{row['id']}",
+                    cwd=cwd,
+                    status=Status.ENDED,
+                    last_active=last_active,
+                    last_action=action or title or "—",
+                    source="codex",
+                    provider="codex",
+                    _tail_kind=tail_kind,
+                    origin_cwd=cwd,
+                )
             )
-        )
+    finally:
+        CODEX_ROLLOUT_CACHE.end_scan()
 
     by_cwd: dict[str, list[Session]] = {}
     for s in raw:
@@ -996,47 +1013,51 @@ def _scan_sessions(procs: list[tuple[str, str]]) -> list[Session]:
         cwd_ttys.setdefault(key, []).append(tty)
 
     raw: list[Session] = []
-    for project_dir in CLAUDE_PROJECTS.iterdir():
-        if not project_dir.is_dir():
-            continue
-        for jsonl in project_dir.glob("*.jsonl"):
-            try:
-                mtime = jsonl.stat().st_mtime
-            except OSError:
+    seen_paths: set[Path] = set()
+    CLAUDE_TAIL_CACHE.begin_scan()
+    try:
+        for project_dir in CLAUDE_PROJECTS.iterdir():
+            if not project_dir.is_dir():
                 continue
-            if now - mtime > ACTIVE_WINDOW_SECONDS:
-                continue
-            records = _tail_records(jsonl)
-            cwd, last_action = "", "—"
-            if records:
-                cwd = str(records[-1].get("cwd") or "")
-                last_action = _latest_action(records)
-            origin = _head_cwd(jsonl)
-            if not cwd and not origin:
-                # 兩者皆空時走 dash-還原 fallback，origin 與 cwd 退回同一值
-                cwd = "/" + project_dir.name.lstrip("-").replace("-", "/")
-                origin = cwd
-            elif not cwd:
-                # 只有 cwd 空、origin 有值時，cwd fallback 到 origin
-                cwd = origin
-            elif not origin:
-                # 只有 origin 空時，退回 cwd（開場 == 當下）
-                origin = cwd
-            raw.append(
-                Session(
-                    session_id=jsonl.stem,
-                    cwd=cwd,
-                    status=Status.ENDED,  # 先佔位，下面按 cwd 群組判定
-                    last_active=mtime,
-                    last_action=last_action,
-                    source="scan",
-                    todo=_extract_todo(records),
-                    recent_actions=_recent_actions(records),
-                    provider="claude-code",
-                    _tail_kind=_conversation_tail_kind(records),
-                    origin_cwd=origin,
+            for jsonl in project_dir.glob("*.jsonl"):
+                try:
+                    mtime = jsonl.stat().st_mtime
+                except OSError:
+                    continue
+                if now - mtime > ACTIVE_WINDOW_SECONDS:
+                    continue
+                seen_paths.add(jsonl)
+                tail = CLAUDE_TAIL_CACHE.get(jsonl)
+                cwd, last_action = tail.cwd, tail.last_action
+                origin = head_cwd_cached(jsonl)
+                if not cwd and not origin:
+                    # 兩者皆空時走 dash-還原 fallback，origin 與 cwd 退回同一值
+                    cwd = "/" + project_dir.name.lstrip("-").replace("-", "/")
+                    origin = cwd
+                elif not cwd:
+                    # 只有 cwd 空、origin 有值時，cwd fallback 到 origin
+                    cwd = origin
+                elif not origin:
+                    # 只有 origin 空時，退回 cwd（開場 == 當下）
+                    origin = cwd
+                raw.append(
+                    Session(
+                        session_id=jsonl.stem,
+                        cwd=cwd,
+                        status=Status.ENDED,  # 先佔位，下面按 cwd 群組判定
+                        last_active=mtime,
+                        last_action=last_action,
+                        source="scan",
+                        todo=tail.todo,
+                        recent_actions=list(tail.recent_actions),
+                        provider="claude-code",
+                        _tail_kind=tail.kind,
+                        origin_cwd=origin,
+                    )
                 )
-            )
+    finally:
+        CLAUDE_TAIL_CACHE.end_scan()
+        prune_head_cwd_cache(seen_paths)
 
     # 按「當下 cwd」（s.cwd）分組——確保 liveness 排名母體與計數母體一致。
     # counts / cwd_ttys 的鍵是 live process 回報的當下 cwd，分組鍵必須相同才能正確比對。

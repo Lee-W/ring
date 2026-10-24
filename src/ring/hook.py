@@ -115,30 +115,47 @@ def _hook_targets() -> list[_HookTarget]:
     return targets
 
 
-def _ps_row(pid: int) -> tuple[int, str] | None:
-    """回傳給定 pid 的 (ppid, comm)；失敗回 None。"""
+def _ps_comm(pid: int) -> str | None:
+    """單次 ``ps -o comm= -p <pid>``：pid 還活著回 comm，已不存在或失敗回 None。"""
     try:
-        out = subprocess.run(
-            ["ps", "-o", "ppid=,comm=", "-p", str(pid)], capture_output=True, text=True, timeout=2
-        ).stdout.strip()
+        out = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True, timeout=2).stdout
     except (OSError, subprocess.SubprocessError):
         return None
-    parts = out.split(None, 1)
-    if len(parts) < 2:
-        return None
+    return out.strip() or None
+
+
+def _ps_table() -> dict[int, tuple[int, str]] | None:
+    """單次 ``ps -Ao pid=,ppid=,comm=`` 拿整張行程表：``{pid: (ppid, comm)}``；失敗回 None。
+
+    hook 在每個 PreToolUse／PostToolUse 都要找 agent pid；逐層 spawn ``ps`` 最多 12 次，
+    改成一次拿全表、在行程內走祖先鏈。
+    """
     try:
-        return int(parts[0]), parts[1]
-    except ValueError:
+        out = subprocess.run(["ps", "-Ao", "pid=,ppid=,comm="], capture_output=True, text=True, timeout=2).stdout
+    except (OSError, subprocess.SubprocessError):
         return None
+    table: dict[int, tuple[int, str]] = {}
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        try:
+            table[int(parts[0])] = (int(parts[1]), parts[2])
+        except ValueError:
+            continue
+    return table or None
 
 
 def _session_pid(process_names: tuple[str, ...]) -> int | None:
-    """hook 是 agent CLI 的後代——往上找到真正的 provider process PID。"""
+    """hook 是 agent CLI 的後代——往上找到真正的 provider process PID（一次 ``ps``，行程內走鏈）。"""
     if not process_names:
+        return None
+    table = _ps_table()
+    if table is None:
         return None
     pid = os.getppid()
     for _attempt in range(12):
-        row = _ps_row(pid)
+        row = table.get(pid)
         if row is None:
             return None
         ppid, comm = row
@@ -148,6 +165,12 @@ def _session_pid(process_names: tuple[str, ...]) -> int | None:
             return None
         pid = ppid
     return None
+
+
+def _confirm_previous_pid(previous_pid: int, process_names: tuple[str, ...]) -> bool:
+    """registry 已記錄的 agent pid 是否仍活著、且仍是同一種 agent（單次 ``ps``，免祖先爬）。"""
+    comm = _ps_comm(previous_pid)
+    return comm is not None and Path(comm).name in process_names
 
 
 def _controlling_tty() -> str:
@@ -256,7 +279,19 @@ def _update_session_state(
         return None
 
     previous_pid = int(prev_row["agent_pid"]) if str(prev_row.get("agent_pid", "")).isdigit() else None
-    agent_pid = None if is_subagent_event else _session_pid(process_names)
+    agent_pid: int | None = None
+    if not is_subagent_event:
+        # 熱路徑：已綁定的 pid 還活著且 comm 吻合就直接沿用（1 次 ps）；SessionStart 是重新綁定
+        # 的時機，一律走完整查詢。pid 失效或換人才付一次 ps -Ao 的全表代價。
+        if (
+            previous_pid is not None
+            and event.event != "SessionStart"
+            and process_names
+            and _confirm_previous_pid(previous_pid, process_names)
+        ):
+            agent_pid = previous_pid
+        else:
+            agent_pid = _session_pid(process_names)
     same_binding = is_subagent_event or (
         event.event != "SessionStart" and (agent_pid is None or agent_pid == previous_pid)
     )
