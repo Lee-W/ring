@@ -28,7 +28,7 @@ import sqlite3
 import subprocess
 import time
 from collections.abc import Callable
-from contextlib import AbstractContextManager, suppress
+from contextlib import AbstractContextManager, closing, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -240,9 +240,31 @@ def hide_session(session_id: str, *, path: Path | None = None) -> None:
         _write_hidden_sessions_locked({sid: _epoch_to_iso(ts) for sid, ts in hidden.items()}, path=p)
 
 
+def _surely_not_hidden(session_id: str, path: Path) -> bool:
+    """無鎖快速判斷：檔案缺席、或是合法 dict 且不含該 id，才回 True。
+
+    每個 hook 事件都會呼叫 ``unhide_session``，絕大多數時候根本沒有隱藏項目；
+    寫入端用 atomic_write_text，無鎖讀只會讀到完整的舊版或新版。讀失敗、壞檔、
+    舊格式（需遷移）一律回 False，退回持鎖路徑處理。
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return True
+    except (OSError, UnicodeDecodeError):
+        return False
+    try:
+        raw = json.loads(text)
+    except ValueError:
+        return False
+    return isinstance(raw, dict) and session_id not in raw
+
+
 def unhide_session(session_id: str, *, path: Path | None = None) -> None:
     """新的 hook 事件、或偵測到更新活動，代表 session 又活了，解除手動隱藏。"""
     p = path or DELETED_SESSIONS
+    if _surely_not_hidden(session_id, p):
+        return
     with _hidden_sessions_lock(p):
         hidden = _read_hidden_sessions_locked(p)
         if session_id not in hidden:
@@ -881,8 +903,13 @@ def _codex_threads(procs: list[tuple[str, str]]) -> list[Session]:
     """從 Codex state sqlite 讀 thread，並用 live codex process 粗略判斷活性。"""
     if not CODEX_STATE.exists():
         return []
-    try:
-        con = sqlite3.connect(f"file:{CODEX_STATE}?mode=ro", uri=True)
+    # sqlite3.Error（例如 Codex 寫入中的 database is locked）刻意往上拋：回 [] 會被當成
+    # 「沒有 session」，讓 Codex 整批從看板消失；拋出後 discover_source_sessions 才會保留
+    # 上一份快照並記進來源錯誤，語意對齊 Claude 來源的「未知不等於空」。
+    # 取捨：永久性錯誤（DB 損毀、schema 變更）會讓來源錯誤持續有值，gc 因此停用、
+    # 通知佇列的 retain_missing 持續開啟——這是刻意的「未知不等於空」。目前 ring doctor
+    # 不顯示來源錯誤，可見處是 discover_source_sessions 在錯誤內容變動時印到 stderr 的警告。
+    with closing(sqlite3.connect(f"file:{CODEX_STATE}?mode=ro", uri=True, timeout=0.5)) as con:
         con.row_factory = sqlite3.Row
         rows = con.execute(
             """
@@ -893,11 +920,6 @@ def _codex_threads(procs: list[tuple[str, str]]) -> list[Session]:
             limit 200
             """
         ).fetchall()
-    except sqlite3.Error:
-        return []
-    finally:
-        with suppress(UnboundLocalError):
-            con.close()
 
     now = time.time()
     counts: dict[str, int] = {}
