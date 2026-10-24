@@ -5,7 +5,7 @@
 所以「漏翻」不會被測試擋下，只會在 ``--lang en`` 時默默退回中文。這支腳本把差集印出來，
 讓你「主動」決定哪些要補、哪些刻意留著——不強制、不失敗，純資訊。
 
-用法：``uv run poe i18n-check``（先 i18n-extract 重生 .pot，再跑這支）。
+用法：``uv run poe i18n:check``（先 i18n:extract 重生 .pot，再跑這支）。
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def _ids(path: Path, *, translated_only: bool = False) -> set[str]:
 
 def main() -> int:
     if not POT.exists():
-        print("找不到 ring.pot；先跑 `uv run poe i18n-extract`。", file=sys.stderr)
+        print("找不到 ring.pot；先跑 `uv run poe i18n:extract`。", file=sys.stderr)
         return 1
     source_ids = _ids(POT)
     missing_any = False

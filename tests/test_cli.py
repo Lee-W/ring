@@ -76,7 +76,7 @@ def test_main_snapshot_default_is_zh(monkeypatch: pytest.MonkeyPatch, capsys: py
     rc = cli.main(["--no-legend"])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "在場" in out  # 預設台灣漢語
+    assert "在場" in out  # 預設台灣華語
 
 
 def test_main_empty_board(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

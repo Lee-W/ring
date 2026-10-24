@@ -27,10 +27,25 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --locked --group dev
 
       - name: Run pre-commit hooks
         run: uv run poe hooks
+
+  # PR 也要驗文件能建（docs.yml 只在發佈時跑）：--strict 擋壞連結與 nav 錯位。
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          python-version: "3.13"
+
+      - name: Build docs (strict)
+        run: uv run --locked --group docs mkdocs build --strict
 
   test:
     runs-on: ${{ matrix.os }}
@@ -50,7 +65,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --locked --group dev
 
       - name: Lint
         run: uv run poe lint

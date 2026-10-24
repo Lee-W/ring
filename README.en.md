@@ -58,6 +58,12 @@ Use `pipx install 'ring-cli[tui]'` if you prefer pipx. Run `ring` for a one-shot
 
 Zero-config mode works without hooks. Precise 🔴 waiting states, pending details, and immediate notifications require hooks. Restart Claude Code or Codex sessions after installing or updating them.
 
+## Troubleshooting And Uninstall
+
+- Hooks not taking effect: restart the agent session, then run `ring doctor`; hooks are writing only if `ls ~/.config/ring/sessions/` shows `<session_id>.json` files.
+- Uninstall: `ring remove-hooks`, then `uv tool uninstall ring-cli`. State and config live in `~/.config/ring/`; delete that directory by hand to wipe everything (`ring gc` only removes stale state files of ended sessions).
+- See "Troubleshooting And Uninstall" in the [full guide](https://lee-w.github.io/ring/guide/) for details.
+
 ## Learn More
 
 - [Full guide](https://lee-w.github.io/ring/guide/): commands, TUI controls, hooks, notifications, configuration, extensions, and privacy

@@ -318,6 +318,10 @@ ring install-hooks            # 寫進 Claude Code / Codex hook 設定（合併�
 ring install-hooks --dry-run  # 只想先看會寫什麼、不動檔
 ```
 
+`ring install-hooks` 可以重複執行：已經裝過就回報「沒有變更」，不會產生重複條目；也只會動 RiNG
+自己的條目，不覆蓋你既有的 hooks。hook 指令是 `ring hook`（走 PATH 解析），所以多數升級不必重跑；
+若新版本改了 hook（新事件或 timeout），或之後才裝 Codex，重跑一次即可。
+
 Claude Code 會寫進 `~/.claude/settings.json`。如果你有在用 Codex（`~/.codex` 存在），
 RiNG 也會寫進 `~/.codex/hooks.json`；Codex 會要求你信任新 hook，信任後才會執行。
 
@@ -443,6 +447,27 @@ ring remove-hooks            # 從 Claude Code / Codex hook 設定移除 RiNG ho
 ring remove-hooks --dry-run  # 只預覽，不改檔
 ```
 
+## 疑難排解與解除安裝
+
+### hook 沒生效怎麼查
+
+1. **重開 session**：hook 只對裝完之後新開的 agent session 生效。
+2. **看有沒有資料寫進來**：`ls ~/.config/ring/sessions/` 出現 `<session_id>.json` 就代表 hook 在寫了。
+3. **跑 `ring doctor`**：唯讀診斷，會逐節報告 hook 安裝狀態、通知後端、focuser 與設定檔位置。
+4. **確認 `ring` 在 PATH 上**：hook 會執行 `ring hook`，找不到 `ring` 就寫不進來（`uv tool install` 後可用 `which ring` 檢查）。
+5. **Codex**：需要 `~/.codex` 存在才會安裝，且要在 Codex 提示時信任新 hook；之後才裝 Codex 的話，再跑一次 `ring install-hooks`。
+6. **重新註冊**：`ring install-hooks --dry-run` 先看會寫什麼，沒問題再 `ring install-hooks`（可重複執行）。
+
+### 解除安裝
+
+```sh
+ring remove-hooks            # 先移除 Claude Code / Codex 裡 RiNG 的 hook 條目
+uv tool uninstall ring-cli   # 解除安裝 ring 本體
+```
+
+RiNG 自己的狀態與設定都在 `~/.config/ring/`。`ring gc` 只清已離場的 stale 狀態檔；
+想完全清掉（包含 `config.toml`）就在解除安裝後手動刪除整個 `~/.config/ring/` 目錄。
+
 ## 設定（選用）
 
 `~/.config/ring/config.toml`，全部選填、缺了就用預設：
@@ -484,7 +509,7 @@ muted = "grey50"
 
 ## 語言 / 翻譯
 
-UI 用 **gettext**，msgid 直接是**台灣漢語**——所以預設（zh-Hant）不需要任何 `.mo`，
+UI 用 **gettext**，msgid 直接是**台灣華語**——所以預設（zh-Hant）不需要任何 `.mo`，
 原始碼即翻譯。切語言：`--lang en`（或 `RING_LANG=en` / config 的 `lang`）。複數用
 `ngettext` 正確處理（`1 session` vs `2 sessions`）。
 
