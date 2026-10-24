@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import json
 import os
 import sys
@@ -24,6 +23,8 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TypedDict
+
+from ring.fsutil import atomic_write_text, file_lock
 
 # --------------------------------------------------------------------------- 路徑常數（可在測試中覆寫）
 
@@ -57,14 +58,9 @@ class _TuiPresence(TypedDict):
 
 @contextlib.contextmanager
 def _focus_request_lock(path: Path) -> Iterator[None]:
-    path.parent.mkdir(parents=True, exist_ok=True)
     # 鎖檔獨立於會被消費／替換的 request inode，reader 與 writer 才會鎖到同一把鎖。
-    with path.with_name(path.name + ".lock").open("a", encoding="utf-8") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
+    with file_lock(path):
+        yield
 
 
 def write_focus_request(session_id: str, *, request_path: Path | None = None) -> None:
@@ -77,9 +73,7 @@ def write_focus_request(session_id: str, *, request_path: Path | None = None) ->
     payload: _FocusRequest = {"session_id": session_id, "ts": time.time()}
     try:
         with _focus_request_lock(path):
-            tmp = path.with_name(path.name + ".tmp")
-            tmp.write_text(json.dumps(payload), encoding="utf-8")
-            tmp.replace(path)
+            atomic_write_text(path, json.dumps(payload))
     except Exception:
         pass
 

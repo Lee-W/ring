@@ -21,13 +21,14 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
+import logging
+import os
 import sqlite3
 import subprocess
 import time
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager, suppress
+from collections.abc import Callable
+from contextlib import AbstractContextManager, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -36,6 +37,7 @@ from typing import Any
 from urllib.parse import quote
 
 from ring.config import get_config
+from ring.fsutil import atomic_write_text, file_lock, quarantine_file
 from ring.pathutil import _has_ancestor_live_process, _real
 from ring.ps_parse import (
     _arg_session_id,
@@ -56,6 +58,8 @@ from ring.transcript import (
     _tail_records,
 )
 from ring.waiting import FOREGROUND_OWNER, WaitingRequest, read_waiting_requests
+
+_log = logging.getLogger(__name__)
 
 CLAUDE_PROJECTS = Path.home() / ".claude" / "projects"
 RING_REGISTRY = Path.home() / ".config" / "ring" / "sessions"
@@ -154,17 +158,19 @@ def _parse_hidden_at(value: object) -> float | None:
     return None
 
 
-@contextmanager
-def _hidden_sessions_lock(path: Path) -> Iterator[None]:
+def _hidden_sessions_lock(path: Path) -> AbstractContextManager[None]:
     """跨 process 的 read-modify-write 臨界區，保護 deleted_sessions.json 不 lost-update。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = path.with_name(path.name + ".lock")
-    with lock_path.open("w", encoding="utf-8") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+    return file_lock(path)
+
+
+def _quarantine_corrupt(path: Path) -> None:
+    """壞掉的隱藏清單改名保留成 ``.corrupt-<timestamp>``，不讓下一次寫入無聲蓋掉它。"""
+    stamp = f"{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
+    target = quarantine_file(path, stamp=stamp)
+    if target is None:
+        _log.warning("hidden-sessions 檔無法解析，且改名保留失敗：%s", path)
+        return
+    _log.warning("hidden-sessions 檔無法解析，已改名保留為 %s，本輪視為空", target)
 
 
 def _read_hidden_sessions_locked(path: Path) -> dict[str, float]:
@@ -174,8 +180,16 @@ def _read_hidden_sessions_locked(path: Path) -> dict[str, float]:
     timestamp）並立刻寫回，之後都是新格式。呼叫端必須已持有 ``_hidden_sessions_lock``。
     """
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:  # 非 UTF-8：視同壞檔，一樣改名保留
+        _quarantine_corrupt(path)
+        return {}
+    except OSError:
+        return {}  # 缺檔，或暫時讀不到（權限等）：不是壞檔，不動它
+    try:
+        raw = json.loads(text)
+    except ValueError:  # JSONDecodeError
+        _quarantine_corrupt(path)
         return {}
 
     if isinstance(raw, list):
@@ -184,6 +198,7 @@ def _read_hidden_sessions_locked(path: Path) -> dict[str, float]:
         return {sid: _parse_hidden_at(ts) or 0.0 for sid, ts in migrated_iso.items()}
 
     if not isinstance(raw, dict):
+        _quarantine_corrupt(path)
         return {}
 
     result: dict[str, float] = {}
@@ -197,13 +212,8 @@ def _read_hidden_sessions_locked(path: Path) -> dict[str, float]:
 
 
 def _write_hidden_sessions_locked(iso_by_id: dict[str, str], *, path: Path) -> None:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(iso_by_id, ensure_ascii=False, sort_keys=True), encoding="utf-8")
-        tmp.replace(path)
-    except OSError:
-        pass
+    with suppress(OSError):
+        atomic_write_text(path, json.dumps(iso_by_id, ensure_ascii=False, sort_keys=True))
 
 
 def hidden_sessions(*, path: Path | None = None) -> dict[str, float]:

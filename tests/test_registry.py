@@ -536,6 +536,44 @@ def test_delete_session_state_falls_back_to_file_payload(
     assert not target.exists()
 
 
+def test_corrupt_hidden_sessions_is_quarantined_not_overwritten(tmp_path: Path) -> None:
+    """壞檔不得被下一次 hide 無聲蓋掉：改名保留成 .corrupt-*，內容原樣留存。"""
+    path = tmp_path / "deleted_sessions.json"
+    path.write_text('{"keep-me": "2026-01-01T00:00:00+00:00", BROKEN', encoding="utf-8")
+
+    assert hidden_session_ids(path=path) == set()  # 本輪視為空
+    corrupt = list(tmp_path.glob("deleted_sessions.json.corrupt-*"))
+    assert len(corrupt) == 1
+    assert "keep-me" in corrupt[0].read_text(encoding="utf-8")
+
+    hide_session("s1", path=path)  # 之後正常寫入新檔，不影響保留的壞檔
+    assert hidden_session_ids(path=path) == {"s1"}
+    assert "keep-me" in corrupt[0].read_text(encoding="utf-8")
+
+
+def test_non_utf8_hidden_sessions_is_quarantined(tmp_path: Path) -> None:
+    path = tmp_path / "deleted_sessions.json"
+    path.write_bytes(b"\xff\xfe{")
+    assert hidden_session_ids(path=path) == set()
+    corrupt = list(tmp_path.glob("deleted_sessions.json.corrupt-*"))
+    assert len(corrupt) == 1
+    assert corrupt[0].read_bytes() == b"\xff\xfe{"
+    assert not path.exists()
+
+
+def test_missing_hidden_sessions_is_not_quarantined(tmp_path: Path) -> None:
+    path = tmp_path / "deleted_sessions.json"
+    assert hidden_session_ids(path=path) == set()
+    assert list(tmp_path.glob("*.corrupt-*")) == []
+
+
+def test_non_container_hidden_sessions_is_quarantined(tmp_path: Path) -> None:
+    path = tmp_path / "deleted_sessions.json"
+    path.write_text('"just a string"', encoding="utf-8")
+    assert hidden_session_ids(path=path) == set()
+    assert len(list(tmp_path.glob("deleted_sessions.json.corrupt-*"))) == 1
+
+
 def test_hide_and_unhide_session_ids(tmp_path: Path) -> None:
     path = tmp_path / "deleted_sessions.json"
 

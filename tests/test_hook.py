@@ -1462,6 +1462,80 @@ def test_install_hooks_fresh(
     assert "已註冊" in capsys.readouterr().out
 
 
+def test_install_hooks_backs_up_existing_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """既有 settings.json 被改寫前先存 .bak（原樣），且原檔不存在時不產生 .bak。"""
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    original = json.dumps({"theme": "dark", "hooks": {}})
+    settings.write_text(original)
+    monkeypatch.setattr("ring.hook.Path.home", lambda: tmp_path)
+
+    assert install_hooks() == 0
+    bak = settings.with_name("settings.json.bak")
+    assert bak.read_text() == original
+    assert "ring hook" in settings.read_text()
+    assert json.loads(settings.read_text())["theme"] == "dark"
+    assert list(settings.parent.glob("*.tmp")) == []
+
+
+def test_install_hooks_fresh_has_no_backup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    monkeypatch.setattr("ring.hook.Path.home", lambda: tmp_path)
+    assert install_hooks() == 0
+    assert not settings.with_name("settings.json.bak").exists()
+
+
+def test_install_hooks_backup_failure_aborts_without_writing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    original = json.dumps({"theme": "dark"})
+    settings.write_text(original)
+    monkeypatch.setattr("ring.hook.Path.home", lambda: tmp_path)
+
+    def boom(_path: Path) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("ring.hook.backup_file", boom)
+    assert install_hooks() == 1
+    assert settings.read_text() == original
+    assert "無法備份" in capsys.readouterr().out
+
+
+def test_uninstall_hooks_backup_failure_aborts_without_writing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    monkeypatch.setattr("ring.hook.Path.home", lambda: tmp_path)
+    assert install_hooks() == 0
+    installed = settings.read_text()
+    capsys.readouterr()
+
+    def boom(_path: Path) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("ring.hook.backup_file", boom)
+    assert uninstall_hooks() == 1
+    assert settings.read_text() == installed
+    assert "無法備份" in capsys.readouterr().out
+
+
+def test_install_hooks_non_dict_settings_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text("[1, 2]")
+    monkeypatch.setattr("ring.hook.Path.home", lambda: tmp_path)
+    assert install_hooks() == 1
+    assert settings.read_text() == "[1, 2]"
+    assert "不是合法 JSON" in capsys.readouterr().out
+    assert uninstall_hooks() == 1
+
+
 def test_install_hooks_old_fullpath_replaced(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
