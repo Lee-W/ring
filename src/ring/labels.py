@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ring.fsutil import atomic_write_text, file_lock
+
 _LABELS_PATH: Path = Path.home() / ".config" / "ring" / "labels.json"
 
 
@@ -33,18 +35,17 @@ def get_label(session_id: str, *, path: Path | None = None) -> str:
 def set_label(session_id: str, label: str, *, path: Path | None = None) -> None:
     """設定 / 更新某 session 的標籤；傳空字串（或全空白）則移除該標籤。"""
     p = path or _LABELS_PATH
-    labels = load_labels(path=path)
     label = label.strip()
-    if label:
-        labels[session_id] = label
-    elif session_id not in labels:
-        return  # 本來就沒有，且要清空 → 不必寫檔
-    else:
-        labels.pop(session_id, None)
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(labels, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(p)  # atomic
+        # 整段 read-modify-write 持鎖：兩個 TUI 同時改不同 session 的標籤不會互相蓋掉。
+        with file_lock(p):
+            labels = load_labels(path=p)
+            if label:
+                labels[session_id] = label
+            elif session_id not in labels:
+                return  # 本來就沒有，且要清空 → 不必寫檔
+            else:
+                labels.pop(session_id, None)
+            atomic_write_text(p, json.dumps(labels, ensure_ascii=False))
     except Exception:
         pass

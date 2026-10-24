@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PROJECT VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-01 18:02+0900\n"
+"POT-Creation-Date: 2026-10-24 22:56+0900\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -321,64 +321,70 @@ msgstr ""
 msgid "⚠️ {path} 有未知的設定鍵（可能打錯字，已忽略）：{keys}"
 msgstr ""
 
-#: src/ring/hook.py:101
+#: src/ring/hook.py:100
 msgid "重開 Claude Code session 後，🔴 等你狀態就會精準起來。"
 msgstr ""
 
-#: src/ring/hook.py:111
+#: src/ring/hook.py:110
 msgid "重開 Codex session、並在它詢問時「信任」這個 hook，🔴 等你狀態才會精準起來（Codex 不會執行未信任的 hook）。"
 msgstr ""
 
-#: src/ring/hook.py:710
+#: src/ring/hook.py:700
 #, python-brace-format
 msgid "⚠️ 偵測到其他工具也掛在 {events}：{cmds}"
 msgstr ""
 
-#: src/ring/hook.py:711
+#: src/ring/hook.py:701
 msgid "它們會跟 RiNG 的通知重複觸發；要完全改用 RiNG，建議移除它們。"
 msgstr ""
 
-#: src/ring/hook.py:759 src/ring/hook.py:835
+#: src/ring/hook.py:745
+#, python-brace-format
+msgid "⚠️ 無法備份 {path}（{error}），為避免弄壞設定檔，未寫入。"
+msgstr ""
+
+#: src/ring/hook.py:759 src/ring/hook.py:762 src/ring/hook.py:839
+#: src/ring/hook.py:842
 #, python-brace-format
 msgid "⚠️ {path} 不是合法 JSON，先處理它再來。"
 msgstr ""
 
-#: src/ring/hook.py:797
+#: src/ring/hook.py:800
 #, python-brace-format
 msgid "✅ RiNG hooks 已經裝過了，沒有變更。（{path}）"
 msgstr ""
 
-#: src/ring/hook.py:810
+#: src/ring/hook.py:814
 #, python-brace-format
 msgid "✅ 已註冊 RiNG hooks（{events}）到 {path}"
 msgstr ""
 
-#: src/ring/hook.py:829
+#: src/ring/hook.py:833
 #, python-brace-format
 msgid "ℹ️ {path} 不存在，沒有可移除的 hook。"
 msgstr ""
 
-#: src/ring/hook.py:856
+#: src/ring/hook.py:863
 #, python-brace-format
 msgid "ℹ️ 沒有找到 RiNG hook 條目，無需移除。（{path}）"
 msgstr ""
 
-#: src/ring/hook.py:860
+#: src/ring/hook.py:869
 #, python-brace-format
 msgid "✅ 已移除 RiNG hooks（{events}）從 {path}"
 msgstr ""
 
-#: src/ring/notify_queue.py:260
+#: src/ring/notify_queue.py:244
 #, python-brace-format
 msgid "{s} 秒"
 msgstr ""
 
-#: src/ring/notify_queue.py:263
+#: src/ring/notify_queue.py:247
 #, python-brace-format
 msgid "{m} 分"
 msgstr ""
 
-#: src/ring/notify_queue.py:265
+#: src/ring/notify_queue.py:249
 #, python-brace-format
 msgid "{h} 小時"
 msgstr ""

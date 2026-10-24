@@ -26,21 +26,20 @@ Agent CLI 在各事件把一段 JSON 從 stdin 餵進來。我們據此 upsert �
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 from ring.config import get_config
+from ring.fsutil import atomic_write_text, backup_file, file_lock
 from ring.hook_protocol import HOOK_EVENTS, NormalizedHookEvent, adapter_for, provider_from_payload
 from ring.i18n import gettext as _
 from ring.i18n import set_lang
@@ -191,19 +190,12 @@ def run_hook(provider: str = "claude-code") -> int:
     return _delegate_to_agent_hooks(raw, selected_provider)
 
 
-@contextmanager
-def _session_state_lock(path: Path) -> Iterator[None]:
+def _session_state_lock(path: Path) -> AbstractContextManager[None]:
     """同 session 的 hook 序列化整段 read-modify-write，包含 SessionEnd。
 
     lock 檔不隨 row 刪除，避免仍在排隊的 writer 鎖住舊 inode、另一個 writer 卻鎖住新 inode。
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.with_suffix(".json.lock").open("a", encoding="utf-8") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
+    return file_lock(path)
 
 
 def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
@@ -392,9 +384,7 @@ def _update_session_state(
         if should_ring:
             payload["waiting_notified_at"] = now
 
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload))
-    tmp.replace(path)  # atomic
+    atomic_write_text(path, json.dumps(payload))
 
     if prev_status != status.value:
         log_transition(event.session_id, event.provider, event.cwd, status.value)
@@ -747,6 +737,16 @@ def install_hooks(dry_run: bool = False) -> int:
     return rc
 
 
+def _backup_or_report(settings: Path) -> bool:
+    """寫入前備份設定檔；失敗就印一行錯誤並回 False（呼叫端須中止，不可照樣覆寫）。"""
+    try:
+        backup_file(settings)
+    except OSError as exc:
+        print(_("⚠️ 無法備份 {path}（{error}），為避免弄壞設定檔，未寫入。", path=settings, error=exc))
+        return False
+    return True
+
+
 def _install_target(target: _HookTarget, dry_run: bool) -> int:
     """把 RiNG hook 合併進單一 target 的 settings 檔。"""
     settings = target.path
@@ -756,6 +756,9 @@ def _install_target(target: _HookTarget, dry_run: bool) -> int:
         try:
             data = json.loads(settings.read_text() or "{}")
         except json.JSONDecodeError:
+            print(_("⚠️ {path} 不是合法 JSON，先處理它再來。", path=settings))
+            return 1
+        if not isinstance(data, dict):  # 頂層是 list 等：同樣當作不是有效設定檔
             print(_("⚠️ {path} 不是合法 JSON，先處理它再來。", path=settings))
             return 1
 
@@ -805,8 +808,9 @@ def _install_target(target: _HookTarget, dry_run: bool) -> int:
         cleaned.append({"hooks": [{"type": "command", "command": cmd, "timeout": _HOOK_TIMEOUT}]})
         hooks[event] = cleaned
 
-    settings.parent.mkdir(parents=True, exist_ok=True)
-    settings.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    if not _backup_or_report(settings):  # 這是使用者自己的 Claude／Codex 設定檔：先留一份原樣
+        return 1
+    atomic_write_text(settings, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
     print(_("✅ 已註冊 RiNG hooks（{events}）到 {path}", events=", ".join(events_need_change), path=settings))
     print("   " + target.restart_hint)
     _print_conflict_warning(hooks)
@@ -830,8 +834,11 @@ def _uninstall_target(target: _HookTarget, dry_run: bool) -> int:
         return 0
 
     try:
-        data: dict[str, Any] = json.loads(settings.read_text() or "{}")
+        data: Any = json.loads(settings.read_text() or "{}")
     except json.JSONDecodeError:
+        print(_("⚠️ {path} 不是合法 JSON，先處理它再來。", path=settings))
+        return 1
+    if not isinstance(data, dict):  # 頂層是 list 等：同樣當作不是有效設定檔
         print(_("⚠️ {path} 不是合法 JSON，先處理它再來。", path=settings))
         return 1
 
@@ -856,6 +863,8 @@ def _uninstall_target(target: _HookTarget, dry_run: bool) -> int:
         print(_("ℹ️ 沒有找到 RiNG hook 條目，無需移除。（{path}）", path=settings))
         return 0
 
-    settings.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    if not _backup_or_report(settings):
+        return 1
+    atomic_write_text(settings, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
     print(_("✅ 已移除 RiNG hooks（{events}）從 {path}", events=", ".join(removed), path=settings))
     return 0

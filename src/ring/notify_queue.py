@@ -15,14 +15,13 @@
 設計原則（仿 ``ipc.py`` / ``registry.py`` 既有 pattern）
 ---------------------------------------------------------
 - 純 stdlib，零新依賴。
-- 跨 process 的 read-modify-write 一律用 ``fcntl.flock`` 保護（抄 ``registry._hidden_sessions_lock``）。
+- 跨 process 的 read-modify-write 一律用 ``fsutil.file_lock`` 保護。
 - 所有檔案操作失敗安靜吞掉，不打斷 hook / TUI 主流程。
 - 路徑常數可在測試中用關鍵字參數注入，隔離測試環境。
 """
 
 from __future__ import annotations
 
-import fcntl
 import json
 import time
 from collections.abc import Iterator
@@ -32,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from ring.config import get_config
+from ring.fsutil import atomic_write_text, file_lock
 from ring.i18n import gettext as _
 from ring.registry import Session, Status
 from ring.waiting import read_waiting_requests
@@ -46,15 +46,9 @@ _QUIET_PATH: Path = _CONFIG_DIR / "quiet"
 
 @contextmanager
 def _locked(path: Path) -> Iterator[None]:
-    """跨 process 的 read-modify-write 臨界區（抄 ``registry._hidden_sessions_lock``）。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = path.with_name(path.name + ".lock")
-    with lock_path.open("w", encoding="utf-8") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+    """跨 process 的 read-modify-write 臨界區（``fsutil.file_lock``）。"""
+    with file_lock(path):
+        yield
 
 
 def _read_json_locked(path: Path) -> dict[str, Any]:
@@ -70,13 +64,8 @@ def _read_json_locked(path: Path) -> dict[str, Any]:
 
 def _write_json_locked(data: dict[str, Any], *, path: Path) -> None:
     """呼叫端須已持有 ``_locked(path)``。atomic tmp+replace，失敗安靜吞掉。"""
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(path)
-    except OSError:
-        pass
+    with suppress(OSError):
+        atomic_write_text(path, json.dumps(data, ensure_ascii=False))
 
 
 # --------------------------------------------------------------------------- Session ↔ dict
@@ -203,13 +192,8 @@ def set_quiet(until: float | None, *, quiet_path: Path | None = None) -> None:
     """開啟 quiet：``until=None`` 手動解除前一直靜音；``until=<epoch>`` 到期自動解除。"""
     path = quiet_path or _QUIET_PATH
     payload: dict[str, Any] = {"until": until, "since": time.time()}
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(json.dumps(payload), encoding="utf-8")
-        tmp.replace(path)
-    except OSError:
-        pass
+    with suppress(OSError):
+        atomic_write_text(path, json.dumps(payload))
 
 
 def clear_quiet(*, quiet_path: Path | None = None) -> None:

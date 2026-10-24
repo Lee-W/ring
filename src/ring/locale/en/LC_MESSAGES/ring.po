@@ -173,6 +173,9 @@ msgstr "background agent, no terminal to jump to; reconnect with `claude --resum
 msgid "⚠️ {path} 不是合法 JSON，先處理它再來。"
 msgstr "⚠️ {path} is not valid JSON; fix it first."
 
+msgid "⚠️ 無法備份 {path}（{error}），為避免弄壞設定檔，未寫入。"
+msgstr "⚠️ Could not back up {path} ({error}); nothing was written, to avoid damaging the settings file."
+
 msgid "✅ RiNG hooks 已經裝過了，沒有變更。（{path}）"
 msgstr "✅ RiNG hooks already installed; no change. ({path})"
 

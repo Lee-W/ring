@@ -26,6 +26,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from ring.fsutil import atomic_write_text, file_lock
+
 PAYLOAD_LOG_PATH = Path.home() / ".config" / "ring" / "hook_payloads.jsonl"
 
 # log 檔上限；超過就砍半保新（append 前檢查）。原始 payload 比 events.jsonl 的轉換記錄
@@ -97,14 +99,17 @@ def maybe_log_raw_payload(
 
 
 def _trim_if_oversized(p: Path) -> None:
-    """log 超過 ``_MAX_BYTES`` 時砍半保新，避免無上限成長。失敗安靜放棄（不擋 append）。"""
+    """log 超過 ``_MAX_BYTES`` 時砍半保新，避免無上限成長。
+
+    鎖只序列化 trimmer；append 不持鎖，trim 瞬間可能丟少量 log 行，可接受。失敗安靜放棄（不擋 append）。"""
     try:
         if p.stat().st_size <= _MAX_BYTES:
             return
-        lines = p.read_text(encoding="utf-8").splitlines()
-        keep = lines[len(lines) // 2 :]
-        tmp = p.with_suffix(".jsonl.tmp")
-        tmp.write_text("\n".join(keep) + "\n", encoding="utf-8")
-        tmp.replace(p)  # atomic
+        with file_lock(p):
+            if p.stat().st_size <= _MAX_BYTES:  # 持鎖重驗：別的 process 可能已砍過
+                return
+            lines = p.read_text(encoding="utf-8").splitlines()
+            keep = lines[len(lines) // 2 :]
+            atomic_write_text(p, "\n".join(keep) + "\n")
     except Exception:
         pass

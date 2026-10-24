@@ -15,6 +15,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from ring.fsutil import atomic_write_text, file_lock
+
 EVENTS_PATH = Path.home() / ".config" / "ring" / "events.jsonl"
 
 # log 檔上限；超過就砍半保新（append 前檢查）。單行約 150 bytes，5MB ≈ 3 萬多次轉換。
@@ -52,17 +54,24 @@ def log_transition(
 
 
 def _trim_if_oversized(p: Path) -> None:
-    """log 超過 ``_MAX_BYTES`` 時砍半保新，避免無上限成長。"""
+    """log 超過 ``_MAX_BYTES`` 時砍半保新，避免無上限成長。
+
+    鎖只序列化 trimmer；append 不持鎖，trim 瞬間可能丟少量 log 行，可接受。"""
     try:
         if p.stat().st_size <= _MAX_BYTES:
             return
     except OSError:
         return
-    lines = p.read_text(encoding="utf-8").splitlines()
-    keep = lines[len(lines) // 2 :]
-    tmp = p.with_suffix(".jsonl.tmp")
-    tmp.write_text("\n".join(keep) + "\n", encoding="utf-8")
-    tmp.replace(p)  # atomic
+    # 持鎖重驗：先前的 size 檢查沒鎖，拿到鎖時別的 process 可能已經砍過了。
+    with file_lock(p):
+        try:
+            if p.stat().st_size <= _MAX_BYTES:
+                return
+        except OSError:
+            return
+        lines = p.read_text(encoding="utf-8").splitlines()
+        keep = lines[len(lines) // 2 :]
+        atomic_write_text(p, "\n".join(keep) + "\n")
 
 
 @dataclass(frozen=True)
