@@ -8,8 +8,54 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+
+class ParseCache[T]:
+    """以 ``(path, st_mtime_ns, st_size)`` 為 key 的解析結果快取。
+
+    TUI 每 2 秒掃一次所有近期 transcript；檔案沒動（mtime／size 都沒變）就沒必要重讀
+    頭尾 128 KiB 再 JSON parse。``begin_scan()`` 到 ``end_scan()`` 之間被 ``get`` 碰過的
+    key 才保留，其餘（檔案已刪、掉出時間窗、或同檔的舊版本）在掃描結束時淘汰，快取大小
+    因此以「本輪看到的檔案數」為上限。
+
+    ``parser`` 的回傳值會被跨輪共用，所以必須是 immutable。
+    """
+
+    def __init__(self, parser: Callable[[Path], T]) -> None:
+        self._parser = parser
+        self._entries: dict[tuple[Path, int, int], T] = {}
+        self._seen: set[tuple[Path, int, int]] = set()
+
+    def begin_scan(self) -> None:
+        self._seen = set()
+
+    def end_scan(self) -> None:
+        for key in set(self._entries) - self._seen:
+            self._entries.pop(key, None)  # TUI 在 thread 跑掃描，容許並行淘汰
+
+    def clear(self) -> None:
+        self._entries.clear()
+        self._seen.clear()
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+    def get(self, path: Path) -> T:
+        try:
+            st = path.stat()
+        except OSError:
+            return self._parser(path)  # 讀不到就不快取，讓 parser 自己走失敗路徑
+        key = (path, st.st_mtime_ns, st.st_size)
+        self._seen.add(key)
+        if key in self._entries:
+            return self._entries[key]
+        value = self._parser(path)
+        self._entries[key] = value
+        return value
 
 
 def _tail_records(path: Path, max_tail: int = 128 * 1024) -> list[dict[str, Any]]:
@@ -67,6 +113,59 @@ def _head_cwd(path: Path, max_head: int = 128 * 1024) -> str:
         if cwd and isinstance(cwd, str):
             return cwd
     return ""
+
+
+@dataclass(frozen=True)
+class ClaudeTail:
+    """Claude JSONL 檔尾解析結果（immutable，可跨輪共用）。"""
+
+    cwd: str
+    last_action: str
+    todo: tuple[int, int] | None
+    recent_actions: tuple[str, ...]
+    kind: str
+
+
+def _parse_claude_tail(path: Path) -> ClaudeTail:
+    records = _tail_records(path)
+    cwd, last_action = "", "—"
+    if records:
+        cwd = str(records[-1].get("cwd") or "")
+        last_action = _latest_action(records)
+    return ClaudeTail(
+        cwd=cwd,
+        last_action=last_action,
+        todo=_extract_todo(records),
+        recent_actions=tuple(_recent_actions(records)),
+        kind=_conversation_tail_kind(records),
+    )
+
+
+CLAUDE_TAIL_CACHE: ParseCache[ClaudeTail] = ParseCache(_parse_claude_tail)
+_HEAD_CWD_CACHE: dict[Path, str] = {}
+
+
+def head_cwd_cached(path: Path) -> str:
+    """``_head_cwd`` 的 path-keyed 快取：檔頭不會變。只快取非空結果（空檔之後可能長出內容）。"""
+    hit = _HEAD_CWD_CACHE.get(path)
+    if hit is not None:
+        return hit
+    value = _head_cwd(path)
+    if value:
+        _HEAD_CWD_CACHE[path] = value
+    return value
+
+
+def prune_head_cwd_cache(keep: set[Path]) -> None:
+    """掃描結束後淘汰本輪沒見到的 path。"""
+    for path in set(_HEAD_CWD_CACHE) - keep:
+        _HEAD_CWD_CACHE.pop(path, None)
+
+
+def clear_caches() -> None:
+    """清空所有解析快取（測試隔離用）。"""
+    CLAUDE_TAIL_CACHE.clear()
+    _HEAD_CWD_CACHE.clear()
 
 
 def _blocks(record: dict[str, Any]) -> list[Any]:

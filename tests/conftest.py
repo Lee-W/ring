@@ -9,6 +9,7 @@ import ring.ipc as ipc
 import ring.registry as registry
 import ring.sources as sources
 import ring.sources.local_llm as local_llm
+import ring.transcript as transcript
 from ring.i18n import set_lang
 
 
@@ -16,6 +17,16 @@ from ring.i18n import set_lang
 def _isolate_source_snapshots(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sources, "_SOURCE_SNAPSHOTS", {})
     monkeypatch.setattr(sources, "_SOURCE_ERRORS", {})
+
+
+@pytest.fixture(autouse=True)
+def _isolate_transcript_caches() -> Iterator[None]:
+    """transcript 解析快取是 module 層狀態；每個 test 前後清空，避免跨測試殘留。"""
+    transcript.clear_caches()
+    registry.CODEX_ROLLOUT_CACHE.clear()
+    yield
+    transcript.clear_caches()
+    registry.CODEX_ROLLOUT_CACHE.clear()
 
 
 @pytest.fixture(autouse=True)
