@@ -1875,3 +1875,102 @@ def test_codex_permission_wait_end_to_end_from_real_hook_write(monkeypatch: pyte
     assert sessions[0].status is Status.WAITING
     assert sessions[0].waiting_kind == "permission"
     assert sessions[0].waiting_detail == "Bash: cp /tmp/fix.py pelicanconf.py"
+
+
+def test_codex_sqlite_locked_keeps_previous_snapshot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import ring.sources as sources_mod
+    from ring.sources.codex import source as codex_source
+
+    rollout = tmp_path / "rollout.jsonl"
+    _write_rollout(rollout, [{"type": "event_msg", "payload": {"type": "task_complete"}}])
+    db = tmp_path / "state.sqlite"
+    now_ms = int(time.time() * 1000)
+    _write_codex_state(
+        db,
+        [
+            {
+                "id": "codex-session",
+                "cwd": "/work/app",
+                "title": "Implement thing",
+                "rollout_path": str(rollout),
+                "preview": "",
+                "updated_at": now_ms // 1000,
+                "updated_at_ms": now_ms,
+                "archived": 0,
+            }
+        ],
+    )
+    monkeypatch.setattr("ring.registry.CODEX_STATE", db)
+    monkeypatch.setattr("ring.registry._codex_procs", lambda: [("/work/app", "/dev/ttys003")])
+
+    first = sources_mod.discover_source_sessions(codex_source)
+    assert [s.session_id for s in first] == ["codex:codex-session"]
+
+    def locked(*_args: object, **_kwargs: object) -> sqlite3.Connection:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr("ring.registry.sqlite3.connect", locked)
+
+    second = sources_mod.discover_source_sessions(codex_source)
+
+    assert [s.session_id for s in second] == ["codex:codex-session"]
+    assert "database is locked" in sources_mod.source_errors()["codex"]
+    assert "codex:codex-session" in sources_mod.stale_session_ids()
+
+
+def test_unhide_session_skips_lock_when_nothing_hidden(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    path = tmp_path / "deleted_sessions.json"
+    lock_calls: list[Path] = []
+
+    def counting_lock(p: Path) -> Any:
+        lock_calls.append(p)
+        raise AssertionError("不該拿鎖")
+
+    monkeypatch.setattr("ring.registry.file_lock", counting_lock)
+
+    unhide_session("s1", path=path)  # 檔案缺席
+    path.write_text('{"other": "2026-01-01T00:00:00+00:00"}', encoding="utf-8")
+    unhide_session("s1", path=path)  # 有檔、但 id 不在清單
+
+    assert lock_calls == []
+    assert not list(tmp_path.glob("*.lock"))
+
+
+def test_unhide_session_still_locks_on_corrupt_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from ring.fsutil import file_lock as real_lock
+
+    path = tmp_path / "deleted_sessions.json"
+    path.write_text("{not json", encoding="utf-8")
+    lock_calls: list[Path] = []
+
+    def counting_lock(p: Path) -> Any:
+        lock_calls.append(p)
+        return real_lock(p)
+
+    monkeypatch.setattr("ring.registry.file_lock", counting_lock)
+
+    unhide_session("s1", path=path)
+
+    assert len(lock_calls) >= 1
+    assert len(list(tmp_path.glob("deleted_sessions.json.corrupt-*"))) == 1
+
+
+def test_unhide_session_still_locks_and_migrates_legacy_list(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from ring.fsutil import file_lock as real_lock
+
+    path = tmp_path / "deleted_sessions.json"
+    path.write_text('["s1", "s2"]', encoding="utf-8")
+    lock_calls: list[Path] = []
+
+    def counting_lock(p: Path) -> Any:
+        lock_calls.append(p)
+        return real_lock(p)
+
+    monkeypatch.setattr("ring.registry.file_lock", counting_lock)
+
+    unhide_session("s1", path=path)
+
+    assert len(lock_calls) >= 1
+    migrated = json.loads(path.read_text(encoding="utf-8"))
+    assert isinstance(migrated, dict)
+    assert set(migrated) == {"s2"}
