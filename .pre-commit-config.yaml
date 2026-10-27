@@ -24,7 +24,7 @@ repos:
     args: [--unsafe]
   - id: detect-private-key
 - repo: https://github.com/astral-sh/uv-pre-commit
-  rev: 0.13.0
+  rev: 0.13.5
   hooks:
   - id: uv-lock
   - id: uv-sync
@@ -37,7 +37,7 @@ repos:
     additional_dependencies: [tomli]
     args: [--write-changes]
 - repo: https://github.com/commitizen-tools/commitizen
-  rev: v4.19.2
+  rev: v4.19.3
   hooks:
   - id: commitizen
   - id: commitizen-branch
