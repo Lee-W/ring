@@ -101,7 +101,9 @@ class CommonHookAdapter:
         explicit_requires_action = _explicit_requires_action(data)
         if event == "SessionEnd":
             status = Status.ENDED
-        elif event in {"SessionStart", "UserPromptSubmit"}:
+        elif event in {"SessionStart", "UserPromptSubmit", "SubagentStop"}:
+            # SubagentStop 由 hook 端的 _apply_subagent_stop 短路處理（只清該 subagent 的等待），
+            # 不會依這裡的 WORKING 寫入 row；此值僅讓事件通過正規化。
             status = Status.WORKING
         elif explicit_requires_action is not None:
             status = Status.WAITING if explicit_requires_action else Status.IDLE
@@ -361,5 +363,6 @@ HOOK_EVENTS = (
     "PreToolUse",
     "PostToolUse",
     "Stop",
+    "SubagentStop",
     "SessionEnd",
 )

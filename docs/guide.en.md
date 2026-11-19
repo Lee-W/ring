@@ -342,6 +342,7 @@ Claude Code events:
 | `Stop` | 🟡 idle |
 | `Notification` with `permission_prompt` / `elicitation_dialog` | 🔴 waiting |
 | `PermissionRequest` / `PreToolUse` with `AskUserQuestion` | 🔴 waiting |
+| `SubagentStop` (with `agent_id`) | clears only that subagent's leftover waits; writes nothing when there is nothing to clear, no row, or no `agent_id`, and restores the host's own state afterwards |
 | `SessionEnd` | removed from the board |
 
 `Stop` has one more exception: an agent sometimes doesn't use `AskUserQuestion` or trigger a permission

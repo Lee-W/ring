@@ -17,6 +17,7 @@ from ring.config import Config
 from ring.focus import kitty
 from ring.hook import _is_ring_hook_command, install_hooks, uninstall_hooks
 from ring.registry import Session, Status
+from ring.waiting import FOREGROUND_OWNER, read_waiting_requests
 
 real_session_pid = hook._session_pid
 
@@ -2441,3 +2442,221 @@ def test_user_reply_still_clears_waiting(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
     data = json.loads((tmp_path / "s1.json").read_text())
     assert data["status"] == Status.WORKING.value
+
+
+def _read_row(hook_registry: Path) -> dict[str, Any]:
+    row: dict[str, Any] = json.loads((hook_registry / "s1.json").read_text())
+    return row
+
+
+def _agent_permission_wait(agent: str) -> dict[str, Any]:
+    return {
+        "session_id": "s1",
+        "cwd": "/work/app",
+        "hook_event_name": "PermissionRequest",
+        "requires_action": True,
+        "agent_id": agent,
+        "message": f"question {agent}",
+    }
+
+
+def test_subagent_stop_clears_finished_agent_wait(hook_registry: Path) -> None:
+    hook._record_session_state(
+        {"session_id": "s1", "cwd": "/work/app", "hook_event_name": "SessionStart"}, "claude-code"
+    )
+    hook._record_session_state(_agent_permission_wait("x"), "claude-code")
+    assert _read_row(hook_registry)["status"] == "waiting"
+    hook._record_session_state(
+        {"session_id": "s1", "cwd": "/work/app", "hook_event_name": "SubagentStop", "agent_id": "x", "agent_type": "T"},
+        "claude-code",
+    )
+    row = _read_row(hook_registry)
+    assert row["status"] != "waiting"
+    assert read_waiting_requests(row) == {}
+
+
+def test_subagent_stop_keeps_foreground_wait(hook_registry: Path) -> None:
+    base = {"session_id": "s1", "cwd": "/work/app"}
+    hook._record_session_state(dict(base, hook_event_name="SessionStart"), "claude-code")
+    hook._record_session_state(
+        dict(base, hook_event_name="PermissionRequest", requires_action=True, message="fg question"), "claude-code"
+    )
+    hook._record_session_state(_agent_permission_wait("x"), "claude-code")
+    hook._record_session_state(dict(base, hook_event_name="SubagentStop", agent_id="x"), "claude-code")
+    row = _read_row(hook_registry)
+    assert row["status"] == "waiting"
+    assert set(read_waiting_requests(row)) == {FOREGROUND_OWNER}
+
+
+def test_subagent_stop_leaves_other_agent_wait(hook_registry: Path) -> None:
+    base = {"session_id": "s1", "cwd": "/work/app"}
+    hook._record_session_state(dict(base, hook_event_name="SessionStart"), "claude-code")
+    hook._record_session_state(_agent_permission_wait("x"), "claude-code")
+    hook._record_session_state(_agent_permission_wait("y"), "claude-code")
+    hook._record_session_state(dict(base, hook_event_name="SubagentStop", agent_id="x"), "claude-code")
+    row = _read_row(hook_registry)
+    assert row["status"] == "waiting"
+    assert set(read_waiting_requests(row)) == {"agent:y"}
+
+
+def test_subagent_stop_drops_pending_permission_of_that_agent(hook_registry: Path) -> None:
+    base = {"session_id": "s1", "cwd": "/work/app"}
+    for agent in ("x", "y"):
+        hook._record_session_state(
+            dict(
+                base,
+                hook_event_name="PermissionRequest",
+                agent_id=agent,
+                tool_name="Edit",
+                tool_input={"file_path": f"/p/{agent}.md"},
+            ),
+            "claude-code",
+        )
+    assert {i["owner"] for i in _read_row(hook_registry)["pending_permissions"]} == {"agent:x", "agent:y"}
+    hook._record_session_state(dict(base, hook_event_name="SubagentStop", agent_id="x"), "claude-code")
+    assert {i["owner"] for i in _read_row(hook_registry)["pending_permissions"]} == {"agent:y"}
+
+
+def test_subagent_stop_without_agent_id_never_touches_foreground(hook_registry: Path) -> None:
+    base = {"session_id": "s1", "cwd": "/work/app"}
+    hook._record_session_state(dict(base, hook_event_name="SessionStart"), "claude-code")
+    hook._record_session_state(
+        dict(base, hook_event_name="PermissionRequest", requires_action=True, message="fg question"), "claude-code"
+    )
+    hook._record_session_state(dict(base, hook_event_name="SubagentStop", agent_type=""), "claude-code")
+    assert _read_row(hook_registry)["status"] == "waiting"
+
+
+def test_hook_events_include_subagent_stop() -> None:
+    assert "SubagentStop" in hook._HOOK_EVENTS
+
+
+_SUB_BASE = {"session_id": "s1", "cwd": "/work/app"}
+
+
+def _subagent_stop(agent: str = "x") -> None:
+    hook._record_session_state(
+        dict(_SUB_BASE, hook_event_name="SubagentStop", agent_id=agent, agent_type="T"), "claude-code"
+    )
+
+
+def test_subagent_stop_without_row_creates_nothing(hook_registry: Path) -> None:
+    _subagent_stop()
+    assert not (hook_registry / "s1.json").exists()
+
+
+def test_late_subagent_stop_after_session_end_does_not_resurrect(hook_registry: Path) -> None:
+    hook._record_session_state(dict(_SUB_BASE, hook_event_name="SessionStart"), "claude-code")
+    hook._record_session_state(dict(_SUB_BASE, hook_event_name="SessionEnd"), "claude-code")
+    _subagent_stop()
+    assert not (hook_registry / "s1.json").exists()
+
+
+def test_subagent_stop_restores_idle_and_keeps_activity_fields(hook_registry: Path) -> None:
+    hook._record_session_state(dict(_SUB_BASE, hook_event_name="SessionStart"), "claude-code")
+    hook._record_session_state(_agent_permission_wait("x"), "claude-code")
+    hook._record_session_state(dict(_SUB_BASE, hook_event_name="Stop"), "claude-code")
+    # 前景 Stop 清不掉 agent:x 的等待，row 因此撐在 waiting
+    path = hook_registry / "s1.json"
+    before = json.loads(path.read_text())
+    assert before["status"] == "waiting"
+    _subagent_stop()
+    after = json.loads(path.read_text())
+    assert after["status"] == "idle"
+    for key in ("last_event", "last_event_owner", "last_active", "last_action", "heartbeat_at"):
+        assert after[key] == before[key], key
+    assert read_waiting_requests(after) == {}
+
+
+def test_subagent_stop_restores_working_when_host_was_working(hook_registry: Path) -> None:
+    hook._record_session_state(dict(_SUB_BASE, hook_event_name="SessionStart"), "claude-code")
+    hook._record_session_state(_agent_permission_wait("x"), "claude-code")
+    hook._record_session_state(dict(_SUB_BASE, hook_event_name="PreToolUse", tool_name="Bash"), "claude-code")
+    path = hook_registry / "s1.json"
+    before = json.loads(path.read_text())
+    assert (before["status"], before["last_event"], before["last_event_owner"]) == (
+        "waiting",
+        "PreToolUse",
+        FOREGROUND_OWNER,
+    )
+    _subagent_stop()
+    after = json.loads(path.read_text())
+    assert after["status"] == "working"
+    assert after["last_event"] == "PreToolUse"
+    assert after["last_active"] == before["last_active"]
+
+
+def test_subagent_stop_with_nothing_to_clear_leaves_file_bytes_identical(hook_registry: Path) -> None:
+    hook._record_session_state(dict(_SUB_BASE, hook_event_name="SessionStart"), "claude-code")
+    hook._record_session_state(dict(_SUB_BASE, hook_event_name="Stop"), "claude-code")
+    path = hook_registry / "s1.json"
+    before = path.read_bytes()
+    assert json.loads(before)["status"] == "idle"
+    _subagent_stop()
+    assert path.read_bytes() == before
+
+
+def test_subagent_stop_with_agent_type_only_does_not_write(hook_registry: Path) -> None:
+    hook._record_session_state(dict(_SUB_BASE, hook_event_name="SessionStart"), "claude-code")
+    hook._record_session_state(_agent_permission_wait("x"), "claude-code")
+    path = hook_registry / "s1.json"
+    before = path.read_bytes()
+    hook._record_session_state(dict(_SUB_BASE, hook_event_name="SubagentStop", agent_type="T"), "claude-code")
+    assert path.read_bytes() == before
+
+
+def test_subagent_stop_points_summary_at_remaining_agent(hook_registry: Path) -> None:
+    hook._record_session_state(dict(_SUB_BASE, hook_event_name="SessionStart"), "claude-code")
+    hook._record_session_state(_agent_permission_wait("x"), "claude-code")
+    hook._record_session_state(_agent_permission_wait("y"), "claude-code")
+    _subagent_stop("x")
+    row = _read_row(hook_registry)
+    assert row["status"] == "waiting"
+    assert (row["waiting_agent_id"], row["waiting_detail"], row["waiting_kind"]) == (
+        "y",
+        "question y",
+        read_waiting_requests(row)["agent:y"].kind,
+    )
+    assert row["waiting_kind"]
+
+
+def test_subagent_stop_clears_only_pending_when_status_not_waiting(hook_registry: Path) -> None:
+    hook._record_session_state(dict(_SUB_BASE, hook_event_name="SessionStart"), "claude-code")
+    hook._record_session_state(
+        dict(
+            _SUB_BASE,
+            hook_event_name="PermissionRequest",
+            agent_id="x",
+            tool_name="Edit",
+            tool_input={"file_path": "/p/x.md"},
+        ),
+        "claude-code",
+    )
+    before = _read_row(hook_registry)
+    assert before["status"] != "waiting"
+    assert {i["owner"] for i in before["pending_permissions"]} == {"agent:x"}
+    _subagent_stop("x")
+    after = _read_row(hook_registry)
+    assert after["pending_permissions"] == []
+    assert after["status"] == before["status"]
+
+
+def test_subagent_stop_restores_working_when_last_event_from_subagent(hook_registry: Path) -> None:
+    hook._record_session_state(dict(_SUB_BASE, hook_event_name="SessionStart"), "claude-code")
+    hook._record_session_state(_agent_permission_wait("x"), "claude-code")
+    before = _read_row(hook_registry)
+    assert (before["status"], before["last_event_owner"]) == ("waiting", "agent:x")
+    _subagent_stop("x")
+    assert _read_row(hook_registry)["status"] == "working"
+
+
+def test_subagent_stop_legacy_row_without_owner_restores_idle(hook_registry: Path) -> None:
+    hook._record_session_state(dict(_SUB_BASE, hook_event_name="SessionStart"), "claude-code")
+    hook._record_session_state(_agent_permission_wait("x"), "claude-code")
+    hook._record_session_state(dict(_SUB_BASE, hook_event_name="Stop"), "claude-code")
+    path = hook_registry / "s1.json"
+    row = json.loads(path.read_text())
+    del row["last_event_owner"]  # 升級前留下的舊 row 沒有這個欄位
+    path.write_text(json.dumps(row))
+    _subagent_stop("x")
+    assert _read_row(hook_registry)["status"] == "idle"

@@ -262,7 +262,7 @@ RiNG 會從已註冊的 source 收集 session；目前內建這幾種：
 | **Codex zero-config**（預設） | 讀 `~/.codex/state_5.sqlite` threads + rollout JSONL，並用 live `codex` process 配 tty | 免設定；可辨識 live / ended / 回合結束。同 cwd 多 session 建議裝 hook 取得精準跳轉 |
 | **Ollama zero-config**（預設） | 偵測有控制終端的 `ollama run` process | 行程存活層級；顯示 cwd、TTY 與模型，不把 `ollama serve` 當 session |
 | **llama.cpp zero-config**（預設） | 偵測有控制終端的 `llama-cli` 或 `llama cli` process | 行程存活層級；顯示 cwd、TTY 與模型，不把 `llama-server`／`llama server` 當 session |
-| **hook registry**（opt-in，精準） | RiNG hook 在 `Notification` / `UserPromptSubmit` / `Stop` / `SessionEnd` 即時寫 `~/.config/ring/sessions/` | 準（🔴 等你 / 🟢 工作中 / 🟡 跑完停著 / ⚫ 已離場） |
+| **hook registry**（opt-in，精準） | RiNG hook 在 `Notification` / `UserPromptSubmit` / `Stop` / `SubagentStop` / `SessionEnd` 即時寫 `~/.config/ring/sessions/` | 準（🔴 等你 / 🟢 工作中 / 🟡 跑完停著 / ⚫ 已離場） |
 
 zero-config 不必設定就能用；想要精準的「誰在等你」，就讓 provider 的 hook 餵進 RiNG registry。
 RiNG 內建 Claude Code / Codex hook 安裝器；其他工具可直接走 provider-neutral `ring hook` protocol。
@@ -333,6 +333,7 @@ Claude Code 註冊這幾個事件，對應到狀態：
 | `Stop` | 🟡 跑完停著 |
 | `Notification` 的 `permission_prompt` / `elicitation_dialog` | 🔴 等你（卡權限 / 需要選項） |
 | `PermissionRequest` / `PreToolUse` 的 `AskUserQuestion` | 🔴 等你（權限 / 選項需要你決策） |
+| `SubagentStop`（帶 `agent_id`） | 只清該 subagent 名下殘留的等待；無可清項目、無 row 或無 `agent_id` 時不寫檔，清完後狀態還原為主 session 本來的狀態 |
 | `SessionEnd` | 從看板消失 |
 
 `Stop` 還有一種例外：agent 有時不用 `AskUserQuestion`、不觸發權限請求，只在文字裡問了一句話

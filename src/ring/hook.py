@@ -21,6 +21,7 @@ Agent CLI 在各事件把一段 JSON 從 stdin 餵進來。我們據此 upsert �
   一般 Notification                → 🟡 跑完停著；但既有狀態已是 🔴 時保住 🔴——Claude Code
                                     閒置滿 60 秒送的 idle_prompt 不是「使用者回應了」的證據
                                     （見 _notification_keeps_waiting）
+  SubagentStop                    → 只清該 subagent 名下的等待與暫存摘要（需帶 agent_id）
   SessionEnd                      → 刪檔（乾淨離場）
 """
 
@@ -246,6 +247,74 @@ def _record_session_state(data: dict[str, Any], selected_provider: str) -> None:
         _ring_waiting_now(*notification)
 
 
+def _apply_subagent_stop(
+    path: Path, event: NormalizedHookEvent, prev_row: dict[str, Any], owner: str
+) -> tuple[NormalizedHookEvent, dict[str, Any], str] | None:
+    """SubagentStop 只做一件事：移除已收工 subagent 名下殘留的等待與暫存摘要。
+
+    沒有既有 row、沒有 agent ID（Claude Code 內部 agent 無法對應 owner）、或該 owner 名下
+    沒有東西可清時，一律不寫檔——不建列、不復活已離場 session、不刷新活動欄位。
+    有東西可清時只改 waiting_requests／pending_permissions 與因此變動的 status 及其衍生欄位；
+    last_event、last_event_owner、last_action、last_active、heartbeat 維持原值。
+    """
+    if not prev_row or owner in (FOREGROUND_OWNER, UNKNOWN_OWNER):
+        return None
+    requests = read_waiting_requests(prev_row)
+    raw_pending = prev_row.get("pending_permissions")
+    pending_list = raw_pending if isinstance(raw_pending, list) else []
+    owns_pending = any(isinstance(item, dict) and item.get("owner") == owner for item in pending_list)
+    if owner not in requests and not owns_pending:
+        return None
+    requests.pop(owner, None)
+    row = dict(prev_row)
+    if isinstance(raw_pending, list):
+        row["pending_permissions"] = [
+            item for item in pending_list if not (isinstance(item, dict) and item.get("owner") == owner)
+        ]
+    row["waiting_requests"] = {key: asdict(request) for key, request in requests.items()}
+    prev_status = str(prev_row.get("status", ""))
+    status_value = prev_status
+    if prev_status == Status.WAITING.value:
+        for key in ("waiting_kind", "waiting_agent_id", "waiting_detail", "waiting_for"):
+            row.pop(key, None)
+        if requests:
+            selected = primary_wait(requests)
+            if selected.kind:
+                row["waiting_kind"] = selected.kind
+            if selected.owner.startswith("agent:"):
+                row["waiting_agent_id"] = selected.owner.removeprefix("agent:")
+            if selected.detail:
+                row["waiting_detail"] = selected.detail
+            if selected.waiting_for:
+                row["waiting_for"] = selected.waiting_for
+        else:
+            status_value = _status_without_waits(prev_row, event.provider).value
+    row["status"] = status_value
+    try:
+        atomic_write_text(path, json.dumps(row))
+    except OSError:
+        return None
+    if prev_status != status_value:
+        log_transition(event.session_id, event.provider, event.cwd, status_value)
+    return None
+
+
+def _status_without_waits(prev_row: dict[str, Any], provider: str) -> Status:
+    """還原「主 session 在等待之外本來的狀態」：前景最後一筆事件經既有正規化得出；
+    最後事件明確來自 subagent 或無法判定時取 WORKING；升級前的舊 row 沒有 last_event_owner
+    欄位，當時的 last_event 都是前景事件，視同前景。"""
+    last_event = prev_row.get("last_event")
+    if (
+        prev_row.get("last_event_owner", FOREGROUND_OWNER) == FOREGROUND_OWNER
+        and isinstance(last_event, str)
+        and last_event
+    ):
+        normalized = adapter_for(provider).normalize({"hook_event_name": last_event, "session_id": "-"})
+        if normalized is not None and normalized.status in (Status.IDLE, Status.WORKING):
+            return normalized.status
+    return Status.WORKING
+
+
 def _update_session_state(
     path: Path, event: NormalizedHookEvent, data: dict[str, Any], process_names: tuple[str, ...]
 ) -> tuple[NormalizedHookEvent, dict[str, Any], str] | None:
@@ -254,6 +323,8 @@ def _update_session_state(
     prev_status = str(prev_row["status"]) if "status" in prev_row else None
     owner = event_owner(data)
     is_subagent_event = owner != FOREGROUND_OWNER
+    if event.event == "SubagentStop":
+        return _apply_subagent_stop(path, event, prev_row, owner)
     if is_subagent_event:
         # Subagent SessionEnd 不是 host session 的結束。
         if event.status is Status.ENDED:
@@ -489,7 +560,7 @@ def _as_epoch(v: Any) -> float | None:
 _PENDING_DETAIL_TTL = 120.0
 
 # 這些事件代表權限已放行（工具跑完）或回合已推進（新輸入 / 回合結束）→ 清掉暫存。
-_PENDING_DETAIL_CLEAR_EVENTS = {"PostToolUse", "UserPromptSubmit", "Stop", "SessionEnd"}
+_PENDING_DETAIL_CLEAR_EVENTS = {"PostToolUse", "UserPromptSubmit", "Stop", "SubagentStop", "SessionEnd"}
 
 
 def _pending_permission_details(
