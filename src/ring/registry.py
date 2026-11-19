@@ -4,7 +4,7 @@
 
 1. hook registry（精準模式）：``~/.config/ring/sessions/*.json``，由 RiNG 的 hook
    腳本在 SessionStart / Notification / UserPromptSubmit / Stop / SessionEnd
-   等事件即時寫入。能精準知道「這個 session 需要你決策」。
+   等事件即時寫入；SubagentStop 只清該 subagent 名下殘留的等待，不另產狀態。能精準知道「這個 session 需要你決策」。
 2. zero-config fallback：直接掃 ``~/.claude/projects/**/*.jsonl``，用檔案 mtime
    推活躍度，從記錄裡的 ``cwd`` 欄位還原真實路徑（避開目錄名以 ``-`` 編碼
    造成的 hyphen 還原歧義）。scan 模式不把「回完一輪」當成 🔴 WAITING；

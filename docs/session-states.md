@@ -41,6 +41,7 @@ stateDiagram-v2
 - **`PostToolUse` → `WORKING`**：工具已經執行，代表先前的互動已處理，並清掉殘留的等待狀態。
 - **`Notification` → `WAITING` 或 `IDLE`**：`permission_prompt`、`elicitation_dialog` 或其他需要動作的 payload 是 `WAITING`；一般通知是 `IDLE`。但一般通知只會把 `WORKING` 收成 `IDLE`，**不會**把既有的 `WAITING` 降回 `IDLE`——Claude Code 在輸入區閒置滿 60 秒送的 `idle_prompt` 正好證明它還在等你，不是你已經回應了。清掉 `WAITING` 只認 `UserPromptSubmit` / `PreToolUse` / `PostToolUse` / 下一輪 `Stop`。
 - **顯式覆寫**：payload 的 `requires_action`、`action_required`、`needs_user_action`、`requires_input`、`interactive`，或可辨識的 `waiting_for` 會優先決定 `WAITING` / `IDLE`。`SessionStart`、`UserPromptSubmit` 與 `SessionEnd` 不受這項覆寫影響。
+- **`SubagentStop` → 不產生狀態**：只移除該 subagent（依 `agent_id`）名下殘留的等待與暫存權限摘要，不影響前景與其他 agent 的等待。沒有既有 row、沒有 `agent_id`、或該 subagent 名下沒有東西可清時完全不寫檔（不建列、不復活已離場的 session）；有東西可清時只改等待項與狀態，`last_event`、`last_active`、`last_action` 維持原值。清完若已無其他等待，狀態還原為主 session 本來的狀態（前景最後事件為 `Stop` 得 `IDLE`，工具類事件得 `WORKING`；最後事件來自 subagent 或無法判定時取 `WORKING`）。
 - **`SessionEnd` → `ENDED`**：hook handler 直接刪除 registry 檔，session 會從預設看板消失；看板上可見的 `ENDED` 主要來自零設定掃描超過活躍時間窗的紀錄。
 
 ## 零設定模式
